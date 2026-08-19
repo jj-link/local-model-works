@@ -1,0 +1,11 @@
+{
+  "name": "lmw-web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "node build.mjs",
+    "generate": "node build.mjs",
+    "typecheck": "node -e \"console.log('web typecheck: scaffold lands in the frontend phase')\"",
+    "test": "node -e \"console.log('no web tests yet')\""
+  }
+}

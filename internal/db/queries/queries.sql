@@ -72,6 +72,9 @@ UPDATE nodes SET inventory = ?, agent_version = COALESCE(?, agent_version) WHERE
 -- name: SetNodeStatus :exec
 UPDATE nodes SET status = ?, last_heartbeat = COALESCE(?, last_heartbeat) WHERE id = ?;
 
+
+-- name: SetNodeVersion :exec
+UPDATE nodes SET agent_version = ? WHERE id = ?;
 -- name: SetNodeCertificate :exec
 UPDATE nodes SET certificate_expires_at = ? WHERE id = ?;
 
@@ -198,19 +201,19 @@ VALUES (?, ?, ?, ?, ?, 'running', 'unknown', ?);
 -- name: GetDeployment :one
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
        observed_state, endpoint, model_capabilities, diagnostics, run_id,
-       created_at, updated_at
+       dispatch, created_at, updated_at
 FROM deployments WHERE id = ?;
 
 -- name: ListDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
        observed_state, endpoint, model_capabilities, diagnostics, run_id,
-       created_at, updated_at
+       dispatch, created_at, updated_at
 FROM deployments ORDER BY created_at DESC;
 
 -- name: ListActiveDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
        observed_state, endpoint, model_capabilities, diagnostics, run_id,
-       created_at, updated_at
+       dispatch, created_at, updated_at
 FROM deployments WHERE desired_state = 'running';
 
 -- name: UpdateDeploymentState :exec
@@ -229,6 +232,11 @@ WHERE id = ?;
 -- name: UpdateDeploymentFabric :exec
 UPDATE deployments SET fabric = ? WHERE id = ?;
 
+-- name: UpdateDeploymentRunID :exec
+UPDATE deployments SET run_id = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
 -- name: CreateRun :exec
 INSERT INTO runs (id, module, kind, state, resources, input, deployment_id,
                   legacy_identity)
@@ -245,11 +253,11 @@ SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
        finished_at
 FROM runs
-WHERE (? IS NULL OR module = ?)
-  AND (? IS NULL OR state = ?)
-  AND (? IS NULL OR created_at < ?)
+WHERE (:module IS NULL OR module = :module)
+  AND (:state IS NULL OR state = :state)
+  AND (:created_before IS NULL OR created_at < :created_before)
 ORDER BY created_at DESC
-LIMIT ?;
+LIMIT :limit;
 
 -- name: ListNonTerminalRuns :many
 SELECT id, module, kind, state, resources, input, output, error_code,
@@ -299,6 +307,19 @@ FROM secrets ORDER BY name;
 
 -- name: DeleteSecret :exec
 DELETE FROM secrets WHERE id = ?;
+
+-- name: UpsertNodeCredential :exec
+INSERT INTO node_credentials (node_id, public_key_pem, serial, issued_at, expires_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (node_id)
+DO UPDATE SET public_key_pem = excluded.public_key_pem,
+              serial = excluded.serial,
+              issued_at = excluded.issued_at,
+              expires_at = excluded.expires_at;
+
+-- name: GetNodeCredential :one
+SELECT node_id, public_key_pem, serial, issued_at, expires_at
+FROM node_credentials WHERE node_id = ?;
 
 -- name: CreateTransfer :exec
 INSERT INTO transfers (id, artifact_id, source_node, dest_node, dest_path,
@@ -379,3 +400,38 @@ INSERT INTO migration_plans (plan_digest, request, plan) VALUES (?, ?, ?);
 -- name: GetMigrationPlan :one
 SELECT plan_digest, request, plan, created_at
 FROM migration_plans WHERE plan_digest = ?;
+
+-- name: AcquireLease :exec
+INSERT INTO leases (resource, owner_kind, owner_id, state)
+VALUES (?, ?, ?, 'active');
+
+-- name: ReleaseLeases :exec
+UPDATE leases SET state = 'released',
+                  released_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE owner_kind = ? AND owner_id = ? AND state = 'active';
+
+-- name: ActiveLeaseOwners :many
+SELECT owner_kind, owner_id FROM leases
+WHERE resource = ? AND state = 'active';
+
+-- name: LeasesForOwner :many
+SELECT resource, state FROM leases
+WHERE owner_kind = ? AND owner_id = ?
+ORDER BY resource;
+
+-- name: UpdateFabricState :exec
+UPDATE fabrics SET state = ?, diagnostics = ?,
+ updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: CountActiveDeploymentsOnFabric :one
+SELECT COUNT(*) FROM deployments
+WHERE fabric = ? AND desired_state = 'running';
+
+-- name: SetDeploymentDispatch :exec
+UPDATE deployments SET dispatch = ?,
+ updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: ActiveLeases :many
+SELECT resource FROM leases WHERE state = 'active';

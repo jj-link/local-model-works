@@ -9,6 +9,8 @@ syntax = "proto3";
 // agents over mTLS on the fabric address.
 package lmw.agent.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/jj-link/local-model-works/proto/agent/v1;agentv1";
 
 service EnrollmentService {
@@ -29,6 +31,9 @@ message EnrollRequest {
   AgentInfo agent = 2;
   // Fingerprint of the CA the agent pinned at install time (SHA-256 hex).
   string ca_fingerprint = 3;
+  // Agent-generated ECDSA P-256 public key (SPKI, PEM). The private key
+  // never leaves the node; the server signs this key into the node cert.
+  string public_key_pem = 4;
 }
 
 message AgentInfo {
@@ -76,6 +81,9 @@ message ServerMessage {
 
 message Ack {
   string command_id = 1;
+  // True when the command succeeded; false carries Error.
+  bool ok = 2;
+  string error = 3;
 }
 
 message Heartbeat {
@@ -100,6 +108,9 @@ message Inventory {
   repeated RdmaDevice rdma_devices = 7;
   // Roots the agent was configured with; existing model caches reported here.
   repeated CacheRoot cache_roots = 8;
+  // Routable host:port of the peer-transfer listener (bind address is
+  // config-local; this is what a remote source dials).
+  string peer_listen = 9;
 }
 
 message DockerInfo {
@@ -196,6 +207,8 @@ message StateUpdate {
   string state = 3;
   string endpoint_host = 4;
   uint32 endpoint_port = 5;
+  // Workload rank within the deployment (0 for ad-hoc/single-rank).
+  int32 rank = 8;
   string diagnostic_code = 6;
   string diagnostic_message = 7;
 }

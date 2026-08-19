@@ -69,6 +69,7 @@ type Inventory struct {
 	Interfaces   []NetworkInterface `json:"interfaces"`
 	RDMADevices  []RdmaDevice       `json:"rdma_devices"`
 	CacheRoots   []CacheRoot        `json:"cache_roots"`
+	PeerListen   string             `json:"peer_listen,omitempty"`
 }
 
 // DockerInfo reports the container runtime state.

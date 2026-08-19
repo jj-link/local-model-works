@@ -95,31 +95,15 @@ func (c *CA) NodeCert(nodeID, hostname string, validity time.Duration) (certPEM,
 	if err != nil {
 		return nil, nil, time.Time{}, fmt.Errorf("node key: %w", err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	certPEM, expires, err = c.NodeCertFor(nodeID, hostname, &key.PublicKey, validity)
 	if err != nil {
 		return nil, nil, time.Time{}, err
-	}
-	notAfter := time.Now().UTC().Add(validity)
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "lmw-node-" + nodeID, Organization: []string{"Local Model Works"}},
-		NotBefore:    time.Now().UTC().Add(-time.Hour),
-		NotAfter:     notAfter,
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{nodeID, hostname},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)
-	if err != nil {
-		return nil, nil, time.Time{}, fmt.Errorf("node cert: %w", err)
 	}
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return nil, nil, time.Time{}, err
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
-		notAfter, nil
+	return certPEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), expires, nil
 }
 
 // SerialOf returns the decimal serial of a PEM certificate.

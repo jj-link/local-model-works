@@ -1,16 +1,10 @@
 version: v2
 plugins:
-  - local: go
-    name: go
+  - local: protoc-gen-go
     out: .
     opt:
       - paths=source_relative
-  - local: connect
-    name: connect
+  - local: protoc-gen-connect
     out: .
     opt:
       - paths=source_relative
-targets:
-  - plugins:
-      - go
-      - connect

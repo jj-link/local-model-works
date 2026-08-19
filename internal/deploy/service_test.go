@@ -1,0 +1,513 @@
+package deploy
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/jj-link/local-model-works/internal/ca"
+	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/diag"
+	"github.com/jj-link/local-model-works/internal/events"
+	"github.com/jj-link/local-model-works/internal/inventory"
+	"github.com/jj-link/local-model-works/internal/runs"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
+)
+
+// ---------------------------------------------------------------- fixtures
+
+// fakeNodes is an in-memory NodeSender that records every outbound message.
+type fakeNodes struct {
+	mu     sync.Mutex
+	online map[string]bool
+	msgs   []sentMsg
+}
+
+type sentMsg struct {
+	nodeID string
+	msg    *agentv1.ServerMessage
+}
+
+func (f *fakeNodes) Send(nodeID string, m *agentv1.ServerMessage) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.online[nodeID] {
+		return false
+	}
+	f.msgs = append(f.msgs, sentMsg{nodeID: nodeID, msg: m})
+	return true
+}
+
+func (f *fakeNodes) Online(nodeID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.online[nodeID]
+}
+
+func (f *fakeNodes) setOnline(nodeID string, on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.online[nodeID] = on
+}
+
+func (f *fakeNodes) transferCommands() []sentMsg {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []sentMsg
+	for _, s := range f.msgs {
+		if s.msg.GetTransferCommand() != nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (f *fakeNodes) workloadCommands() []sentMsg {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []sentMsg
+	for _, s := range f.msgs {
+		if s.msg.GetWorkloadCommand() != nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// harness wires a Service against a fresh migrated SQLite database.
+type harness struct {
+	svc   *Service
+	nodes *fakeNodes
+	q     *db.Queries
+	dbh   *sql.DB
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "lmw-test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	q := db.New(sqlDB)
+	bus := events.NewEventBus(q)
+	nodes := &fakeNodes{online: map[string]bool{}}
+	caCA, err := ca.New()
+	if err != nil {
+		t.Fatalf("ca: %v", err)
+	}
+	svc := New(sqlDB, q, bus, runs.New(sqlDB, q, bus, t.TempDir()), nodes, caCA)
+	return &harness{svc: svc, nodes: nodes, q: q, dbh: sqlDB}
+}
+
+func inventoryWith(accs []inventory.Accelerator, peerListen string) string {
+	b, _ := json.Marshal(inventory.Inventory{
+		Hostname:     "testhost",
+		Accelerators: accs,
+		Interfaces: []inventory.Interface{
+			{Name: "enx0", Addresses: []string{"100.86.3.45"}},
+		},
+		PeerListen: peerListen,
+	})
+	return string(b)
+}
+
+func nullString(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
+}
+
+func (h *harness) seedNode(t *testing.T, nodeID string, accs []inventory.Accelerator, peerListen string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := h.q.CreateNode(ctx, db.CreateNodeParams{ID: nodeID, DisplayName: nodeID, Labels: "{}"}); err != nil {
+		t.Fatalf("create node %s: %v", nodeID, err)
+	}
+	if err := h.q.SetNodeStatus(ctx, db.SetNodeStatusParams{Status: "online", ID: nodeID}); err != nil {
+		t.Fatalf("status %s: %v", nodeID, err)
+	}
+	if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{
+		ID: nodeID, Inventory: nullString(inventoryWith(accs, peerListen)),
+	}); err != nil {
+		t.Fatalf("inventory %s: %v", nodeID, err)
+	}
+	h.nodes.setOnline(nodeID, true)
+}
+
+func (h *harness) seedRecipe(t *testing.T, digest, manifest string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := h.q.CreateRecipe(ctx, db.CreateRecipeParams{
+		Digest: digest, Name: "test", Version: "1",
+		Source: "{}", TrustState: "local", Manifest: manifest,
+	}); err != nil {
+		t.Fatalf("create recipe: %v", err)
+	}
+}
+
+func (h *harness) seedArtifact(t *testing.T, id, identity string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := h.q.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: id, Kind: "model", Identity: identity, Metadata: "{}",
+	}); err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+}
+
+func (h *harness) seedPlacement(t *testing.T, artifactID, nodeID, path, state string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
+		ArtifactID: artifactID, NodeID: nodeID, Path: path, State: state,
+		Diagnostics: "[]", SizeBytes: 123,
+	}); err != nil {
+		t.Fatalf("placement %s@%s: %v", artifactID, nodeID, err)
+	}
+}
+
+const noArtifactManifest = `{
+	"apiVersion": "lmw.dev/v1",
+	"kind": "Recipe",
+	"metadata": {"name": "test-serve", "version": "1"},
+	"workloads": [{
+		"image": {"reference": "test-serve:latest"},
+		"command": ["serve"],
+		"args": ["--port", "8000"],
+		"ports": [{"container": 8000}],
+		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
+	}]
+}`
+
+const gpuManifest = `{
+	"apiVersion": "lmw.dev/v1",
+	"kind": "Recipe",
+	"metadata": {"name": "test-gpu", "version": "1"},
+	"workloads": [{
+		"image": {"reference": "test-serve:latest"},
+		"command": ["serve"],
+		"devices": {"accelerator": {"all": true}},
+		"ports": [{"container": 8000}],
+		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
+	}]
+}`
+
+const artifactManifest = `{
+	"apiVersion": "lmw.dev/v1",
+	"kind": "Recipe",
+	"metadata": {"name": "test-serve", "version": "1"},
+	"artifacts": [{
+		"name": "model", "kind": "model",
+		"source": {"type": "local", "identity": "local://test-model"},
+		"mount": "/var/lib/lmw/artifacts/model"
+	}],
+	"workloads": [{
+		"image": {"reference": "test-serve:latest"},
+		"command": ["serve"],
+		"args": ["--model", "{{ .Artifacts.model }}"],
+		"ports": [{"container": 8000}],
+		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
+	}]
+}`
+
+func (h *harness) createDeployment(t *testing.T, digest string, overrides ...PlacementOverride) *Deployment {
+	t.Helper()
+	dep, err := h.svc.Create(context.Background(), CreateRequest{
+		RecipeDigest: digest, Placements: overrides,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return dep
+}
+
+func deploymentRow(t *testing.T, h *harness, depID string) db.GetDeploymentRow {
+	t.Helper()
+	row, err := h.q.GetDeployment(context.Background(), depID)
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	return row
+}
+
+func runState(t *testing.T, h *harness, runID string) string {
+	t.Helper()
+	run, err := h.svc.runs.Get(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	return run.State
+}
+
+func transferState(t *testing.T, h *harness, transferID string) (state, diagnostic string) {
+	t.Helper()
+	tr, err := h.q.GetTransfer(context.Background(), transferID)
+	if err != nil {
+		t.Fatalf("get transfer: %v", err)
+	}
+	diagnostic = tr.Diagnostic.String
+	return tr.State, diagnostic
+}
+
+func gpuAccs(id string) []inventory.Accelerator {
+	return []inventory.Accelerator{
+		{Index: 0, Vendor: "nvidia", Architecture: "sm_120", Name: "GB10", UUID: "GPU-" + id, MemoryBytes: 1 << 30},
+	}
+}
+
+// ---------------------------------------------------------------- tests
+
+// TestPlanCreatePersistsWorkloadIndex: the plan's selected workload variant
+// is persisted in the placement document, selectWorkload honors it, and
+// Create rejects a stale plan digest.
+func TestPlanCreatePersistsWorkloadIndex(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
+	h.seedRecipe(t, "recipe-1", noArtifactManifest)
+
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{RecipeDigest: "recipe-1"})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.WorkloadIndex != 0 {
+		t.Fatalf("workload index = %d, want 0", plan.WorkloadIndex)
+	}
+	if !plan.Ready {
+		t.Fatalf("plan not ready: %v", plan.Diagnostics)
+	}
+
+	dep := h.createDeployment(t, "recipe-1")
+	row := deploymentRow(t, h, dep.ID)
+	ps := ParsePlacementSet(row.Placement)
+	if ps.Workload == nil || *ps.Workload != 0 {
+		t.Fatalf("persisted workload index = %v, want 0", ps.Workload)
+	}
+	if len(ps.Entries) != 1 || ps.Entries[0].NodeID != "node-a" {
+		t.Fatalf("unexpected entries: %+v", ps.Entries)
+	}
+
+	// selectWorkload must honor the persisted index.
+	m, err := h.svc.manifestFor(context.Background(), "recipe-1")
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	wi, w, err := h.svc.selectWorkload(context.Background(), row, m)
+	if err != nil || wi != 0 || w == nil {
+		t.Fatalf("selectWorkload = (%d, %v, %v)", wi, w, err)
+	}
+
+	// A stale plan digest must be rejected.
+	if _, err := h.svc.Create(context.Background(), CreateRequest{
+		RecipeDigest: "recipe-1", PlanDigest: "sha256:stale",
+	}); err == nil {
+		t.Fatal("create with stale plan digest: want error")
+	}
+}
+
+// TestMissingArtifactGatesThenUnblocks: a rank whose node lacks a valid
+// placement is gated; a peer transfer is initiated; the destination's valid
+// placement report marks the transfer succeeded and re-drives dispatch.
+func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
+	const identity = "local://test-model"
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
+	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedArtifact(t, "art-1", identity)
+	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
+	h.seedRecipe(t, "recipe-art", artifactManifest)
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-art",
+		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "src" || plan.Transfers[0].DestNode != "dest" {
+		t.Fatalf("transfer previews = %+v", plan.Transfers)
+	}
+	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
+
+	// Gated: no workload command may have gone out before the transfer.
+	if wcs := h.nodes.workloadCommands(); len(wcs) != 0 {
+		t.Fatalf("workload commands before gate passed: %+v", wcs)
+	}
+	tcs := h.nodes.transferCommands()
+	if len(tcs) != 2 {
+		t.Fatalf("transfer commands = %d, want 2 (dest+source)", len(tcs))
+	}
+	roles := map[string]string{}
+	var tid string
+	for _, s := range tcs {
+		tc := s.msg.GetTransferCommand()
+		roles[s.nodeID] = tc.GetRole()
+		tid = tc.GetTransferId()
+	}
+	if roles["dest"] != "dest" || roles["src"] != "source" {
+		t.Fatalf("transfer roles = %+v", roles)
+	}
+	if state, _ := transferState(t, h, tid); state != "pending" {
+		t.Fatalf("transfer state = %s, want pending", state)
+	}
+
+	// Destination writes the copy and reports it valid.
+	h.seedPlacement(t, "art-1", "dest", "/var/lib/lmw/artifacts/model", "valid")
+	h.svc.OnPlacementReport(context.Background(), "dest", identity, "valid")
+
+	if state, _ := transferState(t, h, tid); state != "succeeded" {
+		t.Fatalf("transfer state = %s, want succeeded", state)
+	}
+	wcs := h.nodes.workloadCommands()
+	if len(wcs) != 1 || wcs[0].nodeID != "dest" ||
+		wcs[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+		t.Fatalf("post-gate workload commands = %+v", wcs)
+	}
+	pull := wcs[0].msg.GetWorkloadCommand()
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
+		CommandId: pull.GetCommandId(), Ok: true,
+	})
+
+	row := deploymentRow(t, h, dep.ID)
+	if got := ParseDispatch(row.Dispatch).Get(0); got != PhasePulled {
+		t.Fatalf("rank 0 phase = %s, want %s", got, PhasePulled)
+	}
+}
+
+// TestInvalidPlacementFailsTransfer: a placement report with state != valid
+// marks the in-flight transfer failed and fails the affected rank.
+func TestInvalidPlacementFailsTransfer(t *testing.T) {
+	const identity = "local://test-model"
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
+	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedArtifact(t, "art-1", identity)
+	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
+	h.seedRecipe(t, "recipe-art", artifactManifest)
+
+	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
+	tcs := h.nodes.transferCommands()
+	if len(tcs) != 2 {
+		t.Fatalf("transfer commands = %d, want 2", len(tcs))
+	}
+	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
+
+	h.seedPlacement(t, "art-1", "dest", "/var/lib/lmw/artifacts/model", "invalid")
+	h.svc.OnPlacementReport(context.Background(), "dest", identity, "invalid")
+
+	state, diagnostic := transferState(t, h, tid)
+	if state != "failed" || !strings.Contains(diagnostic, "invalid placement") {
+		t.Fatalf("transfer = (%s, %s), want failed/invalid", state, diagnostic)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Failed) {
+		t.Fatalf("run state = %s, want %s", got, runs.Failed)
+	}
+}
+
+// TestFailedTransferAckFailsRank: a failed transfer ack marks the transfer
+// row failed and fails the affected rank's run.
+func TestFailedTransferAckFailsRank(t *testing.T) {
+	const identity = "local://test-model"
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
+	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedArtifact(t, "art-1", identity)
+	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
+	h.seedRecipe(t, "recipe-art", artifactManifest)
+
+	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
+	tcs := h.nodes.transferCommands()
+	if len(tcs) != 2 {
+		t.Fatalf("transfer commands = %d, want 2", len(tcs))
+	}
+	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
+
+	h.svc.OnTransferResult(context.Background(), tid, "dial: connection refused")
+
+	state, diagnostic := transferState(t, h, tid)
+	if state != "failed" || !strings.Contains(diagnostic, "connection refused") {
+		t.Fatalf("transfer = (%s, %s), want failed/refused", state, diagnostic)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Failed) {
+		t.Fatalf("run state = %s, want %s", got, runs.Failed)
+	}
+	row := deploymentRow(t, h, dep.ID)
+	var codes []string
+	for _, d := range diag.Decode(row.Diagnostics) {
+		codes = append(codes, d.Code)
+	}
+	if !contains(codes, "artifact.transfer_failed") {
+		t.Fatalf("deployment diagnostics = %v, want artifact.transfer_failed", codes)
+	}
+}
+
+// TestStopCompletesFromMissingRank: a rank whose container disappeared
+// (state "missing") completes the stop: observed stopped, run cancelled,
+// leases released.
+func TestStopCompletesFromMissingRank(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+
+	ctx := context.Background()
+	row := deploymentRow(t, h, dep.ID)
+	ps := ParsePlacementSet(row.Placement)
+	acc := ps.Entries[0].AcceleratorUUID
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, observed_state='healthy' WHERE id=?",
+		`{"0":"started"}`, dep.ID); err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+	var n int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE resource=? AND state='active'",
+		"gpu:node-a:"+acc).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("active gpu leases = %d (err %v), want 1", n, err)
+	}
+
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	stops := h.nodes.workloadCommands()
+	last := stops[len(stops)-1]
+	if last.msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("last workload op = %v, want STOP", last.msg.GetWorkloadCommand().GetOp())
+	}
+
+	// The agent reports the container is gone.
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DiagnosticCode: "container.missing",
+	})
+
+	row = deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopped" {
+		t.Fatalf("observed = %s, want stopped", row.ObservedState)
+	}
+	if got := ParseDispatch(row.Dispatch).Get(0); got != PhaseStopped {
+		t.Fatalf("rank 0 phase = %s, want stopped", got)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Cancelled) {
+		t.Fatalf("run state = %s, want cancelled", got)
+	}
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE resource=? AND state='active'",
+		"gpu:node-a:"+acc).Scan(&n); err != nil {
+		t.Fatalf("count leases: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("active gpu leases = %d, want 0", n)
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

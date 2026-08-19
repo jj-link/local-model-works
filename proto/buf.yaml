@@ -1,4 +1,3 @@
 version: v2
 modules:
   - path: .
-    name: lmw.agent.v1

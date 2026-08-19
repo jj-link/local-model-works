@@ -22,7 +22,7 @@ func TestImageRef(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := imageRef(&tc.spec); got != tc.want {
+			if got := ImageRef(&tc.spec); got != tc.want {
 				t.Fatalf("imageRef = %q, want %q", got, tc.want)
 			}
 		})

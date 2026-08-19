@@ -79,8 +79,12 @@ type Runtime interface {
 	Inspect(ctx context.Context, idOrName string) (*ContainerInfo, error)
 	// ListByLabel lists containers carrying the label with the given value.
 	ListByLabel(ctx context.Context, key, value string) ([]ContainerInfo, error)
-	// LogsFollow streams container output; the caller owns closing rc.
+	// LogsFollow streams container output (interleaved); the caller owns
+	// closing rc.
 	LogsFollow(ctx context.Context, id string, fromStdout, fromStderr bool) (io.ReadCloser, error)
+	// LogsStreams streams container output with stdout and stderr
+	// separated; the caller owns closing both.
+	LogsStreams(ctx context.Context, id string) (stdout, stderr io.ReadCloser, err error)
 }
 
 // PullSpec identifies an image pull.

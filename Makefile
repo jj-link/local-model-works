@@ -7,7 +7,7 @@ WEB      := web
 DIST     := dist
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-LDFLAGS  := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+LDFLAGS  := -s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT)
 
 .PHONY: all generate gen-oapi gen-proto gen-sqlc gen-modules gen-web test test-go test-web build build-server build-agent build-cli build-web release clean
 
@@ -22,7 +22,7 @@ gen-oapi:
 gen-proto:
 	@mkdir -p .tools/bin
 	$(GO) build -o .tools/bin/protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go
-	$(GO) build -o .tools/bin/protoc-gen-connect-go github.com/connectrpc/protoc-gen-connect-go
+	$(GO) build -o .tools/bin/protoc-gen-connect connectrpc.com/connect/cmd/protoc-gen-connect-go
 	cd proto && PATH=$(CURDIR)/.tools/bin:$$PATH $(GO) run github.com/bufbuild/buf/cmd/buf generate
 
 gen-sqlc:

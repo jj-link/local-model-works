@@ -633,7 +633,7 @@ paths:
     post:
       tags: [deployments]
       operationId: planDeployment
-      summary: Preview a deployment: placement, artifact preparation, ports, risks, conflicts
+      summary: "Preview a deployment: placement, artifact preparation, ports, risks, conflicts"
       requestBody:
         required: true
         content:
@@ -1091,15 +1091,17 @@ paths:
           content:
             application/json:
               schema:
-              properties:
-                imported:
-                  type: object
-                unsupported:
-                  type: array
-                  items:
-                    type: string
-                counts:
-                  type: object
+                type: object
+                required: [imported, unsupported, counts]
+                properties:
+                  imported:
+                    type: object
+                  unsupported:
+                    type: array
+                    items:
+                      type: string
+                  counts:
+                    type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

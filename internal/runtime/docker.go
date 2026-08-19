@@ -96,7 +96,7 @@ func encodeRegistryAuth(auth *Auth) (string, error) {
 
 func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string, error) {
 	cfg := &container.Config{
-		Image:      imageRef(spec),
+		Image:      ImageRef(spec),
 		Hostname:   spec.Name,
 		Env:        spec.Env,
 		Cmd:        spec.Cmd,
@@ -226,6 +226,8 @@ func (r *dockerRuntime) ListByLabel(ctx context.Context, key, value string) ([]C
 	return out, nil
 }
 
+// LogsFollow streams container output (stdout and stderr interleaved);
+// the caller owns closing rc.
 func (r *dockerRuntime) LogsFollow(ctx context.Context, id string, fromStdout, fromStderr bool) (io.ReadCloser, error) {
 	rc, err := r.cli.ContainerLogs(ctx, id, container.LogsOptions{
 		ShowStdout: fromStdout,
@@ -244,10 +246,32 @@ func (r *dockerRuntime) LogsFollow(ctx context.Context, id string, fromStdout, f
 	return pr, nil
 }
 
+// LogsStreams streams container output with stdout and stderr separated
+// into two pipes; the caller owns closing both.
+func (r *dockerRuntime) LogsStreams(ctx context.Context, id string) (stdout, stderr io.ReadCloser, err error) {
+	rc, err := r.cli.ContainerLogs(ctx, id, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("logs %s: %w", id, err)
+	}
+	prOut, pwOut := io.Pipe()
+	prErr, pwErr := io.Pipe()
+	go func() {
+		defer rc.Close()
+		defer pwOut.Close()
+		defer pwErr.Close()
+		_, _ = stdcopy.StdCopy(pwOut, pwErr, rc)
+	}()
+	return prOut, prErr, nil
+}
+
 // imageRef resolves the pull/create reference to a digest-qualified form
 // when a pinned digest is present, so a moving tag cannot change the image
 // between validation and launch.
-func imageRef(spec *ContainerSpec) string {
+func ImageRef(spec *ContainerSpec) string {
 	if spec.ImageDigest == "" {
 		return spec.Image
 	}
