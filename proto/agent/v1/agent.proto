@@ -1,0 +1,347 @@
+syntax = "proto3";
+
+// Agent protocol for Local Model Works.
+//
+// EnrollmentService exchanges a one-use token for a node client certificate
+// over a TLS connection pinned to the server CA fingerprint.
+// AgentService.Session is the single bidirectional control channel.
+// PeerTransferService carries resumable artifact bytes between enrolled
+// agents over mTLS on the fabric address.
+package lmw.agent.v1;
+
+option go_package = "github.com/jj-link/local-model-works/proto/agent/v1;agentv1";
+
+service EnrollmentService {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+service AgentService {
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
+}
+
+service PeerTransferService {
+  rpc Manifest(ManifestRequest) returns (ManifestResponse);
+  rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
+}
+
+message EnrollRequest {
+  string token = 1;
+  AgentInfo agent = 2;
+  // Fingerprint of the CA the agent pinned at install time (SHA-256 hex).
+  string ca_fingerprint = 3;
+}
+
+message AgentInfo {
+  string version = 1;
+  string hostname = 2;
+  string os = 3;
+  string arch = 4;
+  string agent_name = 5;
+}
+
+message EnrollResponse {
+  string node_id = 1;
+  string node_certificate_pem = 2;
+  string ca_certificate_pem = 3;
+  string server_name = 4;
+  google.protobuf.Timestamp certificate_expires_at = 5;
+}
+
+message AgentMessage {
+  oneof body {
+    Heartbeat heartbeat = 1;
+    Inventory inventory = 2;
+    Telemetry telemetry = 3;
+    CommandResult command_result = 4;
+    StateUpdate state_update = 5;
+    LogChunk log_chunk = 6;
+    PlacementReport placement_report = 7;
+    TransferProgress transfer_progress = 8;
+    RotateCertificateRequest rotate_certificate = 9;
+    Ack ack = 10;
+  }
+}
+
+message ServerMessage {
+  oneof body {
+    HeartbeatAck heartbeat_ack = 1;
+    WorkloadCommand workload_command = 2;
+    LogRequest log_request = 3;
+    TransferCommand transfer_command = 4;
+    ReconcileRequest reconcile_request = 5;
+    Certificate certificate = 6;
+    Close close = 7;
+  }
+}
+
+message Ack {
+  string command_id = 1;
+}
+
+message Heartbeat {
+  string agent_version = 1;
+  uint64 uptime_seconds = 2;
+  bool docker_ok = 3;
+  string docker_version = 4;
+}
+
+message HeartbeatAck {
+  google.protobuf.Timestamp server_time = 1;
+  uint32 telemetry_interval_ms = 2;
+}
+
+message Inventory {
+  string hostname = 1;
+  string os = 2;
+  string arch = 3;
+  DockerInfo docker = 4;
+  repeated Accelerator accelerators = 5;
+  repeated NetworkInterface interfaces = 6;
+  repeated RdmaDevice rdma_devices = 7;
+  // Roots the agent was configured with; existing model caches reported here.
+  repeated CacheRoot cache_roots = 8;
+}
+
+message DockerInfo {
+  bool ok = 1;
+  string version = 2;
+  string api_version = 3;
+  string error = 4;
+}
+
+message Accelerator {
+  int32 index = 1;
+  // Vendor-neutral capability fields.
+  string vendor = 2;
+  string architecture = 3;
+  string name = 4;
+  string uuid = 5;
+  uint64 memory_bytes = 6;
+  repeated string features = 7;
+}
+
+message NetworkInterface {
+  string name = 1;
+  repeated string addresses = 2;
+  uint32 mtu = 3;
+  uint32 link_mbps = 4;
+}
+
+message RdmaDevice {
+  string name = 1;
+  string vendor = 2;
+  repeated RdmaPort ports = 3;
+}
+
+message RdmaPort {
+  string name = 1;
+  string state = 2;
+  uint32 link_rate_gbps = 3;
+}
+
+message CacheRoot {
+  string path = 1;
+  string backend = 2; // e.g. huggingface, modelscope, local
+  uint64 size_bytes = 3;
+  repeated string repositories = 4;
+}
+
+message Telemetry {
+  google.protobuf.Timestamp at = 1;
+  CpuTelemetry cpu = 2;
+  MemoryTelemetry memory = 3;
+  repeated AcceleratorTelemetry accelerators = 4;
+  NetworkTelemetry network = 5;
+}
+
+message CpuTelemetry {
+  uint32 usage_percent = 1;
+  uint32 cores = 2;
+  uint64 load1 = 3; // scaled x100
+}
+
+message MemoryTelemetry {
+  uint64 used_bytes = 1;
+  uint64 total_bytes = 2;
+  uint64 swap_used_bytes = 3;
+}
+
+message AcceleratorTelemetry {
+  int32 index = 1;
+  uint32 utilization_percent = 2;
+  uint64 memory_used_bytes = 3;
+  uint64 memory_total_bytes = 4;
+  uint32 temperature_c = 5;
+  uint32 power_mw = 6;
+}
+
+message NetworkTelemetry {
+  uint64 rx_bytes = 1;
+  uint64 tx_bytes = 2;
+}
+
+message CommandResult {
+  string command_id = 1;
+  bool ok = 2;
+  int32 exit_code = 3;
+  string error = 4;
+  string container_id = 5;
+}
+
+message StateUpdate {
+  // Deployment UUID this report belongs to (empty for ad-hoc reports).
+  string deployment_id = 1;
+  string container_id = 2;
+  // Docker-ish observed states: created, running, exited, paused, removing, dead.
+  string state = 3;
+  string endpoint_host = 4;
+  uint32 endpoint_port = 5;
+  string diagnostic_code = 6;
+  string diagnostic_message = 7;
+}
+
+message LogChunk {
+  string run_id = 1;
+  string deployment_id = 2;
+  int32 rank = 3;
+  string stream = 4; // stdout | stderr
+  // Byte offset within this stream for the owning run/deployment/rank.
+  uint64 offset = 5;
+  bytes data = 6;
+}
+
+message PlacementReport {
+  string artifact_id = 1;
+  string path = 2;
+  // pending | valid | invalid
+  string state = 3;
+  google.protobuf.Timestamp verified_at = 4;
+  repeated Diagnostic diagnostics = 5;
+  uint64 size_bytes = 6;
+}
+
+message Diagnostic {
+  string code = 1;
+  // info | warning | error
+  string severity = 2;
+  string message = 3;
+  string resource = 4;
+}
+
+message TransferProgress {
+  string transfer_id = 1;
+  uint64 bytes_done = 2;
+  uint64 bytes_total = 3;
+}
+
+message RotateCertificateRequest {
+  // Requested when the current node certificate has < 30 days remaining.
+  string current_serial = 1;
+}
+
+message Certificate {
+  string node_certificate_pem = 1;
+  string ca_certificate_pem = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// WorkloadCommand is the typed container lifecycle instruction set.
+message WorkloadCommand {
+  string command_id = 1;
+  WorkloadOp op = 2;
+  string deployment_id = 3;
+  string run_id = 4;
+  int32 rank = 5;
+  // JSON-encoded ContainerSpec (typed in Go, kept stable over the wire).
+  bytes container_spec = 6;
+  // Log directory on the agent for this run/deployment (byte-cursor source).
+  string log_dir = 7;
+}
+
+enum WorkloadOp {
+  WORKLOAD_OP_UNSPECIFIED = 0;
+  WORKLOAD_OP_PULL = 1;
+  WORKLOAD_OP_CREATE = 2;
+  WORKLOAD_OP_START = 3;
+  WORKLOAD_OP_STOP = 4;
+  WORKLOAD_OP_REMOVE = 5;
+  WORKLOAD_OP_INSPECT = 6;
+  WORKLOAD_OP_LOGS = 7;
+}
+
+message LogRequest {
+  string run_id = 1;
+  string deployment_id = 2;
+  int32 rank = 3;
+  uint64 from_offset = 4;
+  string stream = 5;
+}
+
+message TransferCommand {
+  string transfer_id = 1;
+  // source | dest
+  string role = 2;
+  string peer_address = 3;
+  string credential = 4;
+  string artifact_identity = 5;
+  string src_path = 6;
+  string dest_path = 7;
+  uint32 timeout_seconds = 8;
+}
+
+message ReconcileRequest {
+  // Sent after server restart or agent (re)connect: re-derive container
+  // reality for every deployment the agent may host.
+  repeated DeploymentRef deployments = 1;
+  // restart | reconnect | periodic
+  string reason = 2;
+}
+
+message DeploymentRef {
+  string deployment_id = 1;
+  // running | stopped
+  string desired_state = 2;
+  int32 rank = 3;
+}
+
+message Close {
+  string reason = 1;
+}
+
+// --- Peer transfer -------------------------------------------------------
+
+message ManifestRequest {
+  string transfer_id = 1;
+  string credential = 2;
+  string path = 3;
+}
+
+message ManifestResponse {
+  repeated FileEntry files = 1;
+  uint64 total_bytes = 2;
+  // sha256 of the whole snapshot tree (symlinks preserved).
+  string tree_digest = 3;
+}
+
+message FileEntry {
+  string path = 1;
+  uint64 size = 2;
+  uint32 mode = 3;
+  string sha256 = 4;
+  // Non-empty for symlinks; target is relative.
+  string symlink_target = 5;
+}
+
+message ReadChunkRequest {
+  string transfer_id = 1;
+  string credential = 2;
+  string path = 3;
+  uint64 offset = 4;
+  uint32 length = 5;
+}
+
+message ReadChunkResponse {
+  bytes data = 1;
+  uint64 offset = 2;
+  bool eof = 3;
+}

@@ -1,0 +1,16 @@
+version: v2
+plugins:
+  - local: go
+    name: go
+    out: .
+    opt:
+      - paths=source_relative
+  - local: connect
+    name: connect
+    out: .
+    opt:
+      - paths=source_relative
+targets:
+  - plugins:
+      - go
+      - connect

@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localmodelworks.dev/schemas/recipe/v1alpha1.schema.json",
+  "title": "Local Model Works recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "compatibility", "artifacts", "workloads"],
+  "properties": {
+    "apiVersion": { "const": "localmodelworks/v1alpha1" },
+    "kind": { "const": "Recipe" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$" },
+        "version": { "type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?(\\+([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?$" },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "license": { "type": "string", "maxLength": 100 },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": { "type": "string", "format": "uri" },
+            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "path": { "type": "string", "pattern": "^\\S+$", "maxLength": 512 }
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeCount"],
+      "properties": {
+        "nodeCount": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "accelerator": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vendor": { "type": "string", "minLength": 1, "maxLength": 32 },
+            "architectures": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "count": { "type": "integer", "minimum": 0 },
+            "minMemoryBytes": { "type": "integer", "minimum": 0 },
+            "features": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+          }
+        },
+        "fabric": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transport": { "type": "string", "enum": ["roce", "tcp"] },
+            "minBandwidthGbps": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 0,
+      "items": { "$ref": "#/$defs/artifact" },
+      "minContains": 0
+    },
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameter" },
+      "maxItems": 64
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "minProperties": 1, "maxProperties": 64 },
+      "minProperties": 0,
+      "maxProperties": 32
+    },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/workload" }
+    },
+    "prepare": { "$ref": "#/$defs/extension" },
+    "verify": { "$ref": "#/$defs/extension" }
+  },
+  "$defs": {
+    "templateString": {
+      "type": "string",
+      "maxLength": 8192,
+      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.address|artifact\\.[a-z0-9][a-z0-9_]*\\.path|profile\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "source", "mount"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
+        "kind": { "type": "string", "enum": ["model", "dataset", "adapter", "checkpoint", "file"] },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "identity"],
+          "properties": {
+            "type": { "type": "string", "enum": ["huggingface", "oci", "file"] },
+            "identity": {
+              "type": "string",
+              "pattern": "^(hf://[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+|[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-zA-Z0-9._/-]+)$",
+              "maxLength": 512
+            },
+            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "type": { "const": "huggingface" } } },
+              "then": { "required": ["revision"] }
+            },
+            {
+              "if": { "properties": { "type": { "const": "file" } } },
+              "then": { "required": ["digest"] }
+            }
+          ]
+        },
+        "mount": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]*$" },
+        "validation": { "type": "string", "enum": ["snapshot", "directory", "file"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["model", "dataset", "adapter", "checkpoint"] } } },
+          "then": { "properties": { "validation": { "enum": ["snapshot", "directory"] } } }
+        }
+      ]
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
+        "type": { "type": "string", "enum": ["int", "float", "bool", "string", "enum"] },
+        "default": {},
+        "description": { "type": "string", "maxLength": 1000 },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "minLength": { "type": "integer", "minimum": 0 },
+        "maxLength": { "type": "integer", "minimum": 0 },
+        "enum": { "type": "array", "minItems": 2, "maxItems": 64, "items": {} }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "enum" } } },
+          "then": { "required": ["enum"] }
+        }
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "httpGet": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "port"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^/" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "method": { "type": "string", "enum": ["GET", "POST"] },
+            "body": { "type": "string", "maxLength": 65536 }
+          }
+        },
+        "exec": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "intervalSeconds": { "type": "integer", "minimum": 1, "maximum": 300, "default": 10 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 600, "default": 30 },
+        "failureThreshold": { "type": "integer", "minimum": 1, "maximum": 30, "default": 5 }
+      },
+      "oneOf": [
+        { "required": ["httpGet"] },
+        { "required": ["exec"] }
+      ]
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "command", "args", "resources"],
+      "properties": {
+        "match": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Capability predicate; first matching variant wins. Empty matches anything.",
+          "properties": {
+            "accelerator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "architectures": { "type": "array", "items": { "type": "string" } },
+                "vendor": { "type": "string" },
+                "features": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "nodeCount": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference", "digest"],
+          "properties": {
+            "reference": { "type": "string", "maxLength": 512 },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" }, "maxItems": 32 },
+        "args": { "type": "array", "items": { "$ref": "#/$defs/templateString" }, "maxItems": 256 },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/templateString" },
+          "maxProperties": 128,
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+        },
+        "ports": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["container"],
+            "properties": {
+              "container": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "host": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "protocol": { "type": "string", "enum": ["tcp", "udp"], "default": "tcp" }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "number", "minimum": 0.1 },
+            "memoryBytes": { "type": "integer", "minimum": 16777216 },
+            "shmBytes": { "type": "integer", "minimum": 67108864, "default": 67108864 },
+            "pids": { "type": "integer", "minimum": 64, "default": 1024 }
+          }
+        },
+        "devices": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accelerator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "all": { "type": "boolean", "default": false },
+                "indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+              }
+            },
+            "rdma": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "all": { "type": "boolean", "default": false },
+                "devices": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "networkMode": { "type": "string", "enum": ["bridge", "host", "none"], "default": "bridge" },
+        "readiness": { "$ref": "#/$defs/probe" },
+        "verify": {
+          "allOf": [{ "$ref": "#/$defs/probe" }],
+          "properties": {
+            "expect": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "statusCode": { "type": "integer", "minimum": 100, "maximum": 599 },
+                "bodyContains": { "type": "string", "maxLength": 8192 },
+                "json": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean", "null"] } }
+              }
+            }
+          }
+        },
+        "ranks": {
+          "type": "array",
+          "description": "Fabric ranks this variant covers on the first node; remaining ranks implied for multi-node recipes.",
+          "items": { "type": "integer", "minimum": 0 },
+          "maxItems": 8
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["network.host", "devices.rdma", "memory.shm-large", "rootfs.write"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Strictly sandboxed prepare/verify helper container.",
+      "required": ["image", "command", "args"],
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference", "digest"],
+          "properties": {
+            "reference": { "type": "string", "maxLength": 512 },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" }, "maxItems": 32 },
+        "args": { "type": "array", "items": { "$ref": "#/$defs/templateString" }, "maxItems": 64 },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/templateString" },
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+        },
+        "network": { "type": "string", "enum": ["none", "egress"], "default": "none" },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 7200, "default": 900 },
+        "outputLimitBytes": { "type": "integer", "minimum": 4096, "maximum": 10485760, "default": 1048576 }
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localmodelworks.dev/schemas/module/v1alpha1.schema.json",
+  "title": "Local Model Works first-party module manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "title", "route", "nav"],
+  "properties": {
+    "apiVersion": { "const": "localmodelworks/v1alpha1" },
+    "kind": { "const": "Module" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
+    "title": { "type": "string", "maxLength": 60 },
+    "route": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
+    "nav": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "order"],
+      "properties": {
+        "label": { "type": "string", "maxLength": 30 },
+        "order": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "icon": { "type": "string", "maxLength": 60 }
+      }
+    },
+    "settingsSchema": {
+      "type": "object",
+      "description": "JSON Schema (draft 2020-12) for the module's operator settings object.",
+      "additionalProperties": true
+    },
+    "jobKinds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,40}$" },
+      "uniqueItems": true
+    },
+    "artifactKinds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,40}$" },
+      "uniqueItems": true
+    },
+    "apiFragment": {
+      "type": "string",
+      "description": "Path (relative to the module tree) of the OpenAPI fragment merged into the public contract.",
+      "maxLength": 256
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Core capabilities this module requires, e.g. nodes.read, runs.create, secrets.read, events.publish.",
+      "items": { "type": "string", "pattern": "^[a-z]+\\.[a-z.]+$" },
+      "uniqueItems": true
+    }
+  }
+}

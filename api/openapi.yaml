@@ -1,0 +1,2262 @@
+openapi: 3.1.0
+info:
+  title: Local Model Works
+  version: 1.0.0
+  description: >
+    Control plane API for a self-hosted local-AI workshop. Single-operator.
+    All mutations require a session cookie plus the X-CSRF-Token header.
+    Errors use the structured Error shape; resource conflicts are 409,
+    incompatible plans are 422, and unavailable required agents are 503.
+servers:
+  - url: /api/v1
+tags:
+  - name: auth
+  - name: system
+  - name: enrollment
+  - name: nodes
+  - name: fabrics
+  - name: artifacts
+  - name: recipes
+  - name: deployments
+  - name: runs
+  - name: benchmarks
+  - name: modules
+  - name: secrets
+  - name: migration
+
+paths:
+  /login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Exchange username/password for a session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '204':
+          description: Session cookie set
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the current session
+      responses:
+        '204':
+          description: Session ended
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /session:
+    get:
+      tags: [auth]
+      operationId: getSession
+      summary: Current session metadata including the CSRF token
+      responses:
+        '200':
+          description: Session info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /system/info:
+    get:
+      tags: [system]
+      operationId: systemInfo
+      responses:
+        '200':
+          description: Server identity and fleet summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /modules:
+    get:
+      tags: [system]
+      operationId: listModules
+      summary: Enabled first-party modules (descriptors present server- and client-side)
+      responses:
+        '200':
+          description: Module descriptors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Module'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /events:
+    get:
+      tags: [system]
+      operationId: streamEvents
+      summary: Server-sent event stream (telemetry, job state, log tails)
+      description: >
+        Monotonic integer event IDs. Clients resume with Last-Event-ID;
+        events older than the retention window are pruned and the stream
+        resends from the oldest retained ID.
+      parameters:
+        - name: types
+          in: query
+          description: Comma-separated event type filter
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /enrollment-tokens:
+    post:
+      tags: [enrollment]
+      operationId: createEnrollmentToken
+      summary: Create a one-use, ten-minute enrollment token
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnrollmentTokenRequest'
+      responses:
+        '201':
+          description: Token (plaintext shown once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      tags: [enrollment]
+      operationId: listEnrollmentTokens
+      responses:
+        '200':
+          description: Token list (hashed, no plaintext)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnrollmentToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /enrollment-tokens/{id}:
+    delete:
+      tags: [enrollment]
+      operationId: deleteEnrollmentToken
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '204':
+          description: Token revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /nodes:
+    get:
+      tags: [nodes]
+      operationId: listNodes
+      responses:
+        '200':
+          description: Enrolled nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes/{id}:
+    get:
+      tags: [nodes]
+      operationId: getNode
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Node with inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [nodes]
+      operationId: updateNode
+      summary: Set display name and labels
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: Updated node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /nodes/{id}/approve:
+    post:
+      tags: [nodes]
+      operationId: approveNode
+      summary: Approve a pending node's reported inventory
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Approved node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /nodes/{id}/rotate-certificate:
+    post:
+      tags: [nodes]
+      operationId: rotateNodeCertificate
+      summary: Issue a fresh 90-day client certificate for the node
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Certificate issued (agent picks it up on next session)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /fabrics:
+    get:
+      tags: [fabrics]
+      operationId: listFabrics
+      responses:
+        '200':
+          description: Fabrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [fabrics]
+      operationId: createFabric
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFabricRequest'
+      responses:
+        '201':
+          description: Fabric created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /fabrics/{id}:
+    get:
+      tags: [fabrics]
+      operationId: getFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Fabric with member validation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [fabrics]
+      operationId: updateFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFabricRequest'
+      responses:
+        '200':
+          description: Fabric updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [fabrics]
+      operationId: deleteFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Fabric deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /artifacts:
+    get:
+      tags: [artifacts]
+      operationId: listArtifacts
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            $ref: '#/components/schemas/ArtifactKind'
+        - name: node
+          in: query
+          description: Only artifacts with a placement on this node
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Artifacts with placements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Artifact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /artifacts/{id}/placements:
+    get:
+      tags: [artifacts]
+      operationId: listArtifactPlacements
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Placements for the artifact
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Placement'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /transfers:
+    post:
+      tags: [artifacts]
+      operationId: createTransfer
+      summary: Plan and start a peer transfer of an artifact between nodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '201':
+          description: Transfer started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [artifacts]
+      operationId: listTransfers
+      responses:
+        '200':
+          description: Transfers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /transfers/{id}:
+    get:
+      tags: [artifacts]
+      operationId: getTransfer
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Transfer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [artifacts]
+      operationId: cancelTransfer
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Transfer cancelled; resumable temporary state preserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /recipes:
+    get:
+      tags: [recipes]
+      operationId: listRecipes
+      responses:
+        '200':
+          description: Installed recipes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /recipes/import:
+    post:
+      tags: [recipes]
+      operationId: importRecipe
+      summary: Install a recipe from catalog, OCI reference, or pinned Git source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeImport'
+      responses:
+        '201':
+          description: Installed recipe (trust untrusted unless verified)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /recipes/{digest}:
+    get:
+      tags: [recipes]
+      operationId: getRecipe
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full recipe manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [recipes]
+      operationId: deleteRecipe
+      summary: Uninstall; blocked while referenced by any deployment or run
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Recipe uninstalled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /recipes/{digest}/trust:
+    post:
+      tags: [recipes]
+      operationId: setRecipeTrust
+      summary: Approve trust (local) after reviewing the permission diff
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeTrustRequest'
+      responses:
+        '200':
+          description: Recipe with updated trust state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /deployments/plan:
+    post:
+      tags: [deployments]
+      operationId: planDeployment
+      summary: Preview a deployment: placement, artifact preparation, ports, risks, conflicts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentPlanRequest'
+      responses:
+        '200':
+          description: Deployment plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments:
+    post:
+      tags: [deployments]
+      operationId: createDeployment
+      summary: Create and start a deployment from a validated plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentCreateRequest'
+      responses:
+        '201':
+          description: Deployment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [deployments]
+      operationId: listDeployments
+      responses:
+        '200':
+          description: Deployments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /deployments/{id}:
+    get:
+      tags: [deployments]
+      operationId: getDeployment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deployments/{id}/verify:
+    post:
+      tags: [deployments]
+      operationId: verifyDeployment
+      summary: Run the recipe's verification probes against the live workload
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment with verification diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments/{id}/stop:
+    post:
+      tags: [deployments]
+      operationId: stopDeployment
+      summary: Stop exactly this deployment's workload (label-scoped)
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment with stopping/stopped state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments/{id}/logs:
+    get:
+      tags: [deployments]
+      operationId: deploymentLogs
+      summary: Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: rank
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      parameters:
+        - name: module
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunState'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 500
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a previous page
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Runs, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunsPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /runs/{id}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{id}/cancel:
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      summary: Cancel a nonterminal run; terminates the exact process/container
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Run with cancelling state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /runs/{id}/logs:
+    get:
+      tags: [runs]
+      operationId: runLogs
+      summary: Stream run logs (SSE); byte-cursor resume via Last-Event-ID
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /benchmarks:
+    post:
+      tags: [benchmarks]
+      operationId: createBenchmark
+      summary: Launch a benchmark run against a deployment or explicit endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BenchmarkCreate'
+      responses:
+        '201':
+          description: Benchmark run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [benchmarks]
+      operationId: listBenchmarks
+      responses:
+        '200':
+          description: Benchmark runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /benchmarks/results:
+    get:
+      tags: [benchmarks]
+      operationId: listBenchmarkResults
+      responses:
+        '200':
+          description: Per-language results across runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BenchmarkResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /modules/{id}/settings:
+    get:
+      tags: [modules]
+      operationId: getModuleSettings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Module settings values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [modules]
+      operationId: putModuleSettings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModuleSettings'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /secrets:
+    get:
+      tags: [secrets]
+      operationId: listSecrets
+      responses:
+        '200':
+          description: Secret metadata only (never values)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Secret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [secrets]
+      operationId: putSecret
+      summary: Create or replace a secret value (AES-256-GCM encrypted at rest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecretWrite'
+      responses:
+        '201':
+          description: Secret metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Secret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /secrets/{id}:
+    delete:
+      tags: [secrets]
+      operationId: deleteSecret
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '204':
+          description: Secret deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /migration/scan:
+    post:
+      tags: [migration]
+      operationId: migrationScan
+      summary: Scan the legacy DGX-Dashboard installation; returns a saved plan with digest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationScanRequest'
+      responses:
+        '200':
+          description: Migration plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /migration/import:
+    post:
+      tags: [migration]
+      operationId: migrationImport
+      summary: Execute a previously saved, digested migration plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationImportRequest'
+      responses:
+        '200':
+          description: Import report
+          content:
+            application/json:
+              schema:
+              properties:
+                imported:
+                  type: object
+                unsupported:
+                  type: array
+                  items:
+                    type: string
+                counts:
+                  type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Resource conflict (occupation, duplicate, stale state)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Incompatible plan or invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: Required agent(s) unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code, e.g. node.occupied, plan.incompatible
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    Session:
+      type: object
+      required: [username, csrf_token, expires_at]
+      properties:
+        username:
+          type: string
+        csrf_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    SystemInfo:
+      type: object
+      required: [version, commit, time, nodes]
+      properties:
+        version:
+          type: string
+        commit:
+          type: string
+        time:
+          type: string
+          format: date-time
+        nodes:
+          type: object
+          properties:
+            total:
+              type: integer
+            online:
+              type: integer
+            approved:
+              type: integer
+
+    Module:
+      type: object
+      required: [id, title, route]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        route:
+          type: string
+        nav:
+          type: object
+          properties:
+            label:
+              type: string
+            order:
+              type: integer
+            icon:
+              type: string
+        settingsSchema:
+          type: object
+          additionalProperties: true
+        jobKinds:
+          type: array
+          items:
+            type: string
+        artifactKinds:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+
+    CreateEnrollmentTokenRequest:
+      type: object
+      properties:
+        description:
+          type: string
+
+    EnrollmentToken:
+      type: object
+      required: [id, expires_at]
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+          description: Plaintext token; present only on creation
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    NodeStatus:
+      type: string
+      enum: [pending, online, offline, degraded]
+
+    Node:
+      type: object
+      required: [id, display_name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        agent_version:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/NodeStatus'
+        last_heartbeat:
+          type: string
+          format: date-time
+          nullable: true
+        certificate_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        inventory:
+          $ref: '#/components/schemas/Inventory'
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        created_at:
+          type: string
+          format: date-time
+
+    Inventory:
+      type: object
+      required: [hostname, os, arch, docker]
+      properties:
+        hostname:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        docker:
+          type: object
+          required: [version, ok]
+          properties:
+            version:
+              type: string
+            api_version:
+              type: string
+            ok:
+              type: boolean
+        accelerators:
+          type: array
+          items:
+            $ref: '#/components/schemas/Accelerator'
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkInterface'
+        rdma_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/RdmaDevice'
+        cache_roots:
+          type: array
+          items:
+            type: string
+
+    Accelerator:
+      type: object
+      required: [index, vendor, name, uuid, memory_bytes]
+      properties:
+        index:
+          type: integer
+        vendor:
+          type: string
+          description: Vendor-neutral capability field, e.g. nvidia, amd, intel
+        architecture:
+          type: string
+          description: e.g. sm_120, gfx1201
+        name:
+          type: string
+        uuid:
+          type: string
+        memory_bytes:
+          type: integer
+          format: int64
+        features:
+          type: array
+          items:
+            type: string
+
+    NetworkInterface:
+      type: object
+      required: [name, addresses]
+      properties:
+        name:
+          type: string
+        addresses:
+          type: array
+          items:
+            type: string
+        mtu:
+          type: integer
+        link_mbps:
+          type: integer
+
+    RdmaDevice:
+      type: object
+      required: [name, ports]
+      properties:
+        name:
+          type: string
+        vendor:
+          type: string
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              state:
+                type: string
+              link_rate_gbps:
+                type: integer
+
+    Diagnostic:
+      type: object
+      required: [code, severity, message]
+      properties:
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, error]
+        message:
+          type: string
+        resource:
+          type: string
+          nullable: true
+
+    UpdateNodeRequest:
+      type: object
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    CertificateInfo:
+      type: object
+      required: [expires_at]
+      properties:
+        serial:
+          type: string
+        not_before:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateFabricRequest:
+      type: object
+      required: [name, transport, members]
+      properties:
+        name:
+          type: string
+        transport:
+          type: string
+          enum: [roce, tcp]
+        interface_name:
+          type: string
+        address:
+          type: string
+          description: Interface address of the first member
+        rdma_device:
+          type: string
+          nullable: true
+        members:
+          type: array
+          description: Ordered node IDs; index is the fabric rank
+          minItems: 2
+          items:
+            type: string
+
+    Fabric:
+      type: object
+      required: [id, name, transport, members, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        transport:
+          type: string
+          enum: [roce, tcp]
+        interface_name:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        rdma_device:
+          type: string
+          nullable: true
+        members:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          enum: [ok, incomplete]
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        version:
+          type: string
+          description: ETag for optimistic concurrency
+
+    ArtifactKind:
+      type: string
+      enum: [model, dataset, adapter, checkpoint, recipe, image, result, file]
+
+    Artifact:
+      type: object
+      required: [id, kind, identity, validation_state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        identity:
+          type: string
+          description: Canonical identity, e.g. hf://owner/repo@revision, sha256 digest, or OCI digest
+        revision:
+          type: string
+          nullable: true
+        digest:
+          type: string
+          nullable: true
+        validation_state:
+          type: string
+          enum: [pending, valid, invalid]
+        metadata:
+          type: object
+          additionalProperties: true
+        placements:
+          type: array
+          items:
+            $ref: '#/components/schemas/Placement'
+
+    Placement:
+      type: object
+      required: [artifact_id, node_id, path, state]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        state:
+          type: string
+          enum: [pending, valid, invalid]
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
+    TransferRequest:
+      type: object
+      required: [artifact_id, source_node, dest_node, dest_path]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        source_node:
+          type: string
+          format: uuid
+        dest_node:
+          type: string
+          format: uuid
+        dest_path:
+          type: string
+
+    Transfer:
+      type: object
+      required: [id, artifact_id, source_node, dest_node, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        artifact_id:
+          type: string
+          format: uuid
+        source_node:
+          type: string
+          format: uuid
+        dest_node:
+          type: string
+          format: uuid
+        dest_path:
+          type: string
+        state:
+          type: string
+          enum: [pending, transferring, validating, complete, failed, cancelled]
+        bytes_total:
+          type: integer
+          format: int64
+        bytes_done:
+          type: integer
+          format: int64
+        diagnostic:
+          $ref: '#/components/schemas/Diagnostic'
+        created_at:
+          type: string
+          format: date-time
+
+    RecipeSource:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [catalog, oci, git, local]
+        reference:
+          type: string
+        revision:
+          type: string
+        path:
+          type: string
+        remote:
+          type: string
+        tree:
+          type: string
+
+    RecipeImport:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: '#/components/schemas/RecipeSource'
+
+    Recipe:
+      type: object
+      required: [digest, name, version, trust_state, installed_at]
+      properties:
+        digest:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        license:
+          type: string
+        source:
+          $ref: '#/components/schemas/RecipeSource'
+        trust_state:
+          type: string
+          enum: [verified, local, untrusted]
+        permissions:
+          type: array
+          items:
+            type: string
+        compatibility:
+          $ref: '#/components/schemas/Compatibility'
+        artifact_count:
+          type: integer
+        profile_count:
+          type: integer
+        variant_count:
+          type: integer
+        high_risk:
+          type: array
+          items:
+            type: string
+        installed_at:
+          type: string
+          format: date-time
+        version_count:
+          type: integer
+          description: Other installed versions of the same recipe name
+
+    RecipeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Recipe'
+        - type: object
+          properties:
+            manifest:
+              type: object
+              description: Canonical recipe manifest JSON (localmodelworks/v1alpha1)
+            updates:
+              type: array
+              items:
+                type: object
+                properties:
+                  digest:
+                    type: string
+                  version:
+                    type: string
+                  diff:
+                    type: object
+                    description: Manifest/permission difference summary
+
+    Compatibility:
+      type: object
+      properties:
+        node_count:
+          type: integer
+        accelerator:
+          type: object
+          additionalProperties: true
+        fabric:
+          type: object
+          additionalProperties: true
+
+    RecipeTrustRequest:
+      type: object
+      required: [trust_state, permission_diff_accepted]
+      properties:
+        trust_state:
+          type: string
+          enum: [local, untrusted]
+        permission_diff_accepted:
+          type: boolean
+
+    DeploymentPlanRequest:
+      type: object
+      required: [recipe_digest, profile]
+      properties:
+        recipe_digest:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          description: Optional explicit node per rank; omit for automatic selection
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              rank:
+                type: integer
+
+    TransferPreview:
+      type: object
+      required: [artifact_id, source_node, dest_node, dest_path, bytes]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        identity:
+          type: string
+        source_node:
+          type: string
+        source_path:
+          type: string
+        dest_node:
+          type: string
+        dest_path:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        network:
+          type: string
+          description: Network path, e.g. fabric spark-p2p (roce), tailnet, local
+
+    DeploymentPlan:
+      type: object
+      required: [recipe_digest, profile, placements, ready]
+      properties:
+        recipe_digest:
+          type: string
+        recipe_name:
+          type: string
+        recipe_version:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank, accelerator_index]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              rank:
+                type: integer
+              accelerator_index:
+                type: integer
+              accelerator_uuid:
+                type: string
+        fabric:
+          type: string
+          nullable: true
+        transfers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferPreview'
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              node_name:
+                type: string
+              host_port:
+                type: integer
+              container_port:
+                type: integer
+              protocol:
+                type: string
+        endpoint:
+          type: object
+          properties:
+            host:
+              type: string
+            port:
+              type: integer
+            path:
+              type: string
+            model:
+              type: string
+        risks:
+          type: array
+          items:
+            type: string
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              resource:
+                type: string
+              occupied_by:
+                type: string
+              deployment_id:
+                type: string
+                format: uuid
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        ready:
+          type: boolean
+          description: false when conflicts or unmet compatibility block creation
+
+    DeploymentCreateRequest:
+      type: object
+      required: [recipe_digest, profile]
+      properties:
+        recipe_digest:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              rank:
+                type: integer
+        plan_digest:
+          type: string
+          description: Distinguishes an unchanged plan from the one previewed
+
+    Deployment:
+      type: object
+      required: [id, recipe_digest, profile, desired_state, observed_state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipe_digest:
+          type: string
+        recipe_name:
+          type: string
+        recipe_version:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              rank:
+                type: integer
+              accelerator_index:
+                type: integer
+              container:
+                type: string
+                nullable: true
+        fabric:
+          type: string
+          nullable: true
+        desired_state:
+          type: string
+          enum: [running, stopped]
+        observed_state:
+          type: string
+          enum: [unknown, preparing, starting, healthy, degraded, stopping, stopped, failed]
+        endpoint:
+          type: object
+          nullable: true
+          properties:
+            host:
+              type: string
+            port:
+              type: integer
+            path:
+              type: string
+            model:
+              type: string
+        model_capabilities:
+          type: object
+          nullable: true
+          additionalProperties: true
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        run_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RunState:
+      type: string
+      enum: [queued, planning, waiting, running, verifying, succeeded, failed, cancelling, cancelled, interrupted]
+
+    Run:
+      type: object
+      required: [id, module, kind, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        module:
+          type: string
+        kind:
+          type: string
+        state:
+          $ref: '#/components/schemas/RunState'
+        resources:
+          type: object
+          properties:
+            nodes:
+              type: array
+              items:
+                type: string
+            accelerators:
+              type: array
+              items:
+                type: string
+            fabrics:
+              type: array
+              items:
+                type: string
+        input:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        deployment_id:
+          type: string
+          format: uuid
+          nullable: true
+        legacy_identity:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RunsPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Run'
+        next_cursor:
+          type: string
+          nullable: true
+
+    BenchmarkCreate:
+      type: object
+      required: [deployment_id, languages]
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+        languages:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        prompts_per_language:
+          type: integer
+          default: 8
+        max_tokens:
+          type: integer
+          default: 512
+        temperature:
+          type: number
+          default: 0
+        model_name:
+          type: string
+          description: Override the model field sent to the endpoint
+        quantization:
+          type: string
+        reason:
+          type: string
+          description: Why this benchmark is being run; stored with the result
+
+    BenchmarkResult:
+      type: object
+      required: [run_id, language]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        language:
+          type: string
+        endpoint:
+          type: string
+        model:
+          type: string
+        requests:
+          type: integer
+        successes:
+          type: integer
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        wall_seconds:
+          type: number
+        tokens_per_second:
+          type: number
+        latency_ms:
+          type: object
+          properties:
+            avg:
+              type: number
+            p50:
+              type: number
+            p90:
+              type: number
+            p99:
+              type: number
+        first_token_ms:
+          type: object
+          additionalProperties:
+            type: number
+        grading:
+          type: object
+          nullable: true
+          additionalProperties: true
+        quantization:
+          type: string
+          nullable: true
+        reasoning:
+          type: object
+          nullable: true
+          additionalProperties: true
+        result_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ModuleSettings:
+      type: object
+      required: [module, settings, version]
+      properties:
+        module:
+          type: string
+        settings:
+          type: object
+          additionalProperties: true
+        version:
+          type: string
+          description: ETag for optimistic concurrency
+
+    Secret:
+      type: object
+      required: [id, name, purpose]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        purpose:
+          type: string
+          enum: [huggingface, github, registry]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SecretWrite:
+      type: object
+      required: [name, purpose, value]
+      properties:
+        name:
+          type: string
+        purpose:
+          type: string
+          enum: [huggingface, github, registry]
+        value:
+          type: string
+
+    MigrationScanRequest:
+      type: object
+      properties:
+        legacy_root:
+          type: string
+          description: Default /home/workbench/Projects/personal/dgx-dashboard
+        cache_roots:
+          type: array
+          description: Per-node explicit cache roots; nodes without an entry use agent-reported roots
+          items:
+            type: object
+            required: [node_id, path]
+            properties:
+              node_id:
+                type: string
+              path:
+                type: string
+
+    MigrationPlan:
+      type: object
+      required: [plan_digest, counts, recipes, unsupported]
+      properties:
+        plan_digest:
+          type: string
+        counts:
+          type: object
+          properties:
+            recipes_discovered:
+              type: integer
+            recipes_importable:
+              type: integer
+            unsupported:
+              type: integer
+            runs:
+              type: integer
+            runs_nonterminal:
+              type: integer
+            benchmark_results:
+              type: integer
+            containers_current:
+              type: integer
+        recipes:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              version:
+                type: string
+              kind:
+                type: string
+                enum: [single, cluster, unsupported]
+              image_refs:
+                type: array
+                items:
+                  type: string
+              mutable_images:
+                type: array
+                items:
+                  type: string
+              status:
+                type: string
+                enum: [importable, needs-digest-pin, unsupported]
+              reason:
+                type: string
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              state:
+                type: string
+              terminal:
+                type: boolean
+        unsupported:
+          type: array
+          items:
+            type: string
+        cache_placements:
+          type: array
+          items:
+            type: object
+            properties:
+              node_id:
+                type: string
+              path:
+                type: string
+              valid:
+                type: boolean
+
+    MigrationImportRequest:
+      type: object
+      required: [plan_digest]
+      properties:
+        plan_digest:
+          type: string
+        confirm:
+          type: boolean
+          default: false
