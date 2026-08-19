@@ -81,6 +81,13 @@
       "items": { "$ref": "#/$defs/workload" }
     },
     "prepare": { "$ref": "#/$defs/extension" },
+    "assets": {
+      "type": "array",
+      "description": "Package asset files, relative to the recipe root; mounted read-only at /lmw/assets.",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
+      "uniqueItems": true,
+      "maxItems": 256
+    },
     "verify": { "$ref": "#/$defs/extension" }
   },
   "$defs": {
