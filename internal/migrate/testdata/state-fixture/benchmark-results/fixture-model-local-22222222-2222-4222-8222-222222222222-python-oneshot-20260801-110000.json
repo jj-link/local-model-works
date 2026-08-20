@@ -1,0 +1,36 @@
+{
+ "alias": "fixture-model",
+ "gpu": "rtx-pro-6000",
+ "lang": "python",
+ "meta": {
+  "backend": "vllm",
+  "endpoint": "http://127.0.0.1:8000/v1",
+  "run_id": "22222222-2222-4222-8222-222222222222",
+  "quant": "fp8",
+  "reasoning": "disabled",
+  "target": "local"
+ },
+ "pass_rate": 50.0,
+ "passed": 1,
+ "results": [
+  {
+   "name": "t1",
+   "ok": true,
+   "latency_s": 1.5,
+   "prompt_tokens": 100,
+   "completion_tokens": 50
+  },
+  {
+   "name": "t2",
+   "ok": false,
+   "latency_s": 2.5,
+   "prompt_tokens": 200,
+   "completion_tokens": 70
+  }
+ ],
+ "run_id": "22222222-2222-4222-8222-222222222222",
+ "served": "fixture-model",
+ "started": "20260801-110000",
+ "target": "local",
+ "total": 2
+}

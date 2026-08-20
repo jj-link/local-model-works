@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+coverage/
+*.local
+.env
+playwright-report/
+test-results/
+node_modules/.tmp/
+.react-router/

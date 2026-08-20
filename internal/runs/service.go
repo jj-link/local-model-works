@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/cjson"
@@ -108,16 +109,30 @@ type Filter struct {
 	Limit         int
 }
 
-// Service is the run ledger.
 type Service struct {
 	db      *sql.DB
 	q       *db.Queries
 	bus     *events.EventBus
 	runRoot string
+
+	logEndMu sync.Mutex
+	logEnds  map[logEndKey]uint64
+	logEndCh map[logEndKey]chan struct{}
+}
+
+type logEndKey struct {
+	runID        string
+	deploymentID string
+	rank         int32
+	stream       string
 }
 
 func New(database *sql.DB, q *db.Queries, bus *events.EventBus, runRoot string) *Service {
-	return &Service{db: database, q: q, bus: bus, runRoot: runRoot}
+	return &Service{
+		db: database, q: q, bus: bus, runRoot: runRoot,
+		logEnds:  map[logEndKey]uint64{},
+		logEndCh: map[logEndKey]chan struct{}{},
+	}
 }
 
 // DB exposes the raw handle for multi-row transactions (run + deployment +
@@ -352,7 +367,9 @@ func (s *Service) ResourcesOf(ctx context.Context, ownerKind, ownerID string) Re
 		case "node":
 			add(&res.Nodes, parts[1])
 		case "gpu":
-			add(&res.Accelerators, parts[1])
+			// Keep the full lease identity (gpu:<node>:<uuid>) so values
+			// round-trip into ActiveOwners without re-prefixing.
+			add(&res.Accelerators, r.Resource)
 		case "fabric":
 			add(&res.Fabrics, parts[1])
 		}
@@ -443,6 +460,66 @@ func (s *Service) ReadLog(runID, deploymentID string, rank int32, stream string,
 		return nil, 0, size, err
 	}
 	return chunk, offset + uint64(len(chunk)), size, nil
+}
+
+// MarkLogEnd records that one log stream reached EOF at endOffset (the
+// agent's tailer sent its terminal LogChunk). Idempotent: a later call with
+// a larger offset wins (resume/restart), smaller offsets are ignored.
+func (s *Service) MarkLogEnd(runID, deploymentID string, rank int32, stream string, endOffset uint64) {
+	if deploymentID == "" {
+		deploymentID = "adhoc"
+	}
+	key := logEndKey{runID: runID, deploymentID: deploymentID, rank: rank, stream: stream}
+	s.logEndMu.Lock()
+	defer s.logEndMu.Unlock()
+	if prev, ok := s.logEnds[key]; ok && prev >= endOffset {
+		return
+	}
+	s.logEnds[key] = endOffset
+	if ch, ok := s.logEndCh[key]; ok {
+		close(ch)
+		delete(s.logEndCh, key)
+	}
+}
+
+// LogEnded reports the recorded EOF offset for one stream, if the terminal
+// marker has been seen.
+func (s *Service) LogEnded(runID, deploymentID string, rank int32, stream string) (uint64, bool) {
+	if deploymentID == "" {
+		deploymentID = "adhoc"
+	}
+	key := logEndKey{runID: runID, deploymentID: deploymentID, rank: rank, stream: stream}
+	s.logEndMu.Lock()
+	defer s.logEndMu.Unlock()
+	v, ok := s.logEnds[key]
+	return v, ok
+}
+
+// WaitLogEnd blocks until the stream's terminal marker is recorded or ctx
+// is done; it returns the recorded EOF offset.
+func (s *Service) WaitLogEnd(ctx context.Context, runID, deploymentID string, rank int32, stream string) (uint64, error) {
+	if deploymentID == "" {
+		deploymentID = "adhoc"
+	}
+	key := logEndKey{runID: runID, deploymentID: deploymentID, rank: rank, stream: stream}
+	s.logEndMu.Lock()
+	if v, ok := s.logEnds[key]; ok {
+		s.logEndMu.Unlock()
+		return v, nil
+	}
+	ch, ok := s.logEndCh[key]
+	if !ok {
+		ch = make(chan struct{})
+		s.logEndCh[key] = ch
+	}
+	s.logEndMu.Unlock()
+	select {
+	case <-ch:
+		v, _ := s.LogEnded(runID, deploymentID, rank, stream)
+		return v, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
 // view renders a ledger row.

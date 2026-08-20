@@ -197,6 +197,10 @@ message CommandResult {
   int32 exit_code = 3;
   string error = 4;
   string container_id = 5;
+  // Observed container state for INSPECT: created|running|exited|paused|removing|dead
+  // (empty for non-container ops). Distinguishes "still running" from "exited with
+  // code N", which ok/exit_code alone cannot.
+  string container_state = 6;
 }
 
 message StateUpdate {
@@ -221,6 +225,12 @@ message LogChunk {
   // Byte offset within this stream for the owning run/deployment/rank.
   uint64 offset = 5;
   bytes data = 6;
+  // Terminal marker for this stream: the tailer sends one final chunk (empty
+  // data) after the container's output fully drains, so controllers can wait
+  // for a deterministic EOF instead of racing container exit.
+  bool final = 7;
+  // Total byte length of the stream file at the final marker.
+  uint64 end_offset = 8;
 }
 
 message PlacementReport {

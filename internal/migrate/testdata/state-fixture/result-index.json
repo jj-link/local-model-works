@@ -1,0 +1,46 @@
+{
+ "version": 4,
+ "files": {
+  "fixture-model-local-22222222-2222-4222-8222-222222222222-python-oneshot-20260801-110000.json": {
+   "mtime_ns": 1785000000000000000,
+   "size": 691,
+   "summary": {
+    "alias": "fixture-model",
+    "complete": true,
+    "kind": "oneshot",
+    "language": "python",
+    "passed": 1,
+    "prompt_tokens": 300,
+    "completion_tokens": 120,
+    "quant": "fp8",
+    "reasoning": "disabled",
+    "run_id": "22222222-2222-4222-8222-222222222222",
+    "served": "fixture-model",
+    "target": "local",
+    "total": 2
+   }
+  },
+  "cross-agent-oneshot-20260801-130000.json": {
+   "mtime_ns": 1785000001000000000,
+   "size": 686,
+   "summary": {
+    "alias": "fixture-model",
+    "complete": true,
+    "kind": "cross-agent",
+    "language": "python",
+    "passed": 1,
+    "quant": "",
+    "reasoning": "disabled",
+    "run_id": "55555555-5555-4555-8555-555555555555",
+    "served": "fixture-model",
+    "target": "cluster",
+    "total": 1
+   }
+  },
+  "ghost-entry-missing-file.json": {
+   "mtime_ns": 1785000002000000000,
+   "size": 10,
+   "summary": null
+  }
+ }
+}

@@ -84,7 +84,7 @@ func (c *CA) NodeCertFor(nodeID, hostname string, pub *ecdsa.PublicKey, validity
 // ServerCert mints the controller's own leaf certificate (name + IP SANs)
 // for the agent and browser listeners. Minted per process; clients pin the
 // CA, not the leaf.
-func (c *CA) ServerCert(name string, ips []net.IP, validity time.Duration) (certPEM, keyPEM []byte, expires time.Time, err error) {
+func (c *CA) ServerCert(names []string, ips []net.IP, validity time.Duration) (certPEM, keyPEM []byte, expires time.Time, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, time.Time{}, fmt.Errorf("server key: %w", err)
@@ -101,7 +101,7 @@ func (c *CA) ServerCert(name string, ips []net.IP, validity time.Duration) (cert
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{name},
+		DNSNames:     names,
 		IPAddresses:  ips,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)

@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.variant-ambiguous",
+  "note": "Two variants with identical (empty) capability predicates make selection ambiguous."
+}

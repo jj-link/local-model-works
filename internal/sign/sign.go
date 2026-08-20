@@ -7,6 +7,7 @@ package sign
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -21,6 +22,23 @@ type SignatureBlob struct {
 	Alg            string `json:"alg"`
 	KeyFingerprint string `json:"key_fingerprint"`
 	Signature      string `json:"signature"`
+}
+
+// NewKeyPEM generates a fresh Ed25519 key pair and returns the PEM PKIX
+// public key for recipe/catalog signature verification. The private key is
+// discarded: server-side verification only needs the public half. Products
+// that sign recipes keep their own key; this materializes a key for a new
+// control plane whose operator has not yet configured one.
+func NewKeyPEM() ([]byte, error) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), nil
 }
 
 // VerifyEd25519 checks sigJSON over doc against the PEM public key.

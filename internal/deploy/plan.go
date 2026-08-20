@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -29,15 +30,19 @@ var (
 	ErrPlanStale = errors.New("plan digest mismatch")
 	ErrNotReady  = errors.New("plan not ready")
 	ErrState     = errors.New("invalid state for operation")
+	// ErrUntrusted — the recipe is untrusted and cannot launch. It is
+	// inspectable but not launchable until the operator approves it (local)
+	// or a signature verifies it. Stable API code: recipe.untrusted (409).
+	ErrUntrusted = errors.New("recipe untrusted")
 )
 
 // Placement is one rank assignment (openapi placements item).
 type Placement struct {
-	NodeID           string `json:"node_id"`
-	NodeName         string `json:"node_name,omitempty"`
-	Rank             int32  `json:"rank"`
-	AcceleratorIndex int32  `json:"accelerator_index"`
-	AcceleratorUUID  string `json:"accelerator_uuid,omitempty"`
+	NodeID           string   `json:"node_id"`
+	NodeName         string   `json:"node_name,omitempty"`
+	Rank             int32    `json:"rank"`
+	AcceleratorIndex int32    `json:"accelerator_index"`
+	AcceleratorUUID  string   `json:"accelerator_uuid,omitempty"`
 	Accelerators     []string `json:"accelerators,omitempty"` // full set for multi-GPU ranks
 	Container        string   `json:"container,omitempty"`
 }
@@ -85,48 +90,48 @@ type TransferPreview struct {
 
 // Plan is the previewed deployment (openapi DeploymentPlan).
 type Plan struct {
-	RecipeDigest   string              `json:"recipe_digest"`
-	RecipeName     string              `json:"recipe_name,omitempty"`
-	RecipeVersion  string              `json:"recipe_version,omitempty"`
-	Profile        string              `json:"profile"`
-	WorkloadIndex  int                 `json:"workload_index"`
-	Placements     []Placement         `json:"placements"`
-	Fabric         *string             `json:"fabric,omitempty"`
-	Transfers      []TransferPreview   `json:"transfers,omitempty"`
-	Ports          []PortPreview       `json:"ports,omitempty"`
-	Endpoint       Endpoint            `json:"endpoint,omitempty"`
-	Risks          []string            `json:"risks,omitempty"`
-	Conflicts      []Conflict          `json:"conflicts,omitempty"`
-	Diagnostics    []diag.Diagnostic   `json:"diagnostics,omitempty"`
-	Ready          bool                `json:"ready"`
-	Digest         string              `json:"plan_digest,omitempty"`
+	RecipeDigest  string            `json:"recipe_digest"`
+	RecipeName    string            `json:"recipe_name,omitempty"`
+	RecipeVersion string            `json:"recipe_version,omitempty"`
+	Profile       string            `json:"profile"`
+	WorkloadIndex int               `json:"workload_index"`
+	Placements    []Placement       `json:"placements"`
+	Fabric        *string           `json:"fabric,omitempty"`
+	Transfers     []TransferPreview `json:"transfers,omitempty"`
+	Ports         []PortPreview     `json:"ports,omitempty"`
+	Endpoint      Endpoint          `json:"endpoint,omitempty"`
+	Risks         []string          `json:"risks,omitempty"`
+	Conflicts     []Conflict        `json:"conflicts,omitempty"`
+	Diagnostics   []diag.Diagnostic `json:"diagnostics,omitempty"`
+	Ready         bool              `json:"ready"`
+	Digest        string            `json:"plan_digest,omitempty"`
 }
 
 // PlanRequest previews a deployment (openapi DeploymentPlanRequest).
 type PlanRequest struct {
-	RecipeDigest string            `json:"recipe_digest"`
-	Profile      string            `json:"profile"`
+	RecipeDigest string              `json:"recipe_digest"`
+	Profile      string              `json:"profile"`
 	Placements   []PlacementOverride `json:"placements,omitempty"`
 }
 
 // CreateRequest creates from a validated plan (openapi).
 type CreateRequest struct {
-	RecipeDigest string            `json:"recipe_digest"`
-	Profile      string            `json:"profile"`
+	RecipeDigest string              `json:"recipe_digest"`
+	Profile      string              `json:"profile"`
 	Placements   []PlacementOverride `json:"placements,omitempty"`
-	PlanDigest   string            `json:"plan_digest,omitempty"`
+	PlanDigest   string              `json:"plan_digest,omitempty"`
 }
 
 // dispatchPhase is one rank's completed dispatch step.
 type dispatchPhases map[int32]string
 
 const (
-	PhaseNone      = "none"
-	PhasePulled    = "pulled"
-	PhaseCreated   = "created"
-	PhaseStarted   = "started"
-	PhaseStopping  = "stopping"
-	PhaseStopped   = "stopped"
+	PhaseNone     = "none"
+	PhasePulled   = "pulled"
+	PhaseCreated  = "created"
+	PhaseStarted  = "started"
+	PhaseStopping = "stopping"
+	PhaseStopped  = "stopped"
 )
 
 func (d dispatchPhases) Get(rank int32) string {
@@ -201,13 +206,13 @@ type nodeCandidate struct {
 
 // planAccRequirement is the accelerator predicate for one plan.
 type planAccRequirement struct {
-	Required    bool
-	Vendor      string
+	Required      bool
+	Vendor        string
 	Architectures []string
-	MinMemory   int64
-	Features    []string
-	Count       int
-	All         bool
+	MinMemory     int64
+	Features      []string
+	Count         int
+	All           bool
 }
 
 func matchesAcc(req *planAccRequirement, a inventory.Accelerator) bool {
@@ -251,6 +256,9 @@ type nodeInfo struct {
 }
 
 // firstNonLoopback returns the first usable unicast address of one node.
+// Link-layer (MAC) entries recorded by the host baseline for interfaces
+// without a usable IP are skipped: they are not unicast addresses and
+// must never become an endpoint host.
 func firstNonLoopback(inv *inventory.Inventory) string {
 	if inv == nil {
 		return ""
@@ -260,7 +268,11 @@ func firstNonLoopback(inv *inventory.Inventory) string {
 			if a == "" || a == "127.0.0.1" || a == "::1" {
 				continue
 			}
-			return strings.Split(a, "/")[0]
+			host := strings.Split(a, "/")[0]
+			if net.ParseIP(host) == nil {
+				continue
+			}
+			return host
 		}
 	}
 	return ""

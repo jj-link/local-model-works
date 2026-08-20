@@ -1,0 +1,34 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: benchmarks
+title: Benchmarks
+route: /benchmarks
+nav:
+  label: Benchmarks
+  order: 40
+  icon: benchmarks
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties:
+    default_prompts_per_language:
+      type: integer
+      minimum: 1
+      maximum: 256
+    default_max_tokens:
+      type: integer
+      minimum: 16
+      maximum: 16384
+    languages:
+      type: array
+      items:
+        type: string
+      uniqueItems: true
+jobKinds:
+  - benchmark
+apiFragment: api.yaml
+capabilities:
+  - runs.create
+  - deployments.read
+  - events.publish

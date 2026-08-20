@@ -9,14 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/ca"
-	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/events"
@@ -25,6 +24,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/runtime"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 // NodeSender delivers commands to one node and reports liveness.
@@ -42,19 +42,19 @@ type inflightCmd struct {
 
 // Service is the deployment domain service.
 type Service struct {
-	db   *sql.DB
-	q    *db.Queries
-	bus  *events.EventBus
-	runs *runs.Service
+	db    *sql.DB
+	q     *db.Queries
+	bus   *events.EventBus
+	runs  *runs.Service
 	nodes NodeSender
-	ca   *ca.CA
+	ca    *ca.CA
 
 	mu       sync.Mutex
-	inflight   map[string]*inflightCmd
+	inflight map[string]*inflightCmd
 	// transferInflight keys "depID|nodeID|artifactIdentity" to the active
 	// transfer id; dispatch stays gated until a placement or ack resolves it.
 	transferInflight map[string]string
-	dispatchMu sync.Mutex // serializes dispatch-phase read-modify-write
+	dispatchMu       sync.Mutex // serializes dispatch-phase read-modify-write
 }
 
 func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender, ca *ca.CA) *Service {
@@ -77,6 +77,11 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 	row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
+	}
+	// Trust gate: an untrusted recipe is inspectable but not launchable.
+	// Plan (and thus Create) blocks before any run or deployment row exists.
+	if row.TrustState == recipe.TrustUntrusted {
+		return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
 	}
 	m, err := recipe.Parse([]byte(row.Manifest))
 	if err != nil {
@@ -232,6 +237,10 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 		c := &candidates[i]
 		byID[c.nodeID] = c
 	}
+	nodeStatus := map[string]string{}
+	for _, n := range nodes {
+		nodeStatus[n.ID] = n.Status
+	}
 	// Accelerator allocation within this plan: UUIDs per node, plus the
 	// set of nodes a devAll rank has consumed (no second rank there).
 	allocUUID := map[string]map[string]bool{}
@@ -333,8 +342,16 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 			covered[ov.Rank] = true
 			c, okc := byID[ov.NodeID]
 			if !okc {
-				plan.Diagnostics = append(plan.Diagnostics, diag.Error("placement.node_unavailable",
-					fmt.Sprintf("node %s is not an eligible candidate", ov.NodeID)))
+				code, msg := "placement.node_unavailable",
+					fmt.Sprintf("node %s is not an eligible candidate", ov.NodeID)
+				if st, known := nodeStatus[ov.NodeID]; known && st == "online" {
+					// The node is known and online but was filtered out:
+					// name the real reason (no free compatible accelerators)
+					// instead of the generic ineligibility.
+					code, msg = "placement.accelerator_unavailable",
+						fmt.Sprintf("node %s cannot host rank %d: no free compatible accelerators", ov.NodeID, ov.Rank)
+				}
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error(code, msg))
 				continue
 			}
 			pl, err := allocOne(c, ov.Rank)
@@ -1209,7 +1226,7 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 			s.mu.Unlock()
 			return false // transfer already in flight
 		}
-		tid, derr := s.startTransfer(ctx, art, pl.NodeID, row.Fabric.String)
+		tid, derr := s.startTransfer(ctx, art, "", pl.NodeID, "", row.Fabric.String)
 		if derr != nil {
 			s.mu.Unlock()
 			s.failDispatch(ctx, row.ID, rank, runID, "artifact.transfer_failed", derr.Error())
@@ -1225,9 +1242,44 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 	return true
 }
 
+// StartTransfer plans and dispatches a peer transfer of art from an
+// explicit source node to destNodeID at destPath. destPath must be a safe
+// relative path (nested paths preserved; absolute or ".." rejected); an
+// empty destPath derives it from the source placement.
+func (s *Service) StartTransfer(ctx context.Context, art db.Artifact, sourceNodeID, destNodeID, destPath string) (string, error) {
+	return s.startTransfer(ctx, art, sourceNodeID, destNodeID, destPath, "")
+}
+
+// safeRelPath normalizes a requested destination path: relative, slash-
+// separated, no ".." components; the base name survives for a bare file.
+func safeRelPath(p string) (string, error) {
+	if p == "" {
+		return "", nil
+	}
+	p = path.Clean(strings.TrimSpace(p))
+	if p == "." {
+		return "", errors.New("dest_path must name a file or directory")
+	}
+	if strings.Contains(p, "\\") {
+		return "", errors.New("dest_path must be slash-separated")
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return "", errors.New("dest_path may not contain ..")
+		}
+	}
+	return p, nil
+}
+
 // startTransfer records a transfers row, signs the peer credential, and
 // sends the TransferCommand to source (streams) and destination (listener).
-func (s *Service) startTransfer(ctx context.Context, art db.Artifact, destNodeID, fabric string) (string, error) {
+// An empty sourceNodeID selects any online node holding a valid placement
+// (fabric-prefixed); a non-empty sourceNodeID requires that exact node.
+func (s *Service) startTransfer(ctx context.Context, art db.Artifact, sourceNodeID, destNodeID, destPath, fabric string) (string, error) {
+	destRel, err := safeRelPath(destPath)
+	if err != nil {
+		return "", err
+	}
 	dest, err := s.q.GetNode(ctx, destNodeID)
 	if err != nil {
 		return "", err
@@ -1249,38 +1301,74 @@ func (s *Service) startTransfer(ctx context.Context, art db.Artifact, destNodeID
 		pl   db.ArtifactPlacement
 		node db.Node
 	}
-	var cands []cand
-	for _, p := range rows {
-		if p.State != "valid" || p.NodeID == destNodeID {
-			continue
+	var src cand
+	haveSrc := false
+	if sourceNodeID != "" {
+		if sourceNodeID == destNodeID {
+			return "", errors.New("source and dest node must differ")
 		}
-		n, nerr := s.q.GetNode(ctx, p.NodeID)
-		if nerr != nil || !s.nodes.Online(n.ID) {
-			continue
+		plrows, perr := s.q.ListPlacementsOnNode(ctx, sourceNodeID)
+		if perr != nil {
+			return "", perr
 		}
-		cands = append(cands, cand{pl: p, node: n})
-	}
-	if len(cands) == 0 {
-		return "", errors.New("no online node holds a valid copy of " + art.Identity)
-	}
-	// Prefer a node in the deployment's fabric (p2p path), else any source.
-	src := cands[0]
-	if fabric != "" {
-		if f, ferr := s.q.GetFabric(ctx, fabric); ferr == nil {
-			var members []string
-			_ = json.Unmarshal([]byte(f.Members), &members)
-			for _, c := range cands {
-				for _, m := range members {
-					if m == c.node.ID {
-						src = c
-						break
+		var pl db.ArtifactPlacement
+		found := false
+		for _, p := range plrows {
+			if p.ArtifactID == art.ID && p.State == "valid" {
+				pl, found = p, true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("node %s holds no valid copy of %s", sourceNodeID, art.Identity)
+		}
+		n, nerr := s.q.GetNode(ctx, sourceNodeID)
+		if nerr != nil {
+			return "", nerr
+		}
+		if !s.nodes.Online(sourceNodeID) {
+			return "", fmt.Errorf("source node %s is offline", sourceNodeID)
+		}
+		src, haveSrc = cand{pl: pl, node: n}, true
+	} else {
+		var cands []cand
+		for _, p := range rows {
+			if p.State != "valid" || p.NodeID == destNodeID {
+				continue
+			}
+			n, nerr := s.q.GetNode(ctx, p.NodeID)
+			if nerr != nil || !s.nodes.Online(n.ID) {
+				continue
+			}
+			cands = append(cands, cand{pl: p, node: n})
+		}
+		if len(cands) == 0 {
+			return "", errors.New("no online node holds a valid copy of " + art.Identity)
+		}
+		// Prefer a node in the deployment's fabric (p2p path), else any source.
+		src, haveSrc = cands[0], true
+		if fabric != "" {
+			if f, ferr := s.q.GetFabric(ctx, fabric); ferr == nil {
+				var members []string
+				_ = json.Unmarshal([]byte(f.Members), &members)
+				for _, c := range cands {
+					for _, m := range members {
+						if m == c.node.ID {
+							src = c
+							break
+						}
 					}
 				}
 			}
 		}
 	}
+	if !haveSrc {
+		return "", errors.New("no source placement available")
+	}
 	tid, _ := id.New()
-	destRel := filepath.Base(filepath.Clean(src.pl.Path))
+	if destRel == "" {
+		destRel = path.Base(src.pl.Path)
+	}
 	cred := &transferCred{
 		Role:       "source",
 		NodeID:     src.node.ID,
@@ -1335,7 +1423,7 @@ func (s *Service) startTransfer(ctx context.Context, art db.Artifact, destNodeID
 		},
 	}}) {
 		_ = s.q.UpdateTransferState(ctx, db.UpdateTransferStateParams{
-			State: "failed",
+			State:      "failed",
 			Diagnostic: sql.NullString{String: "source node offline", Valid: true},
 			ID:         tid,
 		})
@@ -1406,7 +1494,7 @@ func (s *Service) OnTransferResult(ctx context.Context, transferID, msg string) 
 		depID, plNode, _, _ := parseTransferKey(key)
 		delete(s.transferInflight, key)
 		_ = s.q.UpdateTransferState(ctx, db.UpdateTransferStateParams{
-			State: "failed",
+			State:      "failed",
 			Diagnostic: sql.NullString{String: msg, Valid: msg != ""},
 			ID:         tid,
 		})
@@ -1694,9 +1782,9 @@ func (s *Service) Verify(ctx context.Context, depID string) (*Deployment, error)
 	}
 	values, _ := m.ProfileValues(row.Profile)
 	rctx := recipe.RenderContext{
-		NodeID:   depID,
+		NodeID:    depID,
 		Artifacts: map[string]string{},
-		Profiles: values,
+		Profiles:  values,
 	}
 	if strings.Contains(path, "{") {
 		if rendered, rerr := m.Render(path, rctx); rerr == nil {
@@ -1905,6 +1993,7 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 	}
 	return v, nil
 }
+
 // selectWorkload returns the workload variant the plan persisted in the
 // placement document. Legacy rows without an index fall back to fleet-based
 // selection.
@@ -1917,7 +2006,6 @@ func (s *Service) selectWorkload(ctx context.Context, row db.GetDeploymentRow, m
 	}
 	return m.SelectWorkload(s.targetFor(ctx, row))
 }
-
 
 // ---------------------------------------------------------------- spec rendering
 

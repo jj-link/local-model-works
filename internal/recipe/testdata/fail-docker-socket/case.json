@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.mount-sensitive",
+  "note": "Artifact mounting the runtime Docker socket (Docker-in-Docker) is rejected; the schema's mount pattern admits the path, so the policy check lives in the validator."
+}

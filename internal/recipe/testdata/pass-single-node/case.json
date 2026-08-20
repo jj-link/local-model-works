@@ -1,0 +1,5 @@
+{
+  "outcome": "pass",
+  "kind": "validator",
+  "note": "Valid single-node recipe: digest-pinned image, pinned HF artifact, in-container asset entrypoint, declared templates."
+}

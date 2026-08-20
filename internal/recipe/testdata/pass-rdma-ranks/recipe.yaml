@@ -1,0 +1,57 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-demo-rdma
+  version: 1.0.0
+  displayName: Demo RDMA Pair
+  description: Two-node, two-rank demo workload over a RoCE fabric.
+  license: MIT
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_120
+    count: 1
+    minMemoryBytes: 32212254720
+    features:
+      - p2p
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts: []
+workloads:
+  - match:
+      nodeCount: 2
+      accelerator:
+        vendor: nvidia
+    image:
+      reference: ghcr.io/localmodelworks/demo-rdma:1.0.0
+      digest: sha256:0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
+    command:
+      - /opt/demo/rank
+    args:
+      - --rank
+      - ${node.rank}
+      - --addr
+      - ${node.address}
+      - --fabric
+      - ${fabric.address}
+    ranks:
+      - 0
+      - 1
+    devices:
+      accelerator:
+        all: true
+      rdma:
+        all: true
+    networkMode: host
+    permissions:
+      - devices.rdma
+      - network.host
+      - memory.shm-large
+    resources:
+      cpu: 2
+      memoryBytes: 4294967296
+      shmBytes: 2147483648
+      pids: 1024

@@ -67,6 +67,26 @@ type PackResult struct {
 	layerBytes     []byte
 }
 
+// PackError is a stable, machine-readable packaging failure. Code follows
+// the recipe.* diagnostic convention so install/launch previews and API
+// surfaces can surface it unchanged; Message is human-readable.
+type PackError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Asset   string `json:"asset,omitempty"`
+}
+
+func (e *PackError) Error() string {
+	if e.Asset != "" {
+		return fmt.Sprintf("%s: asset %q: %s", e.Code, e.Asset, e.Message)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+func packErr(code, asset, msg string) *PackError {
+	return &PackError{Code: code, Asset: asset, Message: msg}
+}
+
 // PackManifest builds the OCI manifest for a validated canonical document and
 // its asset files (path -> content). Output is fully deterministic.
 func PackManifest(doc []byte, assets map[string][]byte, annotations map[string]string) (*PackResult, error) {
@@ -138,7 +158,7 @@ func buildAssetLayer(assets map[string][]byte) ([]byte, error) {
 	for _, name := range names {
 		clean := path.Clean(name)
 		if clean != name || strings.HasPrefix(name, "/") || clean == ".." || strings.Contains(clean, "/../") {
-			return nil, fmt.Errorf("asset %q escapes the package root after normalization", name)
+			return nil, packErr("recipe.asset-escape", name, "escapes the package root after normalization")
 		}
 		data := assets[name]
 		if err := tw.WriteHeader(&tar.Header{
@@ -310,15 +330,15 @@ func PackFromDir(dir string, v *Validator) (manifest *Manifest, res *PackResult,
 // symlink from aliasing an asset to a file outside the package root.
 func loadAsset(dir, a string) ([]byte, error) {
 	if a == "" || strings.HasPrefix(a, "/") {
-		return nil, fmt.Errorf("asset %q: path must be a non-empty relative path", a)
+		return nil, packErr("recipe.asset-absolute", a, "path must be a non-empty relative path")
 	}
 	if path.Clean(a) != a {
-		return nil, fmt.Errorf("asset %q: path is not canonical", a)
+		return nil, packErr("recipe.asset-path", a, "path is not canonical")
 	}
 	segs := strings.Split(a, "/")
 	for _, seg := range segs {
 		if seg == ".." {
-			return nil, fmt.Errorf("asset %q: path contains a .. segment", a)
+			return nil, packErr("recipe.asset-traversal", a, "path contains a .. segment")
 		}
 	}
 	p := dir
@@ -328,21 +348,21 @@ func loadAsset(dir, a string) ([]byte, error) {
 		var err error
 		st, err = os.Lstat(p)
 		if err != nil {
-			return nil, fmt.Errorf("asset %q: %w", a, err)
+			return nil, packErr("recipe.asset-missing", a, err.Error())
 		}
 		if st.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("asset %q: symlink not allowed at %q", a, seg)
+			return nil, packErr("recipe.asset-symlink", a, fmt.Sprintf("symlink not allowed at %q", seg))
 		}
 		if i < len(segs)-1 && !st.IsDir() {
-			return nil, fmt.Errorf("asset %q: %q is not a directory", a, seg)
+			return nil, packErr("recipe.asset-path", a, fmt.Sprintf("%q is not a directory", seg))
 		}
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("asset %q: not a regular file", a)
+		return nil, packErr("recipe.asset-notregular", a, "not a regular file")
 	}
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return nil, fmt.Errorf("asset %q: %w", a, err)
+		return nil, packErr("recipe.asset-missing", a, err.Error())
 	}
 	return data, nil
 }

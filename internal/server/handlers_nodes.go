@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -104,102 +103,6 @@ func (s *Server) handleDeleteEnrollmentToken(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := s.q.ListNodes(r.Context())
-	if err != nil {
-		handleErr(w, err)
-		return
-	}
-	out := make([]any, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, nodeView(n))
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
-	node, err := s.q.GetNode(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		if isNoRows(err) {
-			writeErr(w, http.StatusNotFound, "resource.not_found", "node not found")
-			return
-		}
-		handleErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, nodeView(node))
-}
-
-// handleApproveNode admits a pending node into the fleet. If the node has a
-// live session it goes online immediately; otherwise the next heartbeat does.
-func (s *Server) handleApproveNode(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	id := chi.URLParam(r, "id")
-	node, err := s.q.GetNode(ctx, id)
-	if err != nil {
-		if isNoRows(err) {
-			writeErr(w, http.StatusNotFound, "resource.not_found", "node not found")
-			return
-		}
-		handleErr(w, err)
-		return
-	}
-	if node.Status != "pending" {
-		writeErr(w, http.StatusConflict, "node.not_pending", "node is not pending approval")
-		return
-	}
-	if err := s.q.ApproveNode(ctx, id); err != nil {
-		handleErr(w, err)
-		return
-	}
-	status := "pending"
-	if s.nodes.Online(id) {
-		status = "online"
-		if err := s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
-			Status: status, LastHeartbeat: sql.NullString{String: dbTime(time.Now().UTC()), Valid: true}, ID: id,
-		}); err != nil {
-			handleErr(w, err)
-			return
-		}
-	}
-	approved, err := s.q.GetNode(ctx, id)
-	if err != nil {
-		handleErr(w, err)
-		return
-	}
-	s.bus.Publish(ctx, "node.approved", id, mustJSON(map[string]any{"node_id": id, "status": status}))
-	writeJSON(w, http.StatusOK, nodeView(approved))
-}
-
-// nodeView renders the Node API shape (labels/inventory as JSON values).
-func nodeView(n db.Node) map[string]any {
-	labels := map[string]string{}
-	_ = json.Unmarshal([]byte(n.Labels), &labels)
-	view := map[string]any{
-		"id":           n.ID,
-		"display_name": n.DisplayName,
-		"labels":       labels,
-		"status":       n.Status,
-		"created_at":   n.CreatedAt,
-	}
-	if n.AgentVersion.Valid {
-		view["agent_version"] = n.AgentVersion.String
-	}
-	if n.LastHeartbeat.Valid {
-		view["last_heartbeat"] = n.LastHeartbeat.String
-	}
-	if n.CertificateExpiresAt.Valid {
-		view["certificate_expires_at"] = n.CertificateExpiresAt.String
-	}
-	if n.Inventory.Valid && n.Inventory.String != "" {
-		var inv any
-		if json.Unmarshal([]byte(n.Inventory.String), &inv) == nil {
-			view["inventory"] = inv
-		}
-	}
-	return view
 }
 
 // isNoRows matches the sqlc-level no-row error.

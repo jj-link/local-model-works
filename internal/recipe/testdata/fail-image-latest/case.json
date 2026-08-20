@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.image-latest",
+  "note": "Mutable :latest image tag (digest present) is rejected before install/launch."
+}

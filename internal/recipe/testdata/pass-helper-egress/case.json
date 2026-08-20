@@ -1,0 +1,6 @@
+{
+  "outcome": "pass",
+  "kind": "validator",
+  "highRisk": ["network.egress"],
+  "note": "Schema allows helper egress; the policy gate is install-time approval — the network.egress high-risk permission must surface in the manifest."
+}

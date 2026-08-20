@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/ca"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // transferService is the agent's peer-to-peer artifact transfer listener.
@@ -141,8 +141,11 @@ func (a *Agent) handlePeerConnection(ctx context.Context, conn net.Conn) {
 	}
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{*nodeCert},
-		RootCAs:      a.caPool(),
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		// Go's TLS server verifies client certificates against ClientCAs
+		// (RootCAs is server-cert trust only); the CA signed the peer's
+		// node certificate at enrollment.
+		ClientCAs:  a.caPool(),
+		ClientAuth: tls.RequireAndVerifyClientCert,
 	}
 	tc := tls.Server(conn, tlsCfg)
 	defer tc.Close()
@@ -150,7 +153,6 @@ func (a *Agent) handlePeerConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 	br := bufio.NewReader(tc)
-
 	cred, err := readJSONLine(br)
 	if err != nil {
 		return
@@ -242,11 +244,11 @@ func (a *Agent) handlePeerConnection(ctx context.Context, conn net.Conn) {
 	// The receiver is the placement authority for what it just wrote.
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_PlacementReport{
 		PlacementReport: &agentv1.PlacementReport{
-			ArtifactId:  cred.ArtifactID,
-			Path:        root,
-			State:       "valid",
-			SizeBytes:   uint64(size),
-			VerifiedAt:  timestamppb.Now(),
+			ArtifactId: cred.ArtifactID,
+			Path:       root,
+			State:      "valid",
+			SizeBytes:  uint64(size),
+			VerifiedAt: timestamppb.Now(),
 		},
 	}})
 }
@@ -451,6 +453,10 @@ func (a *Agent) handleTransfer(ctx context.Context, tc *agentv1.TransferCommand)
 		}
 		f.Close()
 	}
+	if ferr := bw.Flush(); ferr != nil {
+		a.transferError(tc.GetTransferId(), "flush: "+ferr.Error())
+		return
+	}
 	br := bufio.NewReader(conn)
 	var ack map[string]any
 	if _, err := readJSONLine(br, &ack); err != nil {
@@ -473,6 +479,7 @@ func (a *Agent) handleTransfer(ctx context.Context, tc *agentv1.TransferCommand)
 		},
 	}})
 }
+
 // transferError reports a failed transfer to the controller: the Ack now
 // carries the failure status, and the server routes it to the transfers row.
 func (a *Agent) transferError(transferID, msg string) {

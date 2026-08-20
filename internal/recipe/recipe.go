@@ -361,7 +361,7 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return c.FabricAddr, true
 	}
 	if strings.HasPrefix(v, TemplArtifact) && strings.HasSuffix(v, ".path}") {
-		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplArtifact), ".path")
+		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplArtifact), ".path}")
 		p, ok := c.Artifacts[name]
 		return p, ok
 	}

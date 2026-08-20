@@ -34,6 +34,14 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	stream := client.Session(ctx)
 	defer stream.CloseResponse()
+	// The select below only observes ctx between messages; a cancel that
+	// lands mid-Receive would leave the HTTP/2 stream open on both ends
+	// and hang the session (and Agent.Run) forever. Closing the response
+	// side on cancel resets the stream and wakes a pending Receive.
+	go func() {
+		<-ctx.Done()
+		_ = stream.CloseResponse()
+	}()
 
 	// Report what this node holds and needs.
 	a.refreshDocker()
@@ -78,6 +86,7 @@ func (a *Agent) session(ctx context.Context) error {
 		case *agentv1.ServerMessage_TransferCommand:
 			go a.handleTransfer(ctx, b.TransferCommand)
 		case *agentv1.ServerMessage_ReconcileRequest:
+			a.noteReconcile(b.ReconcileRequest.GetReason())
 			a.reconcile(ctx, b.ReconcileRequest)
 		case *agentv1.ServerMessage_Certificate:
 			if err := a.applyCertificate(b.Certificate); err != nil {
@@ -157,6 +166,20 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 	inv.PeerListen = a.cfg.PeerAdvertiseAddr()
 	if accInv, err := a.acc.Probe(ctx); err == nil {
 		inv.Accelerators = accInv.Accelerators
+		// Driver-reported network and RDMA entries supplement the host
+		// baseline; the driver is the authoritative hardware source for
+		// vendors that expose them. Host-reported entries win on name
+		// collisions.
+		for _, ni := range accInv.Interfaces {
+			if !interfaceByName(inv.Interfaces, ni.Name) {
+				inv.Interfaces = append(inv.Interfaces, ni)
+			}
+		}
+		for _, d := range accInv.RDMADevices {
+			if !rdmaByName(inv.RDMADevices, d.Name) {
+				inv.RDMADevices = append(inv.RDMADevices, d)
+			}
+		}
 	}
 	a.mu.Lock()
 	inv.Docker = hardware.DockerInfo{OK: a.dockerOK, Version: a.dockerVersion}
@@ -165,6 +188,24 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 		inv.CacheRoots = append(inv.CacheRoots, scanCacheRoot(ctx, r))
 	}
 	return toProtoInventory(inv)
+}
+
+func interfaceByName(list []hardware.NetworkInterface, name string) bool {
+	for _, i := range list {
+		if i.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func rdmaByName(list []hardware.RdmaDevice, name string) bool {
+	for _, d := range list {
+		if d.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // currentSerial is the hex serial of the live node certificate.

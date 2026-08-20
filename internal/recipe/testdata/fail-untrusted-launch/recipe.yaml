@@ -1,0 +1,16 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-fail-untrusted
+  version: 1.0.0
+compatibility:
+  nodeCount: 1
+artifacts: []
+workloads:
+  - image:
+      reference: ghcr.io/localmodelworks/demo-serve:1.0.0
+      digest: sha256:1f2e3d4c5b6a798091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+    command:
+      - serve
+    args: []
+    resources: {}

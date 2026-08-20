@@ -1,0 +1,22 @@
+{
+ "created_at": "2026-08-01T13:00:00.000000+00:00",
+ "error_code": null,
+ "exit_code": null,
+ "finished_at": null,
+ "id": "44444444-4444-4444-8444-444444444444",
+ "kind": "serving",
+ "request": {
+  "action": "start",
+  "artifact": "delta_fp8",
+  "engine": "vllm",
+  "kind": "serving",
+  "target": "spark2"
+ },
+ "resources": [
+  "target:spark2"
+ ],
+ "results": [],
+ "schema": 1,
+ "started_at": "2026-08-01T13:00:01.000000+00:00",
+ "state": "running"
+}

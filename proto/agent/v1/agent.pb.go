@@ -1731,14 +1731,18 @@ func (x *NetworkTelemetry) GetTxBytes() uint64 {
 }
 
 type CommandResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CommandId     string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
-	Ok            bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	ContainerId   string                 `protobuf:"bytes,5,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CommandId   string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	Ok          bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
+	ExitCode    int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	Error       string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	ContainerId string                 `protobuf:"bytes,5,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// Observed container state for INSPECT: created|running|exited|paused|removing|dead
+	// (empty for non-container ops). Distinguishes "still running" from "exited with
+	// code N", which ok/exit_code alone cannot.
+	ContainerState string `protobuf:"bytes,6,opt,name=container_state,json=containerState,proto3" json:"container_state,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CommandResult) Reset() {
@@ -1802,6 +1806,13 @@ func (x *CommandResult) GetError() string {
 func (x *CommandResult) GetContainerId() string {
 	if x != nil {
 		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *CommandResult) GetContainerState() string {
+	if x != nil {
+		return x.ContainerState
 	}
 	return ""
 }
@@ -1916,8 +1927,14 @@ type LogChunk struct {
 	Rank         int32                  `protobuf:"varint,3,opt,name=rank,proto3" json:"rank,omitempty"`
 	Stream       string                 `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"` // stdout | stderr
 	// Byte offset within this stream for the owning run/deployment/rank.
-	Offset        uint64 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
-	Data          []byte `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
+	Offset uint64 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data   []byte `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
+	// Terminal marker for this stream: the tailer sends one final chunk (empty
+	// data) after the container's output fully drains, so controllers can wait
+	// for a deterministic EOF instead of racing container exit.
+	Final bool `protobuf:"varint,7,opt,name=final,proto3" json:"final,omitempty"`
+	// Total byte length of the stream file at the final marker.
+	EndOffset     uint64 `protobuf:"varint,8,opt,name=end_offset,json=endOffset,proto3" json:"end_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1992,6 +2009,20 @@ func (x *LogChunk) GetData() []byte {
 		return x.Data
 	}
 	return nil
+}
+
+func (x *LogChunk) GetFinal() bool {
+	if x != nil {
+		return x.Final
+	}
+	return false
+}
+
+func (x *LogChunk) GetEndOffset() uint64 {
+	if x != nil {
+		return x.EndOffset
+	}
+	return 0
 }
 
 type PlacementReport struct {
@@ -3214,14 +3245,15 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\bpower_mw\x18\x06 \x01(\rR\apowerMw\"H\n" +
 	"\x10NetworkTelemetry\x12\x19\n" +
 	"\brx_bytes\x18\x01 \x01(\x04R\arxBytes\x12\x19\n" +
-	"\btx_bytes\x18\x02 \x01(\x04R\atxBytes\"\x94\x01\n" +
+	"\btx_bytes\x18\x02 \x01(\x04R\atxBytes\"\xbd\x01\n" +
 	"\rCommandResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x1b\n" +
 	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12!\n" +
-	"\fcontainer_id\x18\x05 \x01(\tR\vcontainerId\"\xa1\x02\n" +
+	"\fcontainer_id\x18\x05 \x01(\tR\vcontainerId\x12'\n" +
+	"\x0fcontainer_state\x18\x06 \x01(\tR\x0econtainerState\"\xa1\x02\n" +
 	"\vStateUpdate\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -3230,14 +3262,17 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\rendpoint_port\x18\x05 \x01(\rR\fendpointPort\x12\x12\n" +
 	"\x04rank\x18\b \x01(\x05R\x04rank\x12'\n" +
 	"\x0fdiagnostic_code\x18\x06 \x01(\tR\x0ediagnosticCode\x12-\n" +
-	"\x12diagnostic_message\x18\a \x01(\tR\x11diagnosticMessage\"\x9e\x01\n" +
+	"\x12diagnostic_message\x18\a \x01(\tR\x11diagnosticMessage\"\xd3\x01\n" +
 	"\bLogChunk\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x12\n" +
 	"\x04rank\x18\x03 \x01(\x05R\x04rank\x12\x16\n" +
 	"\x06stream\x18\x04 \x01(\tR\x06stream\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x04R\x06offset\x12\x12\n" +
-	"\x04data\x18\x06 \x01(\fR\x04data\"\xf4\x01\n" +
+	"\x04data\x18\x06 \x01(\fR\x04data\x12\x14\n" +
+	"\x05final\x18\a \x01(\bR\x05final\x12\x1d\n" +
+	"\n" +
+	"end_offset\x18\b \x01(\x04R\tendOffset\"\xf4\x01\n" +
 	"\x0fPlacementReport\x12\x1f\n" +
 	"\vartifact_id\x18\x01 \x01(\tR\n" +
 	"artifactId\x12\x12\n" +

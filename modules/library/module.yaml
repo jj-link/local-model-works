@@ -1,0 +1,37 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: library
+title: Library
+route: /library
+nav:
+  label: Library
+  order: 20
+  icon: library
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties:
+    catalog_urls:
+      type: array
+      items:
+        type: string
+        format: uri
+    auto_trust_local:
+      type: boolean
+jobKinds:
+  - recipe-import
+artifactKinds:
+  - model
+  - dataset
+  - adapter
+  - checkpoint
+  - recipe
+  - file
+apiFragment: api.yaml
+capabilities:
+  - recipes.write
+  - artifacts.read
+  - transfers.write
+  - secrets.read
+  - events.publish

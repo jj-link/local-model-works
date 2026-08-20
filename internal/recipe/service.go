@@ -48,6 +48,10 @@ var (
 	ErrReference   = errors.New("recipe referenced")
 	ErrTrustState  = errors.New("invalid trust state")
 	ErrDiffPending = errors.New("permission diff not accepted")
+	// ErrUnpinnedRevision — a git source revision is not a full 40-hex
+	// commit. Git installs pin an immutable commit; tags and branches move.
+	// Stable API code: recipe.unpinned_revision (422).
+	ErrUnpinnedRevision = errors.New("unpinned git revision")
 )
 
 // RecipeSource mirrors the openapi RecipeImport source.
@@ -425,9 +429,11 @@ func (s *Service) importOCI(ctx context.Context, src RecipeSource) (Recipe, erro
 	return s.Store(ctx, doc, kept, trust)
 }
 
-// importGit clones a pinned revision (tag, branch, or full SHA) and loads
-// the recipe at subpath. The resolved commit is recorded as revision/tree.
-// Git imports are untrusted: the transport carries no content signature.
+// importGit clones the pinned 40-hex commit and loads the recipe at
+// subpath. The revision must be a full commit (tags and branches move, so
+// they are rejected with ErrUnpinnedRevision); the resolved commit is
+// recorded as revision/tree. Git imports are untrusted: the transport
+// carries no content signature.
 func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, error) {
 	if src.Remote == "" {
 		return Recipe{}, fmt.Errorf("git source: remote is required")
@@ -435,19 +441,21 @@ func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, erro
 	if src.Revision == "" {
 		return Recipe{}, fmt.Errorf("git source: revision is required")
 	}
+	if !sha40.MatchString(src.Revision) {
+		return Recipe{}, fmt.Errorf("%w: %q is not a 40-hex commit", ErrUnpinnedRevision, src.Revision)
+	}
 	tmp, err := os.MkdirTemp("", "lmw-recipe-git-*")
 	if err != nil {
 		return Recipe{}, err
 	}
+	// A full commit is required, so a plain clone suffices for every
+	// remote form (file://, ssh://, https://); no --branch/--depth.
 	if isLocalGitPath(src.Remote) {
 		if err := runGit(ctx, tmp, "clone", "--no-hardlinks", src.Remote, tmp); err != nil {
 			return Recipe{}, fmt.Errorf("git clone: %w", err)
 		}
-	} else if err := runGit(ctx, tmp, "clone", "--depth", "1", "--branch", src.Revision, src.Remote, tmp); err != nil {
-		// Depth-1 fails for raw SHAs; fall back to a full clone.
-		if err2 := runGit(ctx, tmp, "clone", src.Remote, tmp); err2 != nil {
-			return Recipe{}, fmt.Errorf("git clone: %w", err)
-		}
+	} else if err := runGit(ctx, tmp, "clone", src.Remote, tmp); err != nil {
+		return Recipe{}, fmt.Errorf("git clone: %w", err)
 	}
 	if err := runGit(ctx, tmp, "checkout", "--quiet", src.Revision); err != nil {
 		return Recipe{}, fmt.Errorf("git checkout %s: %w", src.Revision, err)

@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.template",
+  "note": "Template references an artifact the manifest never declares. (Unknown variable namespaces like ${env.X} die earlier in the schema templateString pattern.)"
+}

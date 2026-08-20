@@ -1,0 +1,392 @@
+# OpenAPI fragment for the serving module. Merged into the public contract by
+# "go run ./internal/generate/oapi gen"; $refs resolve in the merged document.
+openapi: 3.1.0
+info:
+  title: Local Model Works serving fragment
+  version: 1.0.0
+tags:
+  - name: deployments
+paths:
+  /deployments/plan:
+    post:
+      tags: [deployments]
+      operationId: planDeployment
+      summary: "Preview a deployment: placement, artifact preparation, ports, risks, conflicts"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentPlanRequest'
+      responses:
+        '200':
+          description: Deployment plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments:
+    post:
+      tags: [deployments]
+      operationId: createDeployment
+      summary: Create and start a deployment from a validated plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentCreateRequest'
+      responses:
+        '201':
+          description: Deployment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [deployments]
+      operationId: listDeployments
+      responses:
+        '200':
+          description: Deployments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /deployments/{id}:
+    get:
+      tags: [deployments]
+      operationId: getDeployment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deployments/{id}/verify:
+    post:
+      tags: [deployments]
+      operationId: verifyDeployment
+      summary: Run the recipe's verification probes against the live workload
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment with verification diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments/{id}/stop:
+    post:
+      tags: [deployments]
+      operationId: stopDeployment
+      summary: Stop exactly this deployment's workload (label-scoped)
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Deployment with stopping/stopped state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments/{id}/logs:
+    get:
+      tags: [deployments]
+      operationId: deploymentLogs
+      summary: Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: rank
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    DeploymentPlanRequest:
+      type: object
+      required: [recipe_digest, profile]
+      properties:
+        recipe_digest:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          description: Optional explicit node per rank; omit for automatic selection
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              rank:
+                type: integer
+
+    TransferPreview:
+      type: object
+      required: [artifact_id, source_node, dest_node, dest_path, bytes]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        identity:
+          type: string
+        source_node:
+          type: string
+        source_path:
+          type: string
+        dest_node:
+          type: string
+        dest_path:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        network:
+          type: string
+          description: Network path, e.g. fabric spark-p2p (roce), tailnet, local
+
+    DeploymentPlan:
+      type: object
+      required: [recipe_digest, profile, placements, ready]
+      properties:
+        recipe_digest:
+          type: string
+        recipe_name:
+          type: string
+        recipe_version:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank, accelerator_index]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              rank:
+                type: integer
+              accelerator_index:
+                type: integer
+              accelerator_uuid:
+                type: string
+        fabric:
+          type: string
+          nullable: true
+        transfers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferPreview'
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              node_name:
+                type: string
+              host_port:
+                type: integer
+              container_port:
+                type: integer
+              protocol:
+                type: string
+        endpoint:
+          type: object
+          properties:
+            host:
+              type: string
+            port:
+              type: integer
+            path:
+              type: string
+            model:
+              type: string
+        risks:
+          type: array
+          items:
+            type: string
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              resource:
+                type: string
+              occupied_by:
+                type: string
+              deployment_id:
+                type: string
+                format: uuid
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        ready:
+          type: boolean
+          description: false when conflicts or unmet compatibility block creation
+
+    DeploymentCreateRequest:
+      type: object
+      required: [recipe_digest, profile]
+      properties:
+        recipe_digest:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              rank:
+                type: integer
+        plan_digest:
+          type: string
+          description: Distinguishes an unchanged plan from the one previewed
+
+    Deployment:
+      type: object
+      required: [id, recipe_digest, profile, desired_state, observed_state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipe_digest:
+          type: string
+        recipe_name:
+          type: string
+        recipe_version:
+          type: string
+        profile:
+          type: string
+        placements:
+          type: array
+          items:
+            type: object
+            required: [node_id, rank]
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              rank:
+                type: integer
+              accelerator_index:
+                type: integer
+              container:
+                type: string
+                nullable: true
+        fabric:
+          type: string
+          nullable: true
+        desired_state:
+          type: string
+          enum: [running, stopped]
+        observed_state:
+          type: string
+          enum: [unknown, preparing, starting, healthy, degraded, stopping, stopped, failed]
+        endpoint:
+          type: object
+          nullable: true
+          properties:
+            host:
+              type: string
+            port:
+              type: integer
+            path:
+              type: string
+            model:
+              type: string
+        model_capabilities:
+          type: object
+          nullable: true
+          additionalProperties: true
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        run_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

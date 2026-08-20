@@ -1,0 +1,5 @@
+{
+  "outcome": "pass",
+  "kind": "gitpass",
+  "note": "Install from file://<repo>@<40-hex> through the real git import path; stored trust=untrusted with the full commit recorded."
+}

@@ -1,0 +1,53 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-demo-pack
+  version: 1.0.0
+  displayName: lmw-demo-pack
+  description: Catalog-style OCI pack layout fixture (packed in-test, installed from a catalog root).
+  license: MIT
+compatibility:
+  nodeCount: 1
+artifacts:
+  - name: model
+    kind: model
+    source:
+      type: huggingface
+      identity: hf://drowzeys/keys-demo
+      revision: 6c47916f85e52b5e712223ca8f93952f90255714
+    mount: /var/lib/lmw/artifacts/model
+    validation: snapshot
+workloads:
+  - image:
+      reference: ghcr.io/localmodelworks/demo-serve:1.0.0
+      digest: sha256:1f2e3d4c5b6a798091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+    command:
+      - /lmw/assets/serve.sh
+    args:
+      - --model
+      - ${artifact.model.path}
+      - --node
+      - ${node.id}
+    env:
+      LMW_PORT: "8000"
+    ports:
+      - container: 8000
+        host: 8000
+        protocol: tcp
+    resources:
+      cpu: 1
+      memoryBytes: 2147483648
+      shmBytes: 67108864
+      pids: 1024
+    readiness:
+      httpGet:
+        path: /health
+        port: 8000
+    verify:
+      httpGet:
+        path: /v1/models
+        port: 8000
+      expect:
+        statusCode: 200
+assets:
+  - serve.sh

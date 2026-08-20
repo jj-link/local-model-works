@@ -125,7 +125,10 @@ func (t *tailer) run(ctx context.Context) {
 }
 
 // stream reads one output stream line-by-line, appends it to the local log
-// file, and sends the chunk with its file offset.
+// file, and sends the chunk with its file offset. On a clean drain (the
+// container's output fully read) it sends one terminal LogChunk with
+// final=true and the file's end offset, so the controller can wait for a
+// deterministic EOF instead of racing the container exit.
 func (t *tailer) stream(ctx context.Context, r io.Reader, name string) {
 	path := t.a.logPath(t.key, name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -159,6 +162,20 @@ func (t *tailer) stream(ctx context.Context, r io.Reader, name string) {
 		}})
 		offset += int64(len(line))
 	}
+	if sc.Err() != nil {
+		return
+	}
+	finalOffset, _ := f.Seek(0, io.SeekEnd)
+	t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_LogChunk{
+		LogChunk: &agentv1.LogChunk{
+			RunId:        t.key.runID,
+			DeploymentId: t.key.deploymentID,
+			Rank:         t.key.rank,
+			Stream:       name,
+			Final:        true,
+			EndOffset:    uint64(finalOffset),
+		},
+	}})
 }
 
 // handleLogRequest replays a byte range of one local log stream to the

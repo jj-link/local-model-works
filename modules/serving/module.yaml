@@ -1,0 +1,31 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: serving
+title: Serving
+route: /serving
+nav:
+  label: Serving
+  order: 30
+  icon: serving
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties:
+    verify_timeout_seconds:
+      type: integer
+      minimum: 5
+      maximum: 600
+jobKinds:
+  - serve
+  - stop
+artifactKinds:
+  - model
+apiFragment: api.yaml
+capabilities:
+  - deployments.write
+  - runs.create
+  - nodes.read
+  - transfers.write
+  - secrets.read
+  - events.publish

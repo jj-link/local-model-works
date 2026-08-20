@@ -1,0 +1,440 @@
+# OpenAPI fragment for the fleet module. Merged into the public contract by
+# "go run ./internal/generate/oapi gen"; $refs resolve in the merged document.
+openapi: 3.1.0
+info:
+  title: Local Model Works fleet fragment
+  version: 1.0.0
+tags:
+  - name: nodes
+  - name: fabrics
+paths:
+  /nodes:
+    get:
+      tags: [nodes]
+      operationId: listNodes
+      responses:
+        '200':
+          description: Enrolled nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes/{id}:
+    get:
+      tags: [nodes]
+      operationId: getNode
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Node with inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [nodes]
+      operationId: updateNode
+      summary: Set display name and labels
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: Updated node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /nodes/{id}/approve:
+    post:
+      tags: [nodes]
+      operationId: approveNode
+      summary: Approve a pending node's reported inventory
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Approved node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /nodes/{id}/rotate-certificate:
+    post:
+      tags: [nodes]
+      operationId: rotateNodeCertificate
+      summary: Issue a fresh 90-day client certificate for the node
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Certificate issued (agent picks it up on next session)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /fabrics:
+    get:
+      tags: [fabrics]
+      operationId: listFabrics
+      responses:
+        '200':
+          description: Fabrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [fabrics]
+      operationId: createFabric
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFabricRequest'
+      responses:
+        '201':
+          description: Fabric created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /fabrics/{id}:
+    get:
+      tags: [fabrics]
+      operationId: getFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Fabric with member validation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [fabrics]
+      operationId: updateFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFabricRequest'
+      responses:
+        '200':
+          description: Fabric updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [fabrics]
+      operationId: deleteFabric
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Fabric deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  schemas:
+    NodeStatus:
+      type: string
+      enum: [pending, online, offline, degraded]
+
+    Node:
+      type: object
+      required: [id, display_name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        agent_version:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/NodeStatus'
+        last_heartbeat:
+          type: string
+          format: date-time
+          nullable: true
+        certificate_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        inventory:
+          $ref: '#/components/schemas/Inventory'
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        created_at:
+          type: string
+          format: date-time
+
+    Inventory:
+      type: object
+      required: [hostname, os, arch, docker]
+      properties:
+        hostname:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        docker:
+          type: object
+          required: [version, ok]
+          properties:
+            version:
+              type: string
+            api_version:
+              type: string
+            ok:
+              type: boolean
+        accelerators:
+          type: array
+          items:
+            $ref: '#/components/schemas/Accelerator'
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkInterface'
+        rdma_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/RdmaDevice'
+        cache_roots:
+          type: array
+          items:
+            type: string
+
+    Accelerator:
+      type: object
+      required: [index, vendor, name, uuid, memory_bytes]
+      properties:
+        index:
+          type: integer
+        vendor:
+          type: string
+          description: Vendor-neutral capability field, e.g. nvidia, amd, intel
+        architecture:
+          type: string
+          description: e.g. sm_120, gfx1201
+        name:
+          type: string
+        uuid:
+          type: string
+        memory_bytes:
+          type: integer
+          format: int64
+        features:
+          type: array
+          items:
+            type: string
+
+    NetworkInterface:
+      type: object
+      required: [name, addresses]
+      properties:
+        name:
+          type: string
+        addresses:
+          type: array
+          items:
+            type: string
+        mtu:
+          type: integer
+        link_mbps:
+          type: integer
+
+    RdmaDevice:
+      type: object
+      required: [name, ports]
+      properties:
+        name:
+          type: string
+        vendor:
+          type: string
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              state:
+                type: string
+              link_rate_gbps:
+                type: integer
+
+    UpdateNodeRequest:
+      type: object
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    CertificateInfo:
+      type: object
+      required: [expires_at]
+      properties:
+        serial:
+          type: string
+        not_before:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateFabricRequest:
+      type: object
+      required: [name, transport, members]
+      properties:
+        name:
+          type: string
+        transport:
+          type: string
+          enum: [roce, tcp]
+        interface_name:
+          type: string
+        address:
+          type: string
+          description: Interface address of the first member
+        rdma_device:
+          type: string
+          nullable: true
+        members:
+          type: array
+          description: Ordered node IDs; index is the fabric rank
+          minItems: 2
+          items:
+            type: string
+
+    Fabric:
+      type: object
+      required: [id, name, transport, members, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        transport:
+          type: string
+          enum: [roce, tcp]
+        interface_name:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        rdma_device:
+          type: string
+          nullable: true
+        members:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          enum: [ok, incomplete]
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        version:
+          type: string
+          description: ETag for optimistic concurrency

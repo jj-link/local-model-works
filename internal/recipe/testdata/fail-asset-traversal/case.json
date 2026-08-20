@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.schema",
+  "note": "Asset with a .. segment is rejected by the schema not-pattern (the semantic recipe.asset-path check re-covers it)."
+}

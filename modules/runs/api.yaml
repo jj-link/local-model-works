@@ -1,0 +1,178 @@
+# OpenAPI fragment for the runs module. Merged into the public contract by
+# "go run ./internal/generate/oapi gen"; $refs resolve in the merged document.
+openapi: 3.1.0
+info:
+  title: Local Model Works runs fragment
+  version: 1.0.0
+tags:
+  - name: runs
+paths:
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      parameters:
+        - name: module
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunState'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 500
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a previous page
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Runs, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunsPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /runs/{id}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{id}/cancel:
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      summary: Cancel a nonterminal run; terminates the exact process/container
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Run with cancelling state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /runs/{id}/logs:
+    get:
+      tags: [runs]
+      operationId: runLogs
+      summary: Stream run logs (SSE); byte-cursor resume via Last-Event-ID
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    RunState:
+      type: string
+      enum: [queued, planning, waiting, running, verifying, succeeded, failed, cancelling, cancelled, interrupted]
+
+    Run:
+      type: object
+      required: [id, module, kind, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        module:
+          type: string
+        kind:
+          type: string
+        state:
+          $ref: '#/components/schemas/RunState'
+        resources:
+          type: object
+          properties:
+            nodes:
+              type: array
+              items:
+                type: string
+            accelerators:
+              type: array
+              items:
+                type: string
+            fabrics:
+              type: array
+              items:
+                type: string
+        input:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        deployment_id:
+          type: string
+          format: uuid
+          nullable: true
+        legacy_identity:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RunsPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Run'
+        next_cursor:
+          type: string
+          nullable: true

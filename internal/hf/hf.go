@@ -125,22 +125,34 @@ func validateSafetensorsIndex(indexPath, snapRoot string) []Diagnostic {
 		return []Diagnostic{diag("hf.index-invalid", "not a valid safetensors index: "+err.Error(), indexPath)}
 	}
 	for tensor, shard := range idx.WeightMap {
-		shard = filepath.Clean(shard)
-		full := filepath.Join(snapRoot, shard)
-		canonical, err := filepath.EvalSymlinks(full)
+		if filepath.IsAbs(shard) || hasDotDotSegment(shard) {
+			diags = append(diags, diag("hf.index-shard-escape", fmt.Sprintf("index contains unsafe weight file reference %s (tensor %s)", shard, tensor), shard))
+			continue
+		}
+		full := filepath.Join(snapRoot, filepath.Clean(shard))
+		st, err := os.Stat(full)
 		if err != nil {
 			diags = append(diags, diag("hf.index-shard-missing", fmt.Sprintf("index references missing shard %s (tensor %s)", shard, tensor), shard))
 			continue
 		}
-		if !within(canonical, snapRoot) {
-			diags = append(diags, diag("hf.index-shard-escape", fmt.Sprintf("index shard %s (tensor %s) resolves outside the snapshot", shard, tensor), shard))
-			continue
-		}
-		if st, err := os.Stat(full); err == nil && st.IsDir() {
+		if st.IsDir() {
 			diags = append(diags, diag("hf.index-shard-missing", fmt.Sprintf("index references directory %s (tensor %s)", shard, tensor), shard))
 		}
 	}
 	return diags
+}
+
+// hasDotDotSegment reports whether a reference path escapes its base
+// directory lexically (matches the legacy snapshot validator's
+// "unsafe weight file reference" check; symlink targets are validated
+// separately by the snapshot walk).
+func hasDotDotSegment(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func isLFSPointer(p string) bool {

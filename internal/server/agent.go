@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -25,6 +26,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
+	"github.com/jj-link/local-model-works/internal/nodes"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	agentv1connect "github.com/jj-link/local-model-works/proto/agent/v1/agentv1connect"
 )
@@ -41,7 +43,8 @@ func peerCertFrom(ctx context.Context) *x509.Certificate {
 // Enroll authenticates with a one-time token (the agent has no certificate
 // yet), Session requires a verified node certificate.
 func (s *Server) StartAgentListener(ctx context.Context) (string, error) {
-	certPEM, keyPEM, _, err := s.ca.ServerCert(s.cfg.ServerName, ipsForName(s.cfg.ServerName), 90*24*time.Hour)
+	dnsNames, ipSANs := serverSans(s.cfg.ServerName)
+	certPEM, keyPEM, _, err := s.ca.ServerCert(dnsNames, ipSANs, 90*24*time.Hour)
 	if err != nil {
 		return "", err
 	}
@@ -104,15 +107,44 @@ func (s *Server) StartAgentListener(ctx context.Context) (string, error) {
 		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shCtx)
+		// Shutdown only waits for connections to drain; a live agent
+		// session that outlives the grace period would keep its stream
+		// (and the agent talking to a dead controller) indefinitely.
+		// Force-close the remainder so agents observe the disconnect and
+		// reconnect to a restarted controller.
+		_ = srv.Close()
 	}()
 	return ln.Addr().String(), nil
 }
 
-func ipsForName(name string) []net.IP {
-	if ip := net.ParseIP(name); ip != nil {
-		return []net.IP{ip}
+// serverSans splits the configured comma-separated server names and
+// resolves any DNS names to IP literals so the minted leaf certificate is
+// valid for every address agents connect to: the loopback name for local
+// agents and the tailnet name for remote nodes.
+func serverSans(names string) ([]string, []net.IP) {
+	var dns []string
+	var ips []net.IP
+	seen := map[string]bool{}
+	for _, n := range strings.Split(names, ",") {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		if ip := net.ParseIP(n); ip != nil {
+			ips = append(ips, ip)
+			continue
+		}
+		dns = append(dns, n)
+		resolved, err := net.LookupIP(n)
+		if err != nil {
+			continue
+		}
+		for _, ip := range resolved {
+			ips = append(ips, ip)
+		}
 	}
-	return nil
+	return dns, ips
 }
 
 // Enroll exchanges a one-time token and the agent's self-generated public
@@ -201,7 +233,6 @@ func (s *Server) Enroll(ctx context.Context, req *connect.Request[agentv1.Enroll
 
 // Session is the per-node bidirectional control channel: heartbeat,
 // inventory, telemetry, command results, state updates, logs, placements,
-// transfer progress, and certificate rotation.
 func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1.AgentMessage, agentv1.ServerMessage]) error {
 	leaf := peerCertFrom(ctx)
 	if leaf == nil {
@@ -220,22 +251,31 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 		return connect.NewError(connect.CodeInternal, err)
 	}
 
-	conn := newNodeConn(nodeID)
+	conn := nodes.NewConn(nodeID)
 	s.nodes.Register(conn)
 	defer func() {
 		s.nodes.Unregister(conn)
 		conn.Close()
-		s.markOffline(context.WithoutCancel(ctx), nodeID)
+		// Only mark offline when this session was the last one; a
+		// replacement session registered in the gap must not be knocked
+		// offline by the old session's teardown.
+		if !s.nodes.Online(nodeID) {
+			s.markOffline(context.WithoutCancel(ctx), nodeID)
+		}
 	}()
 
 	status := "pending"
 	if node.Status != "pending" {
+		// The node was already approved (possibly while this session was
+		// connecting): mark it online. A still-pending node is left alone
+		// rather than rewritten, so a concurrent ApproveNode can never be
+		// clobbered back to "pending" by this session's status write.
 		status = "online"
-	}
-	if err := s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
-		Status: status, LastHeartbeat: sql.NullString{String: dbTime(time.Now().UTC()), Valid: true}, ID: nodeID,
-	}); err != nil {
-		return connect.NewError(connect.CodeInternal, err)
+		if err := s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
+			Status: status, LastHeartbeat: sql.NullString{String: dbTime(time.Now().UTC()), Valid: true}, ID: nodeID,
+		}); err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
 	}
 	s.bus.Publish(ctx, "node.online", nodeID, mustJSON(map[string]any{"status": status}))
 
@@ -252,7 +292,7 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 	go func() {
 		for {
 			select {
-			case <-conn.done:
+			case <-conn.Done():
 				return
 			case m := <-conn.SendCh:
 				if err := stream.Send(m); err != nil {
@@ -307,7 +347,15 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 					ID:           nodeID,
 				})
 			}
-			if node.Status != "pending" {
+			// The session start captured the row; a node approved while
+			// connected needs a re-check before it is promoted to online.
+			online := node.Status != "pending"
+			if !online {
+				if cur, err := s.q.GetNode(ctx, nodeID); err == nil {
+					online = cur.Status != "pending"
+				}
+			}
+			if online {
 				_ = s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
 					Status: "online", LastHeartbeat: sql.NullString{String: dbTime(now), Valid: true}, ID: nodeID,
 				})
@@ -339,6 +387,7 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			}
 		case *agentv1.AgentMessage_CommandResult:
 			s.bus.Publish(ctx, "run.command_result", nodeID, mustJSON(body.CommandResult))
+			s.commands.Deliver(body.CommandResult)
 			s.deploys.OnCommandResult(ctx, body.CommandResult)
 		case *agentv1.AgentMessage_StateUpdate:
 			s.applyStateUpdate(ctx, nodeID, body.StateUpdate)
@@ -401,7 +450,6 @@ func (s *Server) reconcileDeployments(ctx context.Context, nodeID string) []*age
 	return refs
 }
 
-
 // applyStateUpdate delegates container-state handling to the deploy
 // service (observed state, run failure, stop confirmation).
 func (s *Server) applyStateUpdate(ctx context.Context, nodeID string, su *agentv1.StateUpdate) {
@@ -411,6 +459,12 @@ func (s *Server) applyStateUpdate(ctx context.Context, nodeID string, su *agentv
 func (s *Server) appendLog(nodeID string, lc *agentv1.LogChunk) {
 	runID := lc.GetRunId()
 	if runID == "" {
+		return
+	}
+	// Terminal marker: the agent's tailer fully drained this stream; record
+	// the deterministic EOF so log consumers can wait for it.
+	if lc.GetFinal() {
+		s.runs.MarkLogEnd(runID, lc.GetDeploymentId(), lc.GetRank(), lc.GetStream(), lc.GetEndOffset())
 		return
 	}
 	if err := s.ensureRunRoot(); err != nil {
@@ -475,7 +529,7 @@ func (s *Server) applyTransferProgress(ctx context.Context, nodeID string, tp *a
 
 // rotateCertificate re-signs the node's current public key with a fresh
 // validity window and sends the replacement certificate.
-func (s *Server) rotateCertificate(ctx context.Context, nodeID string, conn *NodeConn) {
+func (s *Server) rotateCertificate(ctx context.Context, nodeID string, conn *nodes.Conn) {
 	cred, err := s.q.GetNodeCredential(ctx, nodeID)
 	if err != nil {
 		s.bus.Publish(ctx, "node.certificate_rotation_failed", nodeID,

@@ -80,7 +80,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 	if len(wc.GetContainerSpec()) > 0 {
 		var s runtime.ContainerSpec
 		if err := json.Unmarshal(wc.GetContainerSpec(), &s); err != nil {
-			a.result(cmdID, false, 0, fmt.Sprintf("container spec: %v", err), "")
+			a.result(cmdID, false, 0, fmt.Sprintf("container spec: %v", err), "", "")
 			return
 		}
 		spec = &s
@@ -96,52 +96,52 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 	switch wc.GetOp() {
 	case agentv1.WorkloadOp_WORKLOAD_OP_PULL:
 		if spec == nil {
-			a.result(cmdID, false, 0, "pull requires a container spec", "")
+			a.result(cmdID, false, 0, "pull requires a container spec", "", "")
 			return
 		}
 		if err := a.rt.Pull(ctx, &runtime.PullSpec{Reference: runtime.ImageRef(spec)}); err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
-		a.result(cmdID, true, 0, "", "")
+		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_CREATE:
 		if spec == nil {
-			a.result(cmdID, false, 0, "create requires a container spec", "")
+			a.result(cmdID, false, 0, "create requires a container spec", "", "")
 			return
 		}
 		if _, err := a.rt.Inspect(ctx, name); err == nil {
-			a.result(cmdID, false, 0, "container.exists: "+name, "")
+			a.result(cmdID, false, 0, "container.exists: "+name, "", "")
 			return
 		}
 		id, err := a.rt.Create(ctx, spec)
 		if err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
-		a.result(cmdID, true, 0, "", id)
+		a.result(cmdID, true, 0, "", id, "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_START:
 		id, err := a.resolve(name)
 		if err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		if err := a.rt.Start(ctx, id); err != nil {
-			a.result(cmdID, false, 0, err.Error(), id)
+			a.result(cmdID, false, 0, err.Error(), id, "")
 			return
 		}
-		a.result(cmdID, true, 0, "", id)
+		a.result(cmdID, true, 0, "", id, "")
 		w.startTailer(ctx, wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank(), id)
 	case agentv1.WorkloadOp_WORKLOAD_OP_STOP:
 		id, err := a.resolve(name)
 		if err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		if err := a.rt.Stop(ctx, id, 15); err != nil {
-			a.result(cmdID, false, 0, err.Error(), id)
+			a.result(cmdID, false, 0, err.Error(), id, "")
 			return
 		}
-		a.result(cmdID, true, 0, "", id)
+		a.result(cmdID, true, 0, "", id, "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_REMOVE:
 		id, err := a.resolve(name)
 		force := false
@@ -151,18 +151,18 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			}
 		}
 		if err := a.rt.Remove(ctx, name, force); err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		w.stopTailer(wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank())
-		a.result(cmdID, true, 0, "", "")
+		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_INSPECT:
 		info, err := a.rt.Inspect(ctx, name)
 		if err != nil {
-			a.result(cmdID, false, 0, err.Error(), "")
+			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
-		a.result(cmdID, true, int32(info.ExitCode), info.Error, info.ID)
+		a.result(cmdID, true, int32(info.ExitCode), info.Error, info.ID, info.State)
 	case agentv1.WorkloadOp_WORKLOAD_OP_LOGS:
 		a.handleLogRequest(ctx, &agentv1.LogRequest{
 			RunId:        wc.GetRunId(),
@@ -171,7 +171,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			Stream:       "stdout",
 		})
 	default:
-		a.result(cmdID, false, 0, "unknown workload op", "")
+		a.result(cmdID, false, 0, "unknown workload op", "", "")
 	}
 }
 
@@ -186,14 +186,15 @@ func (a *Agent) resolve(name string) (string, error) {
 	return info.ID, nil
 }
 
-func (a *Agent) result(cmdID string, ok bool, exit int32, errMsg, containerID string) {
+func (a *Agent) result(cmdID string, ok bool, exit int32, errMsg, containerID, state string) {
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_CommandResult{
 		CommandResult: &agentv1.CommandResult{
-			CommandId:   cmdID,
-			Ok:          ok,
-			ExitCode:    exit,
-			Error:       errMsg,
-			ContainerId: containerID,
+			CommandId:      cmdID,
+			Ok:             ok,
+			ExitCode:       exit,
+			Error:          errMsg,
+			ContainerId:    containerID,
+			ContainerState: state,
 		},
 	}})
 }

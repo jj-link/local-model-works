@@ -1,0 +1,19 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: settings
+title: Settings
+route: /settings
+nav:
+  label: Settings
+  order: 90
+  icon: settings
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties: {}
+apiFragment: api.yaml
+capabilities:
+  - secrets.read
+  - secrets.write
+  - modules.settings

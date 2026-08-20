@@ -1,0 +1,19 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: fleet
+title: Fleet
+route: /fleet
+nav:
+  label: Fleet
+  order: 10
+  icon: fleet
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties: {}
+apiFragment: api.yaml
+capabilities:
+  - nodes.read
+  - fabrics.read
+  - events.publish

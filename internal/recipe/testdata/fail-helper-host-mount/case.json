@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.schema",
+  "note": "Boundary: helper containers have no host-mount field at all — the schema's additionalProperties: false makes arbitrary host paths unrepresentable (policy by omission)."
+}

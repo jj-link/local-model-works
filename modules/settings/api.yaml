@@ -1,0 +1,167 @@
+# OpenAPI fragment for the settings module. Merged into the public contract by
+# "go run ./internal/generate/oapi gen"; $refs resolve in the merged document.
+openapi: 3.1.0
+info:
+  title: Local Model Works settings fragment
+  version: 1.0.0
+tags:
+  - name: modules
+  - name: secrets
+paths:
+  /modules/{id}/settings:
+    get:
+      tags: [modules]
+      operationId: getModuleSettings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Module settings values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [modules]
+      operationId: putModuleSettings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModuleSettings'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /secrets:
+    get:
+      tags: [secrets]
+      operationId: listSecrets
+      responses:
+        '200':
+          description: Secret metadata only (never values)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Secret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [secrets]
+      operationId: putSecret
+      summary: Create or replace a secret value (AES-256-GCM encrypted at rest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecretWrite'
+      responses:
+        '201':
+          description: Secret metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Secret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /secrets/{id}:
+    delete:
+      tags: [secrets]
+      operationId: deleteSecret
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '204':
+          description: Secret deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  schemas:
+    ModuleSettings:
+      type: object
+      required: [module, settings, version]
+      properties:
+        module:
+          type: string
+        settings:
+          type: object
+          additionalProperties: true
+        version:
+          type: string
+          description: ETag for optimistic concurrency
+
+    Secret:
+      type: object
+      required: [id, name, purpose]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        purpose:
+          type: string
+          enum: [huggingface, github, registry]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SecretWrite:
+      type: object
+      required: [name, purpose, value]
+      properties:
+        name:
+          type: string
+        purpose:
+          type: string
+          enum: [huggingface, github, registry]
+        value:
+          type: string

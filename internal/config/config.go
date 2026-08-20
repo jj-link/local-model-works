@@ -1,6 +1,7 @@
 // Package config resolves Local Model Works settings from LMW_ environment
 // variables with sane single-operator defaults.
 package config
+
 import (
 	"fmt"
 	"net"
@@ -9,9 +10,9 @@ import (
 )
 
 const (
-	EnvHTTPAddr      = "LMW_HTTP_ADDR"
-	EnvAgentAddr     = "LMW_AGENT_ADDR"
-	EnvPeerAddr      = "LMW_PEER_ADDR"
+	EnvHTTPAddr  = "LMW_HTTP_ADDR"
+	EnvAgentAddr = "LMW_AGENT_ADDR"
+	EnvPeerAddr  = "LMW_PEER_ADDR"
 	// EnvPeerAdvertise is the routable host:port a remote source dials;
 	// empty falls back to PeerAddr when it names an explicit host.
 	EnvPeerAdvertise = "LMW_PEER_ADVERTISE"
@@ -46,16 +47,16 @@ type Server struct {
 
 // Agent holds node-agent settings.
 type Agent struct {
-	ServerURL    string        // controller agent listener, e.g. https://<tailnet>:9443
-	CASha256     string        // pinned CA fingerprint (hex)
-	Token        string        // one-time enrollment token (first run only)
-	PeerAddr     string        // peer-transfer listener, default :9444
-	PeerAdvertise string       // routable peer host:port; "" = derive from PeerAddr
-	StateRoot    string        // default /var/lib/local-model-works-agent
-	DockerSocket string        // default /var/run/docker.sock
-	Workspace    string        // default <StateRoot>/workspace
-	CacheRoots   []string      // existing model/cache roots reported as placements
-	TelemetryInt time.Duration // sample interval, default 1s
+	ServerURL     string        // controller agent listener, e.g. https://<tailnet>:9443
+	CASha256      string        // pinned CA fingerprint (hex)
+	Token         string        // one-time enrollment token (first run only)
+	PeerAddr      string        // peer-transfer listener, default :9444
+	PeerAdvertise string        // routable peer host:port; "" = derive from PeerAddr
+	StateRoot     string        // default /var/lib/local-model-works-agent
+	DockerSocket  string        // default /var/run/docker.sock
+	Workspace     string        // default <StateRoot>/workspace
+	CacheRoots    []string      // existing model/cache roots reported as placements
+	TelemetryInt  time.Duration // sample interval, default 1s
 }
 
 func envStr(key, def string) string {
@@ -95,15 +96,15 @@ func sessionTTL() time.Duration {
 func LoadAgent() (Agent, error) {
 	a := Agent{
 		ServerURL:     envStr(EnvAgentServer, ""),
-		CASha256:    envStr(EnvAgentCASha256, ""),
-		Token:        envStr(EnvAgentToken, ""),
+		CASha256:      envStr(EnvAgentCASha256, ""),
+		Token:         envStr(EnvAgentToken, ""),
 		PeerAddr:      envStr(EnvPeerAddr, ":9444"),
 		PeerAdvertise: envStr(EnvPeerAdvertise, ""),
-		StateRoot:    envStr(EnvAgentStateRoot, "/var/lib/local-model-works-agent"),
-		DockerSocket: envStr(EnvAgentDockerSock, "/var/run/docker.sock"),
-		Workspace:    envStr(EnvAgentWorkspace, ""),
-		CacheRoots:   splitColonList(os.Getenv(EnvAgentCacheRoots)),
-		TelemetryInt: time.Second,
+		StateRoot:     envStr(EnvAgentStateRoot, "/var/lib/local-model-works-agent"),
+		DockerSocket:  envStr(EnvAgentDockerSock, "/var/run/docker.sock"),
+		Workspace:     envStr(EnvAgentWorkspace, ""),
+		CacheRoots:    splitColonList(os.Getenv(EnvAgentCacheRoots)),
+		TelemetryInt:  time.Second,
 	}
 	if a.Workspace == "" {
 		a.Workspace = a.StateRoot + "/workspace"
@@ -142,6 +143,13 @@ func (s Server) CACertPath() string    { return s.StateRoot + "/ca/ca.cert.pem" 
 func (s Server) SecretKeyPath() string { return s.StateRoot + "/secrets.key" }
 func (s Server) RecipeRoot() string    { return s.StateRoot + "/recipes" }
 func (s Server) RunRoot() string       { return s.StateRoot + "/runs" }
+
+// TrustKeyPath is where the recipe/catalog verification public key (PEM
+// PKIX, Ed25519) lives; missing file disables signature verification.
+func (s Server) TrustKeyPath() string { return s.StateRoot + "/trust.key.pem" }
+
+// CatalogRoot is the on-disk first-party catalog.
+func (s Server) CatalogRoot() string { return s.StateRoot + "/catalog" }
 
 // Paths under an agent state root.
 func (a Agent) NodeCertPath() string { return a.StateRoot + "/node.cert.pem" }

@@ -7,3 +7,4 @@ web/dist/
 .DS_Store
 build-check.sh
 amend-check.sh
+/lmw

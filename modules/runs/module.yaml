@@ -1,0 +1,18 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: runs
+title: Runs
+route: /runs
+nav:
+  label: Runs
+  order: 50
+  icon: runs
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties: {}
+apiFragment: api.yaml
+capabilities:
+  - runs.read
+  - events.publish

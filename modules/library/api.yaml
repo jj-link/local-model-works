@@ -1,0 +1,474 @@
+# OpenAPI fragment for the library module. Merged into the public contract by
+# "go run ./internal/generate/oapi gen"; $refs resolve in the merged document.
+openapi: 3.1.0
+info:
+  title: Local Model Works library fragment
+  version: 1.0.0
+tags:
+  - name: artifacts
+  - name: recipes
+paths:
+  /artifacts:
+    get:
+      tags: [artifacts]
+      operationId: listArtifacts
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            $ref: '#/components/schemas/ArtifactKind'
+        - name: node
+          in: query
+          description: Only artifacts with a placement on this node
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Artifacts with placements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Artifact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /artifacts/{id}/placements:
+    get:
+      tags: [artifacts]
+      operationId: listArtifactPlacements
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Placements for the artifact
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Placement'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /transfers:
+    post:
+      tags: [artifacts]
+      operationId: createTransfer
+      summary: Plan and start a peer transfer of an artifact between nodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '201':
+          description: Transfer started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [artifacts]
+      operationId: listTransfers
+      responses:
+        '200':
+          description: Transfers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /transfers/{id}:
+    get:
+      tags: [artifacts]
+      operationId: getTransfer
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Transfer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [artifacts]
+      operationId: cancelTransfer
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Transfer cancelled; resumable temporary state preserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /recipes:
+    get:
+      tags: [recipes]
+      operationId: listRecipes
+      responses:
+        '200':
+          description: Installed recipes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /recipes/import:
+    post:
+      tags: [recipes]
+      operationId: importRecipe
+      summary: Install a recipe from catalog, OCI reference, or pinned Git source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeImport'
+      responses:
+        '201':
+          description: Installed recipe (trust untrusted unless verified)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /recipes/{digest}:
+    get:
+      tags: [recipes]
+      operationId: getRecipe
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full recipe manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [recipes]
+      operationId: deleteRecipe
+      summary: Uninstall; blocked while referenced by any deployment or run
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Recipe uninstalled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /recipes/{digest}/trust:
+    post:
+      tags: [recipes]
+      operationId: setRecipeTrust
+      summary: Approve trust (local) after reviewing the permission diff
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeTrustRequest'
+      responses:
+        '200':
+          description: Recipe with updated trust state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  schemas:
+    ArtifactKind:
+      type: string
+      enum: [model, dataset, adapter, checkpoint, recipe, image, result, file]
+
+    Artifact:
+      type: object
+      required: [id, kind, identity, validation_state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        identity:
+          type: string
+          description: Canonical identity, e.g. hf://owner/repo@revision, sha256 digest, or OCI digest
+        revision:
+          type: string
+          nullable: true
+        digest:
+          type: string
+          nullable: true
+        validation_state:
+          type: string
+          enum: [pending, valid, invalid]
+        metadata:
+          type: object
+          additionalProperties: true
+        placements:
+          type: array
+          items:
+            $ref: '#/components/schemas/Placement'
+
+    Placement:
+      type: object
+      required: [artifact_id, node_id, path, state]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        state:
+          type: string
+          enum: [pending, valid, invalid]
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
+    TransferRequest:
+      type: object
+      required: [artifact_id, source_node, dest_node, dest_path]
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        source_node:
+          type: string
+          format: uuid
+        dest_node:
+          type: string
+          format: uuid
+        dest_path:
+          type: string
+
+    Transfer:
+      type: object
+      required: [id, artifact_id, source_node, dest_node, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        artifact_id:
+          type: string
+          format: uuid
+        source_node:
+          type: string
+          format: uuid
+        dest_node:
+          type: string
+          format: uuid
+        dest_path:
+          type: string
+        state:
+          type: string
+          enum: [pending, transferring, validating, complete, failed, cancelled]
+        bytes_total:
+          type: integer
+          format: int64
+        bytes_done:
+          type: integer
+          format: int64
+        diagnostic:
+          $ref: '#/components/schemas/Diagnostic'
+        created_at:
+          type: string
+          format: date-time
+
+    RecipeSource:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [catalog, oci, git, local]
+        reference:
+          type: string
+        revision:
+          type: string
+        path:
+          type: string
+        remote:
+          type: string
+        tree:
+          type: string
+
+    RecipeImport:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: '#/components/schemas/RecipeSource'
+
+    Recipe:
+      type: object
+      required: [digest, name, version, trust_state, installed_at]
+      properties:
+        digest:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        license:
+          type: string
+        source:
+          $ref: '#/components/schemas/RecipeSource'
+        trust_state:
+          type: string
+          enum: [verified, local, untrusted]
+        permissions:
+          type: array
+          items:
+            type: string
+        compatibility:
+          $ref: '#/components/schemas/Compatibility'
+        artifact_count:
+          type: integer
+        profile_count:
+          type: integer
+        variant_count:
+          type: integer
+        high_risk:
+          type: array
+          items:
+            type: string
+        installed_at:
+          type: string
+          format: date-time
+        version_count:
+          type: integer
+          description: Other installed versions of the same recipe name
+
+    RecipeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Recipe'
+        - type: object
+          properties:
+            manifest:
+              type: object
+              description: Canonical recipe manifest JSON (localmodelworks/v1alpha1)
+            updates:
+              type: array
+              items:
+                type: object
+                properties:
+                  digest:
+                    type: string
+                  version:
+                    type: string
+                  diff:
+                    type: object
+                    description: Manifest/permission difference summary
+
+    Compatibility:
+      type: object
+      properties:
+        node_count:
+          type: integer
+        accelerator:
+          type: object
+          additionalProperties: true
+        fabric:
+          type: object
+          additionalProperties: true
+
+    RecipeTrustRequest:
+      type: object
+      required: [trust_state, permission_diff_accepted]
+      properties:
+        trust_state:
+          type: string
+          enum: [local, untrusted]
+        permission_diff_accepted:
+          type: boolean

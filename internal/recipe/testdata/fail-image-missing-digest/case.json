@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "validator",
+  "code": "recipe.schema",
+  "note": "Bare tag without the mandatory digest field fails the schema (image.digest is required)."
+}

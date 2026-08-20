@@ -1,0 +1,26 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-fail-hnet
+  version: 1.0.0
+compatibility:
+  nodeCount: 1
+artifacts: []
+workloads:
+  - image:
+      reference: ghcr.io/localmodelworks/demo-serve:1.0.0
+      digest: sha256:1f2e3d4c5b6a798091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+    command:
+      - serve
+    args: []
+    resources: {}
+prepare:
+  image:
+    reference: ghcr.io/localmodelworks/demo-prep:1.0.0
+    digest: sha256:f9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6c5b4a39281706f5e4d3c2b1a0
+  command:
+    - python3
+  args:
+    - -m
+    - lmwprep
+  network: bridge

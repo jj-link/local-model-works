@@ -1,0 +1,160 @@
+# OpenAPI fragment for the benchmarks module. Merged into the public contract
+# by "go run ./internal/generate/oapi gen"; $refs resolve in the merged
+# document (Run lives in the runs fragment).
+openapi: 3.1.0
+info:
+  title: Local Model Works benchmarks fragment
+  version: 1.0.0
+tags:
+  - name: benchmarks
+paths:
+  /benchmarks:
+    post:
+      tags: [benchmarks]
+      operationId: createBenchmark
+      summary: Launch a benchmark run against a deployment or explicit endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BenchmarkCreate'
+      responses:
+        '201':
+          description: Benchmark run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [benchmarks]
+      operationId: listBenchmarks
+      responses:
+        '200':
+          description: Benchmark runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /benchmarks/results:
+    get:
+      tags: [benchmarks]
+      operationId: listBenchmarkResults
+      responses:
+        '200':
+          description: Per-language results across runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BenchmarkResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  schemas:
+    BenchmarkCreate:
+      type: object
+      required: [deployment_id, languages]
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+        languages:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        prompts_per_language:
+          type: integer
+          default: 8
+        max_tokens:
+          type: integer
+          default: 512
+        temperature:
+          type: number
+          default: 0
+        model_name:
+          type: string
+          description: Override the model field sent to the endpoint
+        quantization:
+          type: string
+        reason:
+          type: string
+          description: Why this benchmark is being run; stored with the result
+
+    BenchmarkResult:
+      type: object
+      required: [run_id, language]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        language:
+          type: string
+        endpoint:
+          type: string
+        model:
+          type: string
+        requests:
+          type: integer
+        successes:
+          type: integer
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        wall_seconds:
+          type: number
+        tokens_per_second:
+          type: number
+        latency_ms:
+          type: object
+          properties:
+            avg:
+              type: number
+            p50:
+              type: number
+            p90:
+              type: number
+            p99:
+              type: number
+        first_token_ms:
+          type: object
+          additionalProperties:
+            type: number
+        grading:
+          type: object
+          nullable: true
+          additionalProperties: true
+        quantization:
+          type: string
+          nullable: true
+        reasoning:
+          type: object
+          nullable: true
+          additionalProperties: true
+        result_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time

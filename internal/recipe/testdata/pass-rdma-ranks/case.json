@@ -1,0 +1,6 @@
+{
+  "outcome": "pass",
+  "kind": "validator",
+  "highRisk": ["devices.rdma", "memory.shm-large", "network.host"],
+  "note": "Ranked RDMA recipe: multi-node, capability match predicate, ranks, RDMA + host-network permissions declared; >=1GiB shm requires the memory.shm-large permission."
+}

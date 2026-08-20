@@ -1,0 +1,6 @@
+{
+  "outcome": "fail",
+  "kind": "pack",
+  "code": "recipe.asset-symlink",
+  "note": "Validator passes; the packer rejects a symlink aliasing an asset to a file outside the package root."
+}

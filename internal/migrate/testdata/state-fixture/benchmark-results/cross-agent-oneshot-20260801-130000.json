@@ -1,0 +1,37 @@
+{
+ "run": "55555555-5555-4555-8555-555555555555",
+ "served_model": "fixture-model",
+ "agents": [
+  "spark2-ts"
+ ],
+ "agent_models": {
+  "spark2-ts": "fixture-model"
+ },
+ "langs": [
+  "python"
+ ],
+ "num_tests": 1,
+ "keywords": "",
+ "concurrency": 1,
+ "est_tokens_per_req": 100,
+ "results": [
+  {
+   "agent": "spark2-ts",
+   "agent_duration_s": 12.5,
+   "agent_model": "fixture-model",
+   "agent_rc": 0,
+   "agent_stderr_tail": "",
+   "agent_stdout_tail": "ok",
+   "agent_timeout": false,
+   "dir": "python",
+   "index": 0,
+   "lang": "python",
+   "name": "t1",
+   "ok": true,
+   "test": "fixture"
+  }
+ ],
+ "resolved_concurrency": 1,
+ "kv_cache_tokens": 0,
+ "server_max_concurrency": 1
+}

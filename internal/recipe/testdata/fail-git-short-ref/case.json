@@ -1,0 +1,7 @@
+{
+  "outcome": "fail",
+  "kind": "git",
+  "code": "ErrUnpinnedRevision",
+  "revision": "main",
+  "note": "Git import with a branch name (not a 40-hex commit) fails before clone with the stable sentinel; API code recipe.unpinned_revision (422)."
+}

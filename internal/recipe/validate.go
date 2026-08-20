@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -34,8 +35,15 @@ func NewValidator() (*Validator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("embed recipe schema: %w", err)
 	}
+	// Decoded before AddResource: the v6 compiler validates resources
+	// against the meta-schema and does not decode raw io.Reader documents
+	// itself.
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("compile recipe schema: %w", err)
+	}
 	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("localmodelworks/v1alpha1", strings.NewReader(string(raw))); err != nil {
+	if err := compiler.AddResource("localmodelworks/v1alpha1", doc); err != nil {
 		return nil, fmt.Errorf("compile recipe schema: %w", err)
 	}
 	s, err := compiler.Compile("localmodelworks/v1alpha1")
@@ -128,6 +136,9 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 		p := fmt.Sprintf("artifacts[%d]", i)
 		if traversalRe.MatchString(a.Mount) {
 			add("recipe.mount-traversal", "artifact mount contains path traversal", p+".mount")
+		}
+		if sensitiveMount(a.Mount) {
+			add("recipe.mount-sensitive", fmt.Sprintf("artifact mount %q targets a sensitive host path", a.Mount), p+".mount")
 		}
 		if seenMounts[a.Mount] {
 			add("recipe.mount-duplicate", "two artifacts mount the same in-container path", p+".mount")
@@ -295,6 +306,23 @@ func findParam(ps []Parameter, name string) *Parameter {
 	return nil
 }
 
+// sensitiveMount reports whether the in-container mount path overlaps a
+// host path recipes must never bind: the runtime Docker socket (Docker-in-
+// Docker) and the kernel pseudo-filesystem roots. The schema's mount
+// pattern admits all of these, so the policy rejects them here.
+func sensitiveMount(mount string) bool {
+	switch mount {
+	case "/var/run/docker.sock", "/run/docker.sock":
+		return true
+	}
+	for _, root := range []string{"/dev", "/proc", "/sys"} {
+		if strings.HasPrefix(mount, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func checkParamValue(p Parameter, val any) string {
 	switch p.Type {
 	case "int":
@@ -374,7 +402,7 @@ func checkTemplateVar(tv string, m *Manifest, profileNames []string) error {
 		return nil
 	}
 	if strings.HasPrefix(tv, TemplArtifact) && strings.HasSuffix(tv, ".path}") {
-		name := strings.TrimSuffix(strings.TrimPrefix(tv, TemplArtifact), ".path")
+		name := strings.TrimSuffix(strings.TrimPrefix(tv, TemplArtifact), ".path}")
 		if name == "package" {
 			return nil
 		}

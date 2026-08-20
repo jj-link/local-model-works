@@ -40,8 +40,8 @@ type Inventory struct {
 	Hostname     string        `json:"hostname"`
 	Accelerators []Accelerator `json:"accelerators"`
 	Interfaces   []Interface   `json:"interfaces"`
-	RdmaDevices []RdmaDevice `json:"rdma_devices"`
-	PeerListen  string       `json:"peer_listen,omitempty"`
+	RdmaDevices  []RdmaDevice  `json:"rdma_devices"`
+	PeerListen   string        `json:"peer_listen,omitempty"`
 }
 
 // Parse decodes a persisted inventory JSON string.

@@ -48,6 +48,12 @@ type Agent struct {
 	dockerOK      bool
 	startTime     time.Time
 
+	// reconcileReasons records the reason of every ReconcileRequest
+	// received over the control session, in order (diagnostic and test
+	// observability; the agent's own initial reconcile is not recorded).
+	reconcileMu      sync.Mutex
+	reconcileReasons []string
+
 	// Identity: created at enrollment, persisted under the state root.
 	mu          sync.Mutex
 	nodeID      string
@@ -120,7 +126,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	} else {
 		defer ts.stop()
 	}
-
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -354,4 +359,23 @@ func (a *Agent) send(m *agentv1.AgentMessage) {
 	default:
 		log.Printf("agent: send queue full; dropping %T", m.GetBody())
 	}
+}
+
+// noteReconcile records one ReconcileRequest reason (capped).
+func (a *Agent) noteReconcile(reason string) {
+	a.reconcileMu.Lock()
+	defer a.reconcileMu.Unlock()
+	if len(a.reconcileReasons) < 32 {
+		a.reconcileReasons = append(a.reconcileReasons, reason)
+	}
+}
+
+// ReconcileReasons returns the reasons of every ReconcileRequest received
+// over the control session, in order.
+func (a *Agent) ReconcileReasons() []string {
+	a.reconcileMu.Lock()
+	defer a.reconcileMu.Unlock()
+	out := make([]string, len(a.reconcileReasons))
+	copy(out, a.reconcileReasons)
+	return out
 }

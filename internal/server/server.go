@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,11 +17,19 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/auth"
 	"github.com/jj-link/local-model-works/internal/ca"
+	"github.com/jj-link/local-model-works/internal/commands"
 	"github.com/jj-link/local-model-works/internal/config"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/events"
+	"github.com/jj-link/local-model-works/internal/fabric"
+	"github.com/jj-link/local-model-works/internal/jobs"
+	"github.com/jj-link/local-model-works/internal/moduleapi"
+	"github.com/jj-link/local-model-works/internal/modules"
+	"github.com/jj-link/local-model-works/internal/nodes"
+	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/settings"
 )
 
 const sessionCookie = "lmw_session"
@@ -29,6 +38,9 @@ type userCtxKey struct{}
 
 // Deps wires the server's dependencies.
 type Deps struct {
+	// Ctx is the process lifecycle context: jobs and schedules run against
+	// it and stop when it is cancelled.
+	Ctx              context.Context
 	Cfg              config.Server
 	DB               *sql.DB
 	Q                *db.Queries
@@ -42,11 +54,18 @@ type Deps struct {
 // Server is the controller.
 type Server struct {
 	cfg              config.Server
+	ctx              context.Context
 	q                *db.Queries
 	ca               *ca.CA
 	sessions         *auth.Sessions
 	bus              *events.EventBus
-	nodes            *NodeRegistry
+	nodes            *nodes.Registry
+	commands         *commands.Broker
+	fabrics          *fabric.Service
+	jobs             *jobs.Registry
+	settings         *settings.Registry
+	env              *moduleapi.Env
+	modules          []moduleapi.Module
 	heartbeatTimeout time.Duration
 	version          string
 	commit           string
@@ -59,37 +78,83 @@ type Server struct {
 	deploys *deploy.Service
 }
 
-// New assembles a Server.
+// New assembles a Server: the core domain services, the first-party module
+// backends (compiled in via internal/modules.Constructors), and the module
+// job/settings registries.
 func New(d Deps) *Server {
 	hbt := d.HeartbeatTimeout
 	if hbt <= 0 {
 		hbt = 30 * time.Second
 	}
 	bus := events.NewEventBus(d.Q)
-	nodes := NewNodeRegistry()
-	runRoot := filepath.Join(d.Cfg.StateRoot, "runs")
+	nodes := nodes.NewRegistry()
+	broker := commands.New()
+	runRoot := d.Cfg.RunRoot()
 	runsSvc := runs.New(d.DB, d.Q, bus, runRoot)
 	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes, d.CA)
-	return &Server{
+	fabrics := fabric.New(d.Q, bus)
+	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx)
+	settingsReg := settings.New(d.Q)
+
+	v, err := recipe.NewValidator()
+	if err != nil {
+		panic(fmt.Sprintf("recipe validator: %v", err))
+	}
+	recipes, err := recipe.New(d.Q, bus, v, d.Cfg.TrustKeyPath(), d.Cfg.CatalogRoot())
+	if err != nil {
+		panic(fmt.Sprintf("recipe store: %v", err))
+	}
+	box, err := auth.NewSecretBox(d.Cfg.SecretKeyPath())
+	if err != nil {
+		panic(fmt.Sprintf("secret box: %v", err))
+	}
+
+	env := &moduleapi.Env{
+		Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
+		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, Runs: runsSvc,
+		Jobs: jobsReg, Settings: settingsReg, Secrets: box,
+		Nodes: nodes, Commands: broker, RunRoot: runRoot,
+	}
+	s := &Server{
 		cfg:              d.Cfg,
+		ctx:              d.Ctx,
 		q:                d.Q,
 		ca:               d.CA,
 		sessions:         d.Sessions,
 		bus:              bus,
 		nodes:            nodes,
+		commands:         broker,
+		fabrics:          fabrics,
+		jobs:             jobsReg,
+		settings:         settingsReg,
+		env:              env,
 		heartbeatTimeout: hbt,
 		version:          d.Version,
 		commit:           d.Commit,
 		runs:             runsSvc,
 		deploys:          deploys,
 	}
+	for _, ctor := range modules.Constructors {
+		m := ctor(env)
+		s.modules = append(s.modules, m)
+		m.RegisterJobs(jobsReg)
+		m.RegisterSettings(settingsReg)
+	}
+	jobsReg.StartSchedules()
+	return s
 }
 
 // Bus is the event stream.
 func (s *Server) Bus() *events.EventBus { return s.bus }
 
 // Nodes is the live agent session registry.
-func (s *Server) Nodes() *NodeRegistry { return s.nodes }
+func (s *Server) Nodes() *nodes.Registry { return s.nodes }
+
+// Commands is the agent command-result broker.
+func (s *Server) Commands() *commands.Broker { return s.commands }
+
+// Env is the module service surface.
+func (s *Server) Env() *moduleapi.Env { return s.env }
 
 // Deployments is the serving deployment service.
 func (s *Server) Deployments() *deploy.Service { return s.deploys }
@@ -102,6 +167,7 @@ func (s *Server) Runs() *runs.Service { return s.runs }
 func (s *Server) Recover(ctx context.Context) (int, error) {
 	return s.runs.MarkInterrupted(ctx)
 }
+
 // BootstrapAdmin creates the initial operator account when none exists.
 func BootstrapAdmin(ctx context.Context, q *db.Queries, username, password string) error {
 	n, err := q.CountUsers(ctx)
@@ -134,15 +200,11 @@ func (s *Server) Routes() http.Handler {
 			a.Post("/enrollment-tokens", s.handleCreateEnrollmentToken)
 			a.Get("/enrollment-tokens", s.handleListEnrollmentTokens)
 			a.Delete("/enrollment-tokens/{id}", s.handleDeleteEnrollmentToken)
-			a.Get("/nodes", s.handleListNodes)
-			a.Get("/nodes/{id}", s.handleGetNode)
-			a.Post("/nodes/{id}/approve", s.handleApproveNode)
-			a.Get("/deployments", s.handleListDeployments)
-			a.Post("/deployments", s.handleCreateDeployment)
-			a.Post("/deployments/plan", s.handlePlanDeployment)
-			a.Get("/deployments/{id}", s.handleGetDeployment)
-			a.Post("/deployments/{id}/stop", s.handleStopDeployment)
-			a.Post("/deployments/{id}/verify", s.handleVerifyDeployment)
+			// First-party module routes (compiled list; the core keeps no
+			// feature handlers).
+			for _, m := range s.modules {
+				m.RegisterHTTP(a)
+			}
 		})
 	})
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +212,7 @@ func (s *Server) Routes() http.Handler {
 			writeErr(w, http.StatusNotFound, "resource.not_found", "no such endpoint")
 			return
 		}
-		webIndex(w, r)
+		webServe(w, r)
 	})
 	return r
 }
@@ -161,7 +223,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

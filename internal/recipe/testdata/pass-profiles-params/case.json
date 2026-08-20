@@ -1,0 +1,5 @@
+{
+  "outcome": "pass",
+  "kind": "validator",
+  "note": "Parameters with ranges/enums plus named profiles whose values stay in range; profile template declared."
+}

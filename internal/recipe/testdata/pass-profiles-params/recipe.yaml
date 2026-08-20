@@ -1,0 +1,36 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-demo-profiles
+  version: 1.0.0
+compatibility:
+  nodeCount: 1
+artifacts: []
+workloads:
+  - image:
+      reference: ghcr.io/localmodelworks/demo-serve:1.0.0
+      digest: sha256:1f2e3d4c5b6a798091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+    command:
+      - serve
+    args:
+      - --profile
+      - ${profile.fast}
+    resources: {}
+parameters:
+  - name: gpu_util
+    type: int
+    default: 50
+    min: 0
+    max: 100
+  - name: mode
+    type: enum
+    enum:
+      - fast
+      - safe
+profiles:
+  fast:
+    gpu_util: 90
+    mode: fast
+  safe:
+    gpu_util: 10
+    mode: safe
