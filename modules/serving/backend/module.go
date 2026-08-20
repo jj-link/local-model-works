@@ -98,13 +98,7 @@ func (m *Module) RegisterSettings(reg *settings.Registry) {
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Post("/deployments/plan", m.plan)
-	r.Post("/deployments", m.create)
-	r.Get("/deployments", m.list)
-	r.Get("/deployments/{id}", m.get)
-	r.Post("/deployments/{id}/verify", m.verify)
-	r.Post("/deployments/{id}/stop", m.stop)
-	r.Get("/deployments/{id}/logs", m.logs)
+	HandlerFromMux(m, r)
 }
 
 // deployErr maps deploy service sentinels to the stable (status, code)

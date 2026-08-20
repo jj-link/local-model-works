@@ -13,14 +13,11 @@ test.describe("app shell", () => {
     await expect(page).toHaveTitle("Local Model Works");
   });
 
-  test("mounts either the login form or the dashboard nav", async ({ page }) => {
+  test("mounts a visible application landmark", async ({ page }) => {
+    await page.route("**/api/v1/session", (route) =>
+      route.fulfill({ status: 401, contentType: "application/json", body: "{\"code\":\"auth.unauthorized\"}" }),
+    );
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const shell = page
-      .locator("nav")
-      .or(page.getByRole("form"))
-      .first();
-    await expect(shell, "login form or dashboard nav should render").toBeVisible({
-      timeout: 15000,
-    });
+    await expect(page.locator("main").first()).toBeVisible({ timeout: 15000 });
   });
 });

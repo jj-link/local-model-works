@@ -6,6 +6,10 @@ metadata:
   displayName: lmw-fail-variant
   description: Ambiguous variant fixture.
   license: MIT
+  source:
+    url: https://fixtures.local/fail-variant-ambiguous
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts:

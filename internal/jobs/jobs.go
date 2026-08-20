@@ -7,17 +7,24 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/jj-link/local-model-works/internal/auth"
+	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/runs"
 )
 
@@ -44,7 +51,11 @@ type Spec struct {
 	Schedule string
 	// Executor runs the job. It must respect ctx cancellation and return a
 	// versioned JSON-ready output object.
-	Executor func(ctx context.Context, c *Context) (map[string]any, error)
+	Executor              func(ctx context.Context, c *Context) (map[string]any, error)
+	SecretScopes          []string
+	PlacementRequirements []string
+	LeaseResources        func(input map[string]any) []string
+	ArtifactKinds         []string
 }
 
 // Context is handed to an executor for one run.
@@ -53,10 +64,19 @@ type Context struct {
 	Kind   string
 	RunID  string
 	Input  map[string]any
-	// Workspace is the run's private, isolated directory (created).
-	Workspace string
-	// Logf appends to the run's standard log stream.
-	Logf func(format string, args ...any)
+	// Workspace is the run's private, isolated directory.
+	Workspace       string
+	Logf            func(format string, args ...any)
+	Secrets         map[string]string
+	PublishArtifact func(kind, path string) (PublishedArtifact, error)
+	Placements      []string
+}
+type PublishedArtifact struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Identity string `json:"identity"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
 }
 
 // Registry is the module job registry. All asynchronous run persistence
@@ -73,25 +93,25 @@ type Registry struct {
 	lc      context.Context // service lifecycle; not a request context
 	runs    *runs.Service
 	runRoot string
+	db      *sql.DB
+	q       *db.Queries
+	secrets *auth.SecretBox
 }
 
 // New builds a job registry over the run service. lifecycle bounds all
 // background job execution and its persistence.
-func New(runsSvc *runs.Service, runRoot string, lifecycle context.Context) *Registry {
+func New(runsSvc *runs.Service, runRoot string, lifecycle context.Context, sqlDB *sql.DB, queries *db.Queries) *Registry {
 	if lifecycle == nil {
 		lifecycle = context.Background()
 	}
 	return &Registry{
-		specs:      map[string]Spec{},
-		moduleOf:   map[string]string{},
-		live:       map[string]context.CancelFunc{},
-		inSchemas:  map[string]*jsonschema.Schema{},
-		outSchemas: map[string]*jsonschema.Schema{},
-		lc:         lifecycle,
-		runs:       runsSvc,
-		runRoot:    runRoot,
+		specs: map[string]Spec{}, moduleOf: map[string]string{}, live: map[string]context.CancelFunc{},
+		inSchemas: map[string]*jsonschema.Schema{}, outSchemas: map[string]*jsonschema.Schema{},
+		lc: lifecycle, runs: runsSvc, runRoot: runRoot, db: sqlDB, q: queries,
 	}
 }
+
+func (r *Registry) SetSecretBox(box *auth.SecretBox) { r.secrets = box }
 
 // compileSchema compiles one raw JSON Schema document. The document is
 // decoded before AddResource: the v6 compiler validates resources against
@@ -162,6 +182,18 @@ func (r *Registry) Kinds() []string {
 	return out
 }
 
+func normalizeJSON(value any) (any, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var normalized any
+	if err := json.Unmarshal(encoded, &normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
 // Submit validates the input, creates a run, and starts the executor. The
 // request ctx only covers creation; execution outlives the request.
 func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any) (string, error) {
@@ -176,6 +208,11 @@ func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any
 	if input == nil {
 		input = map[string]any{}
 	}
+	normalized, err := normalizeJSON(input)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInput, err)
+	}
+	input = normalized.(map[string]any)
 	if hasIn {
 		if err := in.Validate(input); err != nil {
 			return "", fmt.Errorf("%w: %v", ErrInput, err)
@@ -187,8 +224,25 @@ func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any
 	}
 	ws := filepath.Join(r.runRoot, "jobs", runID)
 	if err := os.MkdirAll(ws, 0o700); err != nil {
-		_ = r.runs.SetState(ctx, runID, runs.Failed, "run.workspace_failed", err.Error())
+		_ = r.runs.Complete(ctx, runID, runs.Failed, "run.workspace_failed", err.Error())
 		return "", fmt.Errorf("%w: %v", ErrNoWorkspace, err)
+	}
+	if spec.LeaseResources != nil {
+		resources := spec.LeaseResources(input)
+		if len(resources) > 0 {
+			tx, err := r.db.BeginTx(ctx, nil)
+			if err != nil {
+				return "", err
+			}
+			if err := r.runs.AcquireLeases(ctx, r.q.WithTx(tx), "run", runID, resources); err != nil {
+				tx.Rollback()
+				_ = r.runs.Complete(ctx, runID, runs.Failed, "run.lease_conflict", err.Error())
+				return "", err
+			}
+			if err := tx.Commit(); err != nil {
+				return "", err
+			}
+		}
 	}
 	r.start(module, spec, runID, ws, input)
 	return runID, nil
@@ -207,6 +261,21 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 			delete(r.live, runID)
 			r.mu.Unlock()
 		}()
+		secrets, secretErr := r.loadSecrets(execCtx, spec.SecretScopes)
+		if secretErr != nil {
+			_ = r.runs.ReleaseLeasesFor(lc, "run", runID)
+			_ = r.runs.Complete(lc, runID, runs.Failed, "run.secret_scope", secretErr.Error())
+			return
+		}
+		defer func() {
+			for key := range secrets {
+				delete(secrets, key)
+			}
+		}()
+		allowedKinds := map[string]bool{}
+		for _, kind := range spec.ArtifactKinds {
+			allowedKinds[kind] = true
+		}
 		c := &Context{
 			Module:    module,
 			Kind:      spec.Kind,
@@ -215,6 +284,14 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 			Workspace: ws,
 			Logf: func(format string, args ...any) {
 				_ = r.runs.AppendLog(runID, "", 0, "stdout", []byte(fmt.Sprintf(format, args...)))
+			},
+			Secrets:    secrets,
+			Placements: append([]string(nil), spec.PlacementRequirements...),
+			PublishArtifact: func(kind, path string) (PublishedArtifact, error) {
+				if !allowedKinds[kind] {
+					return PublishedArtifact{}, fmt.Errorf("artifact kind %q is not declared", kind)
+				}
+				return r.publishArtifact(execCtx, runID, ws, kind, path)
 			},
 		}
 		_ = r.runs.SetState(lc, runID, runs.Running, "", "")
@@ -226,15 +303,19 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 				outSchema := r.outSchemas[spec.Kind]
 				r.mu.RUnlock()
 				if outSchema != nil {
-					if vErr := outSchema.Validate(out); vErr != nil {
+					normalized, normalizeErr := normalizeJSON(out)
+					if normalizeErr != nil {
+						to, code, msg = runs.Failed, "run.output_invalid", normalizeErr.Error()
+					} else if vErr := outSchema.Validate(normalized); vErr != nil {
 						to, code, msg = runs.Failed, "run.output_invalid", vErr.Error()
 					}
 				}
 			}
 			// A cancel already moved the run to cancelling: land there.
 			if row, gErr := r.runs.Get(lc, runID); gErr == nil && row.State == string(runs.Cancelling) && !to.Terminal() {
-				to, code, msg = runs.Cancelled, "run.cancelled", msg
+				to, code = runs.Cancelled, "run.cancelled"
 			}
+			_ = r.runs.ReleaseLeasesFor(lc, "run", runID)
 			_ = r.runs.Complete(lc, runID, to, code, msg)
 		}
 		if err != nil {
@@ -248,6 +329,66 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 		_ = r.runs.SetState(lc, runID, runs.Verifying, "", "")
 		finish(runs.Succeeded, "", "")
 	}()
+}
+
+func (r *Registry) loadSecrets(ctx context.Context, scopes []string) (map[string]string, error) {
+	values := map[string]string{}
+	if len(scopes) == 0 {
+		return values, nil
+	}
+	if r.secrets == nil || r.q == nil {
+		return nil, fmt.Errorf("secret store is unavailable")
+	}
+	for _, name := range scopes {
+		secret, err := r.q.GetSecretByName(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("secret scope %s: %w", name, err)
+		}
+		value, err := r.secrets.Open(secret.ID, 1, secret.Nonce, secret.Ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		values[name] = value
+	}
+	return values, nil
+}
+
+func (r *Registry) publishArtifact(ctx context.Context, runID, workspace, kind, requestedPath string) (PublishedArtifact, error) {
+	path := requestedPath
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workspace, path)
+	}
+	path = filepath.Clean(path)
+	relative, err := filepath.Rel(workspace, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return PublishedArtifact{}, fmt.Errorf("artifact path escapes workspace")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return PublishedArtifact{}, fmt.Errorf("published artifact must be a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return PublishedArtifact{}, err
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
+	file.Close()
+	if err != nil {
+		return PublishedArtifact{}, err
+	}
+	digest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	identity := "file://" + digest
+	sum := sha256.Sum256([]byte(identity))
+	artifactID := "artifact-" + hex.EncodeToString(sum[:8])
+	metadata, _ := json.Marshal(map[string]string{"run_id": runID, "path": path})
+	if err := r.q.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: artifactID, Kind: kind, Identity: identity,
+		Digest: sql.NullString{String: digest, Valid: true}, Metadata: string(metadata),
+	}); err != nil {
+		return PublishedArtifact{}, err
+	}
+	return PublishedArtifact{ID: artifactID, Kind: kind, Identity: identity, Path: path, Size: size}, nil
 }
 
 // Cancel stops a live job's context and records the cancelling state.

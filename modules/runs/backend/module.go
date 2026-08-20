@@ -39,10 +39,7 @@ func (m *Module) RegisterSettings(*settings.Registry) {}
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Get("/runs", m.list)
-	r.Get("/runs/{id}", m.get)
-	r.Post("/runs/{id}/cancel", m.cancel)
-	r.Get("/runs/{id}/logs", m.logs)
+	HandlerFromMux(m, r)
 }
 
 // list — GET /runs: newest first, keyset-paginated by created_at (the

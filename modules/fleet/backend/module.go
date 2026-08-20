@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,17 +46,31 @@ func (m *Module) RegisterSettings(*settings.Registry) {}
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Get("/nodes", m.listNodes)
-	r.Get("/nodes/{id}", m.getNode)
-	r.Put("/nodes/{id}", m.updateNode)
-	r.Post("/nodes/{id}/approve", m.approveNode)
-	r.Post("/nodes/{id}/rotate-certificate", m.rotateCertificate)
+	HandlerFromMux(m, r)
+}
 
-	r.Get("/fabrics", m.listFabrics)
-	r.Post("/fabrics", m.createFabric)
-	r.Get("/fabrics/{id}", m.getFabric)
-	r.Put("/fabrics/{id}", m.updateFabric)
-	r.Delete("/fabrics/{id}", m.deleteFabric)
+func (m *Module) nodeTelemetry(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().Unix()
+	from, to, limit := now-3600, now, 2000
+	resolution := r.URL.Query().Get("resolution")
+	if resolution == "" {
+		resolution = "5s"
+	}
+	if value, err := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64); err == nil {
+		from = value
+	}
+	if value, err := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64); err == nil {
+		to = value
+	}
+	if value, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
+		limit = value
+	}
+	samples, err := m.env.Telemetry.History(r.Context(), chi.URLParam(r, "id"), resolution, from, to, limit)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "telemetry.query", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, samples)
 }
 
 // listNodes — GET /nodes.

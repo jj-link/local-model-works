@@ -152,6 +152,7 @@ type Resources struct {
 	CPU         float64 `json:"cpu,omitempty"`
 	MemoryBytes int64   `json:"memoryBytes,omitempty"`
 	ShmBytes    int64   `json:"shmBytes,omitempty"`
+	TmpfsBytes  int64   `json:"tmpfsBytes,omitempty"`
 	Pids        int     `json:"pids,omitempty"`
 }
 
@@ -200,6 +201,7 @@ type Extension struct {
 	Network          string            `json:"network,omitempty"`
 	TimeoutSeconds   int               `json:"timeoutSeconds,omitempty"`
 	OutputLimitBytes int               `json:"outputLimitBytes,omitempty"`
+	OutputSchema     map[string]any    `json:"outputSchema"`
 }
 
 // YAMLOrJSON converts a recipe document (YAML preferred, JSON accepted) to

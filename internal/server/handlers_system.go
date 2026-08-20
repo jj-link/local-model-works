@@ -30,15 +30,16 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version": s.version,
-		"commit":  s.commit,
-		"time":    time.Now().UTC().Format(time.RFC3339),
+		"version":        s.version,
+		"commit":         s.commit,
+		"time":           time.Now().UTC().Format(time.RFC3339),
+		"agent_url":      s.cfg.PublicAgentURL,
+		"ca_fingerprint": s.ca.Fingerprint(),
 		"nodes": map[string]int{
 			"total":    len(nodes),
 			"online":   s.nodes.OnlineCount(),
 			"approved": approved,
 		},
-		"ca_fingerprint": s.ca.Fingerprint(),
 	})
 }
 

@@ -331,9 +331,13 @@ func workloadFor(p SinglePackage, img ImageRef) map[string]any {
 		"ports": []map[string]any{
 			{"container": 8000, "host": 8000, "protocol": "tcp"},
 		},
+		"networkMode": "bridge",
 		"resources": map[string]any{
-			"shmBytes": int64(32 << 30), // legacy --shm-size 32g
-			"pids":     4096,            // legacy --pids-limit 4096
+			"cpu":         16,
+			"memoryBytes": int64(128 << 30),
+			"shmBytes":    int64(32 << 30),
+			"tmpfsBytes":  int64(16 << 30),
+			"pids":        4096,
 		},
 		"devices":     map[string]any{"accelerator": map[string]any{"all": true}},
 		"permissions": []string{"memory.shm-large"},
@@ -416,6 +420,7 @@ func buildDocument(engine string, pkgs []SinglePackage, resolver *imageResolver,
 			"version":     "1.0.0",
 			"displayName": pkgs[0].Meta.Served,
 			"description": "Migrated from DGX-Dashboard " + engine + " package(s) " + strings.Join(pkgNames(pkgs), ", ") + ".",
+			"license":     "Apache-2.0",
 			"source":      sourceDoc(legacyRoot, pkgs, legacyRevision),
 		},
 		"compatibility": map[string]any{

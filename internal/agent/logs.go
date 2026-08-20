@@ -8,12 +8,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jj-link/local-model-works/internal/artifactidentity"
 	"github.com/jj-link/local-model-works/internal/hardware"
+	"github.com/jj-link/local-model-works/internal/hf"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // tailer mirrors one workload's container output into local log files
@@ -47,6 +51,10 @@ func (a *Agent) logPath(key tailKey, stream string) string {
 // startTailer begins mirroring a running container's output if no tailer is
 // already live for the run/deployment/rank.
 func (w *workloads) startTailer(ctx context.Context, runID, deploymentID string, rank int32, containerID string) {
+	if validateWorkloadIdentity(deploymentID, runID, rank) != nil {
+		return
+	}
+
 	key := tailKey{runID: runID, deploymentID: deploymentID, rank: rank}
 	w.mu.Lock()
 	if t, ok := w.tailers[key]; ok {
@@ -182,6 +190,13 @@ func (t *tailer) stream(ctx context.Context, r io.Reader, name string) {
 // controller (resume from Last-Event-ID / from_offset). Live output is
 // already streamed by the tailer; this covers history and gaps.
 func (a *Agent) handleLogRequest(ctx context.Context, req *agentv1.LogRequest) {
+	if validateWorkloadIdentity(req.GetDeploymentId(), req.GetRunId(), req.GetRank()) != nil {
+		return
+	}
+	name := containerName(req.GetDeploymentId(), req.GetRunId(), req.GetRank())
+	if _, err := a.resolve(name, req.GetDeploymentId(), req.GetRunId(), req.GetRank()); err != nil {
+		return
+	}
 	key := tailKey{runID: req.GetRunId(), deploymentID: req.GetDeploymentId(), rank: req.GetRank()}
 	stream := req.GetStream()
 	if stream != "stderr" {
@@ -295,92 +310,80 @@ func listRepos(root string) []string {
 	return repos
 }
 
-// placementCandidate is one concrete model tree the node holds.
+// placementCandidate is one validated immutable model snapshot.
 type placementCandidate struct {
-	Identity string
-	Path     string
-	Size     int64
+	Identity    string
+	Path        string
+	Size        int64
+	State       string
+	Diagnostics []*agentv1.Diagnostic
 }
 
-// placementCandidates lists the reportable model trees under a cache root.
-// HuggingFace hub layout (models--<org>--<repo>) normalizes to the
-// canonical identity "huggingface://<org>/<repo>" and reports the concrete
-// snapshot directory; plain roots report each direct subdirectory as
-// "local://<name>".
+// placementCandidates recognizes both <cache>/models--owner--repo and
+// <cache>/hub/models--owner--repo, and reports every immutable revision.
 func placementCandidates(ctx context.Context, root string) []placementCandidate {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
+	searchRoots := []string{root}
+	if info, err := os.Stat(filepath.Join(root, "hub")); err == nil && info.IsDir() {
+		searchRoots = append(searchRoots, filepath.Join(root, "hub"))
 	}
+	seenModels := map[string]bool{}
 	var out []placementCandidate
-	for _, e := range entries {
-		if !e.IsDir() {
+	for _, searchRoot := range searchRoots {
+		entries, err := os.ReadDir(searchRoot)
+		if err != nil {
 			continue
 		}
-		full := filepath.Join(root, e.Name())
-		if strings.HasPrefix(e.Name(), "models--") {
-			modelDir := full
-			sha, ok := resolveHFSnapshot(ctx, modelDir)
-			if !ok {
+		for _, entry := range entries {
+			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "models--") {
 				continue
 			}
-			rest := strings.TrimPrefix(e.Name(), "models--")
-			org, repo, found := strings.Cut(rest, "--")
-			if !found || org == "" || repo == "" {
+			modelDir := filepath.Join(searchRoot, entry.Name())
+			if seenModels[modelDir] {
 				continue
 			}
-			snap := filepath.Join(modelDir, "snapshots", sha)
-			out = append(out, placementCandidate{
-				Identity: "huggingface://" + org + "/" + repo,
-				Path:     snap,
-				Size:     dirSize(ctx, snap, hfContainDir(snap)),
-			})
-			continue
+			seenModels[modelDir] = true
+			rest := strings.TrimPrefix(entry.Name(), "models--")
+			owner, repo, ok := strings.Cut(rest, "--")
+			if !ok || owner == "" || repo == "" {
+				continue
+			}
+			snapshots, err := os.ReadDir(filepath.Join(modelDir, "snapshots"))
+			if err != nil {
+				continue
+			}
+			for _, snapshot := range snapshots {
+				if !snapshot.IsDir() || !isSha40(snapshot.Name()) {
+					continue
+				}
+				identity, err := artifactidentity.Canonical(
+					"huggingface", "hf://"+owner+"/"+repo, snapshot.Name(), "",
+				)
+				if err != nil {
+					continue
+				}
+				snapshotDir := filepath.Join(modelDir, "snapshots", snapshot.Name())
+				diagnostics := hf.ValidateSnapshot(snapshotDir, modelDir)
+				candidate := placementCandidate{
+					Identity: identity,
+					Path:     modelDir,
+					Size:     regularTreeSize(ctx, modelDir),
+					State:    "valid",
+				}
+				for _, diagnostic := range diagnostics {
+					candidate.Diagnostics = append(candidate.Diagnostics, &agentv1.Diagnostic{
+						Code: diagnostic.Code, Severity: diagnostic.Severity,
+						Message: diagnostic.Message, Resource: diagnostic.Path,
+					})
+				}
+				if len(candidate.Diagnostics) > 0 {
+					candidate.State = "invalid"
+				}
+				out = append(out, candidate)
+			}
 		}
-		out = append(out, placementCandidate{
-			Identity: "local://" + e.Name(),
-			Path:     full,
-			Size:     dirSize(ctx, full, full),
-		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Identity < out[j].Identity })
 	return out
-}
-
-// resolveHFSnapshot resolves a HF refs file to a commit snapshot, falling
-// back to the newest snapshot directory.
-func resolveHFSnapshot(ctx context.Context, modelDir string) (string, bool) {
-	refs := filepath.Join(modelDir, "refs")
-	if entries, err := os.ReadDir(refs); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			data, rerr := os.ReadFile(filepath.Join(refs, e.Name()))
-			sha := strings.TrimSpace(string(data))
-			if rerr != nil || !isSha40(sha) {
-				continue
-			}
-			if _, serr := os.Stat(filepath.Join(modelDir, "snapshots", sha)); serr == nil {
-				return sha, true
-			}
-		}
-	}
-	snaps := filepath.Join(modelDir, "snapshots")
-	entries, err := os.ReadDir(snaps)
-	if err != nil {
-		return "", false
-	}
-	var best string
-	var bestM time.Time
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if fi, ierr := e.Info(); ierr == nil && fi.ModTime().After(bestM) {
-			best, bestM = e.Name(), fi.ModTime()
-		}
-	}
-	return best, best != ""
 }
 
 func isSha40(s string) bool {
@@ -427,30 +430,44 @@ func dirSize(ctx context.Context, root, contain string) int64 {
 	return size
 }
 
-// reportPlacements sends one placement report per discovered model tree.
-// State is "pending": the controller validates before a placement becomes
-// schedulable.
+func regularTreeSize(ctx context.Context, root string) int64 {
+	var size int64
+	_ = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if entry.Type().IsRegular() {
+			if info, err := entry.Info(); err == nil {
+				size += info.Size()
+			}
+		}
+		return nil
+	})
+	return size
+}
+
+// reportPlacements validates every discovered immutable snapshot before it
+// becomes schedulable.
 func (a *Agent) reportPlacements(ctx context.Context) {
 	for _, root := range a.cfg.CacheRoots {
-		cands := placementCandidates(ctx, root)
-		if len(cands) == 0 {
-			// No model directories: report the raw root itself.
-			a.sendPlacement("cache://"+root, root, dirSize(ctx, root, root))
-			continue
-		}
-		for _, c := range cands {
-			a.sendPlacement(c.Identity, c.Path, c.Size)
+		for _, candidate := range placementCandidates(ctx, root) {
+			a.sendPlacement(candidate)
 		}
 	}
 }
 
-func (a *Agent) sendPlacement(identity, path string, size int64) {
+func (a *Agent) sendPlacement(candidate placementCandidate) {
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_PlacementReport{
 		PlacementReport: &agentv1.PlacementReport{
-			ArtifactId: identity,
-			Path:       path,
-			State:      "pending",
-			SizeBytes:  uint64(size),
+			ArtifactId:  candidate.Identity,
+			Path:        candidate.Path,
+			State:       candidate.State,
+			VerifiedAt:  timestamppb.Now(),
+			Diagnostics: candidate.Diagnostics,
+			SizeBytes:   uint64(candidate.Size),
 		},
 	}})
 }

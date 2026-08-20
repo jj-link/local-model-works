@@ -21,6 +21,9 @@ func Scan(opts ScanOptions) (*Report, error) {
 	if opts.StateDir == "" {
 		return nil, fmt.Errorf("--state is required")
 	}
+	if opts.LegacyRevision != "" && !sha40Re.MatchString(opts.LegacyRevision) {
+		return nil, fmt.Errorf("--revision must be a 40-character lowercase Git commit")
+	}
 	if opts.INIPath == "" {
 		opts.INIPath = defaultINIPath(opts.StateDir)
 	}
@@ -34,7 +37,11 @@ func Scan(opts ScanOptions) (*Report, error) {
 	}
 
 	// 2. Recipes from single-node packages (dedup by exact contract).
-	recipes := ConvertRecipes(catalog, resolver, legacyRevisionOf(opts.LegacyDir), opts.LegacyDir)
+	legacyRevision := opts.LegacyRevision
+	if legacyRevision == "" {
+		legacyRevision = legacyRevisionOf(opts.LegacyDir)
+	}
+	recipes := ConvertRecipes(catalog, resolver, legacyRevision, opts.LegacyDir)
 
 	// 3. Cluster drafts.
 	drafts := ConvertClusterDrafts(catalog, resolver)

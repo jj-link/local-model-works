@@ -3,6 +3,13 @@ kind: Recipe
 metadata:
   name: lmw-fail-dsock
   version: 1.0.0
+  displayName: lmw-fail-dsock
+  description: Validation fixture fail-docker-socket.
+  license: MIT
+  source:
+    url: https://fixtures.local/fail-docker-socket
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts:
@@ -20,4 +27,7 @@ workloads:
     command:
       - serve
     args: []
-    resources: {}
+    resources:
+      cpu: 1
+      memoryBytes: 16777216
+      pids: 64

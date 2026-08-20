@@ -22,6 +22,8 @@ export const qk = {
   systemInfo: ["system-info"] as const,
   modules: ["modules"] as const,
   nodes: ["nodes"] as const,
+  recipeDrafts: ["recipe-drafts"] as const,
+  recipeDraft: (id: string) => ["recipe-drafts", id] as const,
   node: (id: string) => ["nodes", id] as const,
   fabrics: ["fabrics"] as const,
   fabric: (id: string) => ["fabrics", id] as const,
@@ -166,6 +168,13 @@ export function useEnrollmentTokens(enabled = true) {
   });
 }
 
+export function useRecipeDrafts() {
+  return useQuery({ queryKey: qk.recipeDrafts, queryFn: ({ signal }) => api.listRecipeDrafts({ signal }) });
+}
+
+export function useRecipeDraft(id: string) {
+  return useQuery({ queryKey: qk.recipeDraft(id), queryFn: ({ signal }) => api.getRecipeDraft(id, { signal }), enabled: Boolean(id) });
+}
 /* ------------------------------------------------------------------ */
 /* mutations                                                           */
 /* ------------------------------------------------------------------ */
@@ -179,6 +188,7 @@ function invalidates(...keys: ReadonlyArray<readonly unknown[]>) {
 export function useApproveNode() {
   const qc = useQueryClient();
   return useMutation({
+
     mutationFn: (id: string) => api.approveNode(id),
     onSuccess: () => invalidates(qk.nodes, qk.systemInfo)(qc),
   });

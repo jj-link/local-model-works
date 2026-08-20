@@ -96,12 +96,12 @@ export default function TransfersRoute() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="h-1 w-24 overflow-hidden rounded bg-hairline">
-                            <div
-                              className="h-full bg-primary transition-[width]"
-                              style={{ width: `${t.state === "complete" ? 100 : pct}%` }}
-                            />
-                          </div>
+                          <progress
+                            className="h-1 w-24 accent-primary"
+                            value={t.state === "complete" ? 100 : pct}
+                            max={100}
+                            aria-label={`Transfer progress: ${Math.round(pct)}%`}
+                          />
                           <span className="font-mono text-[10px] tnum text-muted">
                             {total > 0 ? `${bytes(done)} / ${bytes(total)}` : "—"}
                           </span>

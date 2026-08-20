@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jj-link/local-model-works/internal/artifactidentity"
 	"github.com/jj-link/local-model-works/internal/hf"
 )
 
@@ -233,10 +234,16 @@ func scanPlacements(node, root, hub string) []Placement {
 				snap := filepath.Join(snapRoot, s.Name())
 				diags := hf.ValidateSnapshot(snap, full)
 				size := dirSize(snap, full)
+				identity, err := artifactidentity.Canonical(
+					"huggingface", "hf://"+org+"/"+repo, s.Name(), "",
+				)
+				if err != nil {
+					continue
+				}
 				p := Placement{
 					Node:      node,
-					Identity:  "huggingface://" + org + "/" + repo,
-					Path:      snap,
+					Identity:  identity,
+					Path:      full,
 					Revision:  s.Name(),
 					SizeBytes: size,
 				}
@@ -252,14 +259,18 @@ func scanPlacements(node, root, hub string) []Placement {
 			}
 			continue
 		}
-		// Plain local root: each direct subdirectory is one placement.
+		// Plain local root: each direct subdirectory is content-addressed.
 		size := dirSize(full, full)
+		digest, ok := hostDirDigest(full)
+		if !ok {
+			continue
+		}
+		identity, err := artifactidentity.Canonical("file", "", "", digest)
+		if err != nil {
+			continue
+		}
 		out = append(out, Placement{
-			Node:      node,
-			Identity:  "local" + "://" + e.Name(),
-			Path:      full,
-			SizeBytes: size,
-			State:     "verified",
+			Node: node, Identity: identity, Path: full, SizeBytes: size, State: "verified",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

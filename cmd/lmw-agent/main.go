@@ -33,7 +33,9 @@ func main() {
 			log.Fatalf("lmw-agent: %v", err)
 		}
 	case "install":
-		install()
+		if err := install(os.Args[2:], os.Stdout); err != nil {
+			log.Fatalf("lmw-agent install: %v", err)
+		}
 	case "version", "--version":
 		fmt.Printf("lmw-agent %s (%s)\n", Version, Commit)
 	default:
@@ -59,39 +61,4 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return a.Run(ctx)
-}
-
-// install prepares the node state layout and prints the environment the
-// operator must provide. It is idempotent and never touches running state.
-func install() {
-	cfg, err := config.LoadAgent()
-	if err != nil {
-		log.Fatalf("lmw-agent install: %v", err)
-	}
-	dirs := []string{
-		cfg.StateRoot,
-		cfg.CADir(),
-		cfg.TransferDir(),
-		cfg.LogDir(),
-		cfg.Workspace,
-	}
-	for _, d := range dirs {
-		if d == "" {
-			continue
-		}
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			log.Fatalf("lmw-agent install: %v", err)
-		}
-	}
-	fmt.Println("agent state prepared:")
-	for _, d := range dirs {
-		fmt.Printf("  %s\n", d)
-	}
-	fmt.Println("\nrequired environment for `lmw-agent run`:")
-	fmt.Printf("  %s=<controller mTLS base URL>\n", config.EnvAgentServer)
-	fmt.Printf("  %s=<SHA-256 hex of the controller CA>\n", config.EnvAgentCASha256)
-	fmt.Printf("  %s=<one-time enrollment token>\n", config.EnvAgentToken)
-	fmt.Printf("  %s=<peer transfer listen address>\n", config.EnvPeerAddr)
-	fmt.Printf("  %s=<optional docker socket>\n", config.EnvAgentDockerSock)
-	fmt.Printf("  %s=<optional colon-separated cache roots>\n", config.EnvAgentCacheRoots)
 }

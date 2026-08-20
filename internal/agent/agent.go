@@ -35,6 +35,11 @@ import (
 // certificate (90-day lifetime, rotate at 30 days remaining).
 const RotationThreshold = 30 * 24 * time.Hour
 
+type extensionRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // Agent is one enrolled node's controller-facing state.
 type Agent struct {
 	cfg     config.Agent
@@ -62,8 +67,11 @@ type Agent struct {
 	caPersisted bool
 
 	// certMu guards the live node keypair; new TLS connections pick it up.
-	certMu   sync.RWMutex
-	nodeCert *tls.Certificate
+	certMu           sync.RWMutex
+	nodeCert         *tls.Certificate
+	extensionMu      sync.Mutex
+	extensionRuns    map[string]*extensionRun
+	extensionStopped map[string]bool
 
 	// sendQ carries agent→server messages that are event-driven (results,
 	// state updates, log chunks, placements, progress). The session send
@@ -77,13 +85,15 @@ func New(cfg config.Agent, version, commit string, rt runtime.Runtime, drv hardw
 		drv = hardware.NewNvidia()
 	}
 	a := &Agent{
-		cfg:       cfg,
-		version:   version,
-		commit:    commit,
-		rt:        rt,
-		acc:       drv,
-		startTime: time.Now(),
-		sendQ:     make(chan *agentv1.AgentMessage, 256),
+		cfg:              cfg,
+		version:          version,
+		commit:           commit,
+		rt:               rt,
+		acc:              drv,
+		startTime:        time.Now(),
+		sendQ:            make(chan *agentv1.AgentMessage, 256),
+		extensionRuns:    map[string]*extensionRun{},
+		extensionStopped: map[string]bool{},
 	}
 	a.workloads = newWorkloads(a)
 	return a

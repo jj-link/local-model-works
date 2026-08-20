@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -219,6 +220,14 @@ func rankZeroNode(placements []deploy.Placement) (string, error) {
 	}
 	return placements[0].NodeID, nil
 }
+func graderBaseURL(port int32) (string, error) {
+	if port == 0 {
+		return "", errors.New("deployment endpoint has no port")
+	}
+	// The grader is dispatched to the endpoint's rank-0 node with host
+	// networking. Node display names are inventory labels, not DNS names.
+	return fmt.Sprintf("http://127.0.0.1:%d", port), nil
+}
 
 // runBenchmark is the benchmark job executor: one digest-pinned grader
 // container per language, sequentially, against the deployment's rank-0
@@ -248,12 +257,9 @@ func (m *Module) runBenchmark(ctx context.Context, c *jobs.Context) (map[string]
 	if dep.Endpoint == nil {
 		return nil, fmt.Errorf("deployment %s has no endpoint", dep.ID)
 	}
-	host := dep.Endpoint.Host
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	if dep.Endpoint.Port == 0 {
-		return nil, fmt.Errorf("deployment %s endpoint has no port", dep.ID)
+	baseURL, err := graderBaseURL(dep.Endpoint.Port)
+	if err != nil {
+		return nil, fmt.Errorf("deployment %s %w", dep.ID, err)
 	}
 	nodeID, err := rankZeroNode(dep.Placements)
 	if err != nil {
@@ -262,7 +268,7 @@ func (m *Module) runBenchmark(ctx context.Context, c *jobs.Context) (map[string]
 	if !m.env.Nodes.Online(nodeID) {
 		return nil, fmt.Errorf("grader node %s is offline", nodeID)
 	}
-	baseURL := fmt.Sprintf("http://%s:%d", host, dep.Endpoint.Port)
+
 	d := &dispatch{env: m.env, nodeID: nodeID, runID: c.RunID}
 
 	results := make([]map[string]any, 0, len(in.Languages))
@@ -284,11 +290,14 @@ func (m *Module) runBenchmark(ctx context.Context, c *jobs.Context) (map[string]
 	return map[string]any{"results": results}, nil
 }
 
-// graderSpec builds the hardening-maxed grader container spec. The pinned
-// image carries no entrypoint (its config is digest-frozen, verified
-// 2026-08-19), so the python3 -c command in Cmd runs directly.
+// graderSpec builds a hardened, language-specific compiler container. Source,
+// compiler caches, and test executables are confined to a bounded tmpfs.
 func graderSpec(runID string, p graderParams, lang string) (*runtime.ContainerSpec, []byte, error) {
-	image, digest, _ := strings.Cut(graderImage, "@")
+	imageRef, ok := graderImages[lang]
+	if !ok {
+		return nil, nil, fmt.Errorf("unsupported grader language %q", lang)
+	}
+	image, digest, _ := strings.Cut(imageRef, "@")
 	spec := &runtime.ContainerSpec{
 		Image:       image,
 		ImageDigest: digest,
@@ -306,6 +315,9 @@ func graderSpec(runID string, p graderParams, lang string) (*runtime.ContainerSp
 		ReadonlyRootfs:  true,
 		NoNewPrivileges: true,
 		CapDrop:         []string{"ALL"},
+		TmpfsBytes:      1 << 30,
+		PidsLimit:       256,
+		MemoryBytes:     4 << 30,
 		Labels:          runtime.ManagedLabels("", runID, "", "", 0, "benchmarks"),
 	}
 	b, err := json.Marshal(spec)
@@ -339,7 +351,7 @@ func (m *Module) runLanguage(ctx context.Context, d *dispatch, logf func(format 
 		}
 	}()
 
-	logf("[benchmark] %s: pulling grader image %s", lang, graderImage)
+	logf("[benchmark] %s: pulling grader image %s", lang, graderImages[lang])
 	cr, err := d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_PULL, specJSON, pullTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("pull: %w", err)

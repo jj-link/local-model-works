@@ -6,7 +6,9 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strconv"
 )
 
 // MountSpec is one explicit bind mount.
@@ -40,6 +42,7 @@ type ContainerSpec struct {
 	NoNewPrivileges bool              `json:"noNewPrivileges"`
 	CapDrop         []string          `json:"capDrop,omitempty"`
 	ShmBytes        int64             `json:"shmBytes,omitempty"`
+	TmpfsBytes      int64             `json:"tmpfsBytes,omitempty"`
 	PidsLimit       int               `json:"pidsLimit,omitempty"`
 	MemoryBytes     int64             `json:"memoryBytes,omitempty"`
 	CPU             float64           `json:"cpu,omitempty"`
@@ -133,6 +136,22 @@ func ManagedLabels(deployment, run, recipeDigest, recipeVersion string, rank int
 		l[LabelRank] = itoa(rank)
 	}
 	return l
+}
+
+// ValidateManagedSpec rejects any create request that cannot be tied to one
+// LMW deployment or run. The runtime never creates an unowned container.
+func ValidateManagedSpec(spec *ContainerSpec) error {
+	if spec == nil || spec.Labels == nil || spec.Labels[LabelManaged] != "true" {
+		return fmt.Errorf("container.unmanaged")
+	}
+	if spec.Labels[LabelDeployment] == "" && spec.Labels[LabelRun] == "" {
+		return fmt.Errorf("container.identity_missing")
+	}
+	rank, err := strconv.Atoi(spec.Labels[LabelRank])
+	if err != nil || rank < 0 {
+		return fmt.Errorf("container.rank_invalid")
+	}
+	return nil
 }
 
 func itoa(n int) string {

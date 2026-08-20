@@ -289,11 +289,12 @@ func TestV5_AgentDisconnect(t *testing.T) {
 		return s.Node(t, n2).Status == "offline"
 	}, "disconnected node marked offline")
 
-	// Give a hypothetical auto-degrade a moment to fire, then assert the
-	// designed behavior: the last reported state is preserved.
-	time.Sleep(2 * time.Second)
-	if st := depState(s, dep.ID); st != "healthy" {
-		t.Logf("note: deployment state after disconnect = %s (auto-degrade not implemented; node is offline)", st)
+	Deadline(t, 10*time.Second, func() bool {
+		return depState(s, dep.ID) == "degraded"
+	}, "multi-rank deployment degraded after one node disconnect")
+	leases, err := s.Q.ActiveLeases(s.Ctx)
+	if err != nil || len(leases) == 0 {
+		t.Fatalf("offline deployment leases were released: %v, err=%v", leases, err)
 	}
 
 	// Reconnect: reconcile (reason "reconnect") + the agent's monitor
@@ -319,6 +320,18 @@ func TestV5_AgentDisconnect(t *testing.T) {
 			t.Errorf("rank %d container after reconnect = %v, want running", rank, c)
 		}
 	}
+}
+
+func TestV5_SingleRankOfflineBecomesUnknown(t *testing.T) {
+	server, agents, _ := bootFleet(t, 1)
+	deployment := createDep(t, server, install(t, server, FixtureRecipe{
+		Name: "single-offline", Version: "1.0.0", NodeCount: 1,
+	}))
+	waitDep(t, server, deployment.ID, "healthy")
+	agents[0].Stop()
+	Deadline(t, 15*time.Second, func() bool {
+		return depState(server, deployment.ID) == "unknown"
+	}, "single-rank deployment unknown after agent disconnect")
 }
 
 // TestV5_LabelScopedStop proves stop is scoped to the exact deployment: two

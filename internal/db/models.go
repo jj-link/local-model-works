@@ -158,6 +158,23 @@ type Recipe struct {
 	InstalledAt string         `json:"installed_at"`
 }
 
+type RecipeDraft struct {
+	ID             string         `json:"id"`
+	Version        int64          `json:"version"`
+	State          string         `json:"state"`
+	Source         string         `json:"source"`
+	ResolvedCommit sql.NullString `json:"resolved_commit"`
+	ResolvedTree   sql.NullString `json:"resolved_tree"`
+	Manifest       string         `json:"manifest"`
+	Candidates     string         `json:"candidates"`
+	SelectedAssets string         `json:"selected_assets"`
+	Diagnostics    string         `json:"diagnostics"`
+	PackageDigest  sql.NullString `json:"package_digest"`
+	RunID          sql.NullString `json:"run_id"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
+}
+
 type Run struct {
 	ID             string         `json:"id"`
 	Module         string         `json:"module"`

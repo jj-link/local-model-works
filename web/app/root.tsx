@@ -56,19 +56,16 @@ interface RootData {
   session: Session | null;
 }
 
-export async function loader({ request }: { request: Request }): Promise<RootData> {
-  // SSR-safe: on the server the check runs against the same origin (the dev
-  // proxy or the control plane itself) with the request's session cookie;
-  // on the client it is the usual same-origin fetch.
+// SPA builds invoke the server loader once to prerender index.html. Runtime
+// authentication belongs in clientLoader; otherwise React Router requests a
+// server data stream that the static Go asset server does not implement.
+export async function loader(): Promise<RootData> {
+  return { session: null };
+}
+
+export async function clientLoader({ request }: { request: Request }): Promise<RootData> {
   const { pathname } = new URL(request.url);
-  // Build-time prerender of the SPA fallback document (the framework flags
-  // the request with this header and renders down to the root): emit a
-  // plain shell — no session check, no redirects — so the static
-  // index.html hydrates and the client router takes over.
-  if (request.headers.get("X-React-Router-SPA-Mode") === "yes") {
-    return { session: null };
-  }
-  const session = await fetchSession(request);
+  const session = await fetchSession();
   if (!session) {
     if (pathname !== "/login") throw redirect("/login");
     return { session };
@@ -76,6 +73,8 @@ export async function loader({ request }: { request: Request }): Promise<RootDat
   if (pathname === "/login") throw redirect("/");
   return { session };
 }
+
+clientLoader.hydrate = true as const;
 
 // Re-check the session on every navigation: auth state (login, logout,
 // expiry) changes outside the router's data flow, and the login transition

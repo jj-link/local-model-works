@@ -6,6 +6,10 @@ metadata:
   displayName: lmw-fail-nodigest
   description: Image without digest fixture.
   license: MIT
+  source:
+    url: https://fixtures.local/fail-image-missing-digest
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts:

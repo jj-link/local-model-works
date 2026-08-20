@@ -46,7 +46,7 @@ func testScanOptions(t *testing.T) ScanOptions {
 	legacy, state := legacyDirs()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///nonexistent/lmw-migrate-test.sock")
-	return ScanOptions{LegacyDir: legacy, StateDir: state}
+	return ScanOptions{LegacyDir: legacy, StateDir: state, LegacyRevision: fixtureRevA}
 }
 
 func scanFixture(t *testing.T) *Report {

@@ -222,7 +222,7 @@ func TestModuleGenerationProof(t *testing.T) {
 	}
 
 	// Isolated module tree mirroring the repo layout the generator expects.
-	write("go.mod", "module github.com/jj-link/local-model-works\n\ngo 1.26\n")
+	write("go.mod", "module github.com/jj-link/local-model-works\n\ngo 1.26\n\nrequire (\n\tgithub.com/go-chi/chi/v5 v5.3.0\n\tgithub.com/oapi-codegen/runtime v1.7.0\n)\n")
 	write("cmd/modprobe/main.go", probeMain)
 	write("internal/moduleapi/stub.go", moduleapiStub)
 	copyFile("internal/modules/manifests.go", "internal/modules/manifests.go")
@@ -293,6 +293,7 @@ func TestModuleGenerationProof(t *testing.T) {
 		// the exact data /api/v1/modules returns (writeJSON(modules.Registry)).
 		cmd := exec.Command("go", "run", "./cmd/modprobe")
 		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("probe: %v\n%s", err, out)
@@ -372,6 +373,7 @@ func TestModuleGenerationProof(t *testing.T) {
 		}
 		cmd := exec.Command("go", "run", "./cmd/modprobe")
 		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 		pout, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("probe after removal: %v\n%s", err, pout)

@@ -3,9 +3,10 @@ package fakeagent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
-	"net/http/cookiejar"
 	"strings"
 	"testing"
 	"time"
@@ -63,19 +64,17 @@ func createDep(t *testing.T, s *Server, digest string, ov ...deploy.PlacementOve
 	return *d
 }
 
-// shortID mirrors the production container-name derivation (internal/deploy
-// service.go shortID): strip the kind prefix, take eight chars.
+// shortID mirrors the production container-name derivation.
 func shortID(id string) string {
-	id = strings.TrimPrefix(id, "deployment:")
-	id = strings.TrimPrefix(id, "run:")
-	if len(id) > 8 {
-		return id[:8]
+	if id == "" {
+		return "none"
 	}
-	return id
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:6])
 }
 
 // containersOf lists a deployment's stub containers by their deterministic
-// names (lmw-<dep8>-<run8>-r<rank>), keyed by rank.
+// names, keyed by rank.
 func containersOf(rt *FakeRuntime, dep deploy.Deployment) map[int32]*FakeContainer {
 	prefix := "lmw-" + shortID(dep.ID) + "-" + shortID(dep.RunID) + "-"
 	out := map[int32]*FakeContainer{}
@@ -100,16 +99,29 @@ func containersOf(rt *FakeRuntime, dep deploy.Deployment) map[int32]*FakeContain
 // HTTP session + SSE
 // ---------------------------------------------------------------------------
 
+type sessionTransport struct {
+	cookie *http.Cookie
+}
+
+func (t sessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	copy := req.Clone(req.Context())
+	copy.AddCookie(t.cookie)
+	return http.DefaultTransport.RoundTrip(copy)
+}
+
 // login returns a client carrying an authenticated admin session cookie.
+// Tests run plain HTTP on loopback, so they explicitly replay the production
+// Secure cookie rather than weakening the cookie policy.
 func login(t *testing.T, s *Server) *http.Client {
 	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("cookie jar: %v", err)
-	}
-	c := &http.Client{Jar: jar}
-	resp, err := c.Post("http://"+s.HTTPAddr+"/api/v1/login", "application/json",
+	req, err := http.NewRequest(http.MethodPost, "http://"+s.HTTPAddr+"/api/v1/login",
 		strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	if err != nil {
+		t.Fatalf("login request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://lmw.example.test")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -117,7 +129,11 @@ func login(t *testing.T, s *Server) *http.Client {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login: status %d", resp.StatusCode)
 	}
-	return c
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("login cookies: %d", len(cookies))
+	}
+	return &http.Client{Transport: sessionTransport{cookie: cookies[0]}}
 }
 
 type sseEvent struct {

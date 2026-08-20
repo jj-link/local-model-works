@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,17 @@ func TestWebServeReturnsAssetInsteadOfSPAFallback(t *testing.T) {
 	}
 }
 
+func TestWebServeReturns404ForMissingAsset(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	webServe(recorder, httptest.NewRequest(http.MethodGet, "/assets/does-not-exist.js", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status: %d", recorder.Code)
+	}
+	if strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("missing asset returned SPA HTML")
+	}
+}
+
 func TestWebServeFallsBackToSPAIndex(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	webServe(recorder, httptest.NewRequest(http.MethodGet, "/serving/deployments", nil))
@@ -39,14 +51,19 @@ func TestWebServeFallsBackToSPAIndex(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersPermitEmbeddedRouterBootstrap(t *testing.T) {
+func TestSecurityHeadersNonceEveryEmbeddedScript(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	handler := (&Server{}).securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	handler := (&Server{}).securityHeaders(http.HandlerFunc(webServe))
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 	csp := recorder.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
-		t.Fatalf("CSP blocks embedded router bootstrap: %q", csp)
+	if strings.Contains(csp, "'unsafe-inline'") || !strings.Contains(csp, "script-src 'self' 'nonce-") {
+		t.Fatalf("CSP = %q", csp)
+	}
+	matches := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(csp)
+	if len(matches) != 2 {
+		t.Fatalf("CSP nonce = %q", csp)
+	}
+	if !strings.Contains(recorder.Body.String(), `nonce="`+matches[1]+`"`) {
+		t.Fatalf("embedded bootstrap lacks CSP nonce")
 	}
 }

@@ -4,6 +4,7 @@ dist/
 web/node_modules/
 web/dist/
 *.log
+!internal/migrate/testdata/**/output.log
 .DS_Store
 build-check.sh
 amend-check.sh

@@ -251,7 +251,11 @@ components:
           type: array
           items:
             type: object
+            required: [node_id, host_port, container_port]
             properties:
+              node_id:
+                type: string
+                format: uuid
               node_name:
                 type: string
               host_port:

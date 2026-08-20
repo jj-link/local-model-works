@@ -1,7 +1,8 @@
-import { Link, useParams } from "react-router";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { JsonTree } from "~/components/json-viewer";
+import { useTailPathParam } from "~/lib/path-param";
 import { LogPane } from "~/components/log-pane";
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
@@ -21,7 +22,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function RunDetailRoute() {
-  const { id } = useParams();
+  const id = useTailPathParam();
   const { data: run, isPending, isError, error, refetch } = useRun(id);
   const cancel = useCancelRun();
 

@@ -5,7 +5,9 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,14 +17,14 @@ const (
 	EnvPeerAddr  = "LMW_PEER_ADDR"
 	// EnvPeerAdvertise is the routable host:port a remote source dials;
 	// empty falls back to PeerAddr when it names an explicit host.
-	EnvPeerAdvertise = "LMW_PEER_ADVERTISE"
-	EnvServerName    = "LMW_SERVER_NAME"
-	EnvStateRoot     = "LMW_STATE_ROOT"
-	EnvConfigDir     = "LMW_CONFIG_DIR"
-	EnvSessionTTL    = "LMW_SESSION_TTL"
-	EnvTrustKey      = "LMW_TRUST_KEY_PEM"
-	EnvAdminPassword = "LMW_ADMIN_PASSWORD"
-
+	EnvPeerAdvertise   = "LMW_PEER_ADVERTISE"
+	EnvServerName      = "LMW_SERVER_NAME"
+	EnvStateRoot       = "LMW_STATE_ROOT"
+	EnvConfigDir       = "LMW_CONFIG_DIR"
+	EnvSessionTTL      = "LMW_SESSION_TTL"
+	EnvTrustKey        = "LMW_TRUST_KEY_PEM"
+	EnvPublicOrigin    = "LMW_PUBLIC_ORIGIN"
+	EnvPublicAgentURL  = "LMW_PUBLIC_AGENT_URL"
 	EnvAgentServer     = "LMW_AGENT_SERVER"
 	EnvAgentCASha256   = "LMW_AGENT_CA_SHA256"
 	EnvAgentToken      = "LMW_AGENT_TOKEN"
@@ -35,14 +37,17 @@ const (
 
 // Server holds controller-plane settings.
 type Server struct {
-	HTTPAddr    string        // browser/CLI listener, default 127.0.0.1:9000
-	AgentAddr   string        // agent mTLS listener, default :9443
-	PeerAddr    string        // peer-transfer port hint, default :9444
-	StateRoot   string        // default /var/lib/local-model-works
-	ConfigDir   string        // default /etc/local-model-works
-	SessionTTL  time.Duration // default 12h
-	ServerName  string        // TLS name for the server leaf cert, default localhost
-	TrustKeyPEM string        // PEM public key for recipe/catalog signature verification
+	HTTPAddr       string        // browser/CLI listener, default 127.0.0.1:9000
+	AgentAddr      string        // agent mTLS listener, default :9443
+	PeerAddr       string        // peer-transfer port hint, default :9444
+	StateRoot      string        // default /var/lib/local-model-works
+	ConfigDir      string        // default /etc/local-model-works
+	SessionTTL     time.Duration // default 12h
+	ServerName     string        // TLS name for the server leaf cert, default localhost
+	PublicOrigin   string        // required HTTPS browser origin, e.g. https://lmw.tailnet.ts.net
+	PublicAgentURL string        // required HTTPS mTLS agent URL, e.g. https://lmw.tailnet.ts.net:9443
+	TrustKeyPEM    string        // PEM public key for recipe/catalog signature verification
+
 }
 
 // Agent holds node-agent settings.
@@ -69,15 +74,54 @@ func envStr(key, def string) string {
 // LoadServer reads controller settings.
 func LoadServer() Server {
 	return Server{
-		HTTPAddr:    envStr(EnvHTTPAddr, "127.0.0.1:9000"),
-		AgentAddr:   envStr(EnvAgentAddr, ":9443"),
-		PeerAddr:    envStr(EnvPeerAddr, ":9444"),
-		StateRoot:   envStr(EnvStateRoot, "/var/lib/local-model-works"),
-		ConfigDir:   envStr(EnvConfigDir, "/etc/local-model-works"),
-		SessionTTL:  sessionTTL(),
-		ServerName:  envStr(EnvServerName, "localhost"),
-		TrustKeyPEM: envStr(EnvTrustKey, ""),
+		HTTPAddr:       envStr(EnvHTTPAddr, "127.0.0.1:9000"),
+		AgentAddr:      envStr(EnvAgentAddr, ":9443"),
+		PeerAddr:       envStr(EnvPeerAddr, ":9444"),
+		StateRoot:      envStr(EnvStateRoot, "/var/lib/local-model-works"),
+		ConfigDir:      envStr(EnvConfigDir, "/etc/local-model-works"),
+		SessionTTL:     sessionTTL(),
+		ServerName:     envStr(EnvServerName, "localhost"),
+		PublicOrigin:   strings.TrimSpace(os.Getenv(EnvPublicOrigin)),
+		PublicAgentURL: strings.TrimSpace(os.Getenv(EnvPublicAgentURL)),
+		TrustKeyPEM:    envStr(EnvTrustKey, ""),
 	}
+}
+
+// NormalizedPublicOrigin validates the required browser origin and returns its
+// canonical scheme-and-host form for exact Origin-header comparisons.
+func (s Server) NormalizedPublicOrigin() (string, error) {
+	if s.PublicOrigin == "" {
+		return "", fmt.Errorf("%s is required", EnvPublicOrigin)
+	}
+	parsed, err := url.Parse(s.PublicOrigin)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", EnvPublicOrigin, err)
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%s must be an absolute HTTPS origin", EnvPublicOrigin)
+	}
+	return "https://" + strings.ToLower(parsed.Host), nil
+}
+
+// NormalizedPublicAgentURL validates the enrollment URL and binds its host to
+// the certificate identity used by the mTLS agent listener.
+func (s Server) NormalizedPublicAgentURL() (string, error) {
+	if s.PublicAgentURL == "" {
+		return "", fmt.Errorf("%s is required", EnvPublicAgentURL)
+	}
+	parsed, err := url.Parse(s.PublicAgentURL)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", EnvPublicAgentURL, err)
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%s must be an absolute HTTPS URL without a path", EnvPublicAgentURL)
+	}
+	if !strings.EqualFold(parsed.Hostname(), s.ServerName) {
+		return "", fmt.Errorf("%s hostname must match %s", EnvPublicAgentURL, EnvServerName)
+	}
+	return "https://" + strings.ToLower(parsed.Host), nil
 }
 
 func sessionTTL() time.Duration {

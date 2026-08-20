@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestSchemasRegister(t *testing.T) {
-	reg := jobs.New(nil, "", context.Background())
+	reg := jobs.New(nil, "", context.Background(), nil, nil)
 	if err := reg.Register("benchmarks", jobs.Spec{
 		Kind:         "benchmark",
 		Title:        "Benchmark",
@@ -34,11 +35,8 @@ func TestGraderSpec(t *testing.T) {
 	if err := json.Unmarshal(specJSON, &spec); err != nil {
 		t.Fatalf("unmarshal spec: %v", err)
 	}
-	if spec.Image != "python:3.12-slim" || spec.ImageDigest != "sha256:876416ecde9aca2bcc90e1fb0c7a9500bbf749f5788b70f82d4c5a5c2357f8b4" {
-		t.Fatalf("image not digest-pinned: %s %s", spec.Image, spec.ImageDigest)
-	}
-	if runtime.ImageRef(&spec) != graderImage {
-		t.Fatalf("ImageRef mismatch: %s", runtime.ImageRef(&spec))
+	if spec.ImageDigest == "" || runtime.ImageRef(&spec) != graderImages["python"] {
+		t.Fatalf("image not digest-pinned: %s", runtime.ImageRef(&spec))
 	}
 	if spec.Entrypoint != nil {
 		// The pinned image has no entrypoint; the spec must not introduce one.
@@ -76,11 +74,56 @@ func TestGraderSpec(t *testing.T) {
 			t.Fatalf("env %s = %q, want %q", k, env[k], v)
 		}
 	}
-	if spec.NetworkMode != "host" || !spec.ReadonlyRootfs || !spec.NoNewPrivileges || len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" {
+	if spec.NetworkMode != "host" || !spec.ReadonlyRootfs || !spec.NoNewPrivileges || spec.TmpfsBytes == 0 || spec.PidsLimit == 0 || len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" {
 		t.Fatalf("hardening: %#v", spec)
 	}
 	if spec.Labels[runtime.LabelManaged] != "true" || spec.Labels[runtime.LabelRun] != "run-1" || spec.Labels[runtime.LabelModule] != "benchmarks" {
 		t.Fatalf("labels: %#v", spec.Labels)
+	}
+}
+
+func TestGraderBaseURLUsesColocatedLoopback(t *testing.T) {
+	got, err := graderBaseURL(8000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://127.0.0.1:8000" {
+		t.Fatalf("base URL = %q", got)
+	}
+	if _, err := graderBaseURL(0); err == nil {
+		t.Fatal("zero endpoint port accepted")
+	}
+}
+
+func TestEveryLanguageHasExecutableGrader(t *testing.T) {
+	markers := map[string]string{
+		"python": "python3", "javascript": "node", "go": "\"go\", \"run\"",
+		"rust": "rustc", "cpp": "g++", "java": "javac",
+	}
+	for _, language := range supportedLanguages {
+		spec, _, err := graderSpec("run", graderParams{}, language)
+		if err != nil {
+			t.Fatalf("%s: %v", language, err)
+		}
+		if runtime.ImageRef(spec) != graderImages[language] || !strings.Contains(graderScript, markers[language]) {
+			t.Fatalf("%s grader is not executable", language)
+		}
+	}
+}
+
+func TestGraderDropsNetworkBeforeExecutingPrograms(t *testing.T) {
+	command := exec.Command("python3", "-c", `import sys,socket
+ns={"__name__":"graderlib"}
+exec(sys.stdin.read(),ns)
+ns["deny_network"]()
+try:
+    socket.socket()
+except OSError as error:
+    raise SystemExit(0 if error.errno == 1 else 2)
+raise SystemExit(3)`)
+	command.Stdin = strings.NewReader(graderScript)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("network sandbox: %v: %s", err, output)
 	}
 }
 

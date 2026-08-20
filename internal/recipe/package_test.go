@@ -3,6 +3,7 @@ package recipe
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,5 +104,66 @@ func TestLoadAssetPathSafety(t *testing.T) {
 	// Missing file is a clean error.
 	if _, err := loadAsset(dir, "nope.txt"); err == nil {
 		t.Fatal("missing asset expected an error")
+	}
+}
+
+func TestPackAlwaysHasOneAssetLayerAndAssetsChangeIdentity(t *testing.T) {
+	doc := []byte(`{"apiVersion":"localmodelworks/v1alpha1","kind":"Recipe"}`)
+	empty, err := PackManifest(doc, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.LayerDigest == "" || empty.LayerSize == 0 {
+		t.Fatalf("empty package layer = %q size=%d", empty.LayerDigest, empty.LayerSize)
+	}
+	first, err := PackManifest(doc, map[string][]byte{"serve.sh": []byte("echo one\n")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := PackManifest(doc, map[string][]byte{"serve.sh": []byte("echo two\n")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ConfigDigest != second.ConfigDigest || first.ManifestDigest == second.ManifestDigest {
+		t.Fatalf("asset change identity: config %q/%q manifest %q/%q",
+			first.ConfigDigest, second.ConfigDigest, first.ManifestDigest, second.ManifestDigest)
+	}
+}
+
+func TestPersistPackageWritesCompleteSourceIndependentLayout(t *testing.T) {
+	res, err := PackManifest([]byte(`{"kind":"Recipe"}`), map[string][]byte{"bin/serve.sh": []byte("#!/bin/sh\n")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "recipes")
+	t.Cleanup(func() { _ = RemovePackage(root) })
+	dir, created, err := PersistPackage(root, res)
+	if err != nil || !created {
+		t.Fatalf("persist = %q created=%t err=%v", dir, created, err)
+	}
+	if err := VerifyLayout(dir); err != nil {
+		t.Fatalf("stored layout: %v", err)
+	}
+	asset, err := os.ReadFile(filepath.Join(dir, "assets", "bin", "serve.sh"))
+	if err != nil || string(asset) != "#!/bin/sh\n" {
+		t.Fatalf("stored asset = %q, err=%v", asset, err)
+	}
+	if _, created, err := PersistPackage(root, res); err != nil || created {
+		t.Fatalf("idempotent persist created=%t err=%v", created, err)
+	}
+}
+
+func TestPackEnforcesAssetLimitsBeforeWriting(t *testing.T) {
+	tooMany := make(map[string][]byte, MaxAssetFiles+1)
+	for i := 0; i <= MaxAssetFiles; i++ {
+		tooMany[fmt.Sprintf("%03d.txt", i)] = []byte("x")
+	}
+	if _, err := PackManifest([]byte(`{}`), tooMany, nil); err == nil {
+		t.Fatal("too many assets accepted")
+	}
+	if _, err := PackManifest([]byte(`{}`), map[string][]byte{
+		"large.bin": make([]byte, MaxAssetFileBytes+1),
+	}, nil); err == nil {
+		t.Fatal("oversized asset accepted")
 	}
 }

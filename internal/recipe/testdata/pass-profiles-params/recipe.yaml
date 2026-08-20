@@ -3,6 +3,13 @@ kind: Recipe
 metadata:
   name: lmw-demo-profiles
   version: 1.0.0
+  displayName: lmw-demo-profiles
+  description: Validation fixture pass-profiles-params.
+  license: MIT
+  source:
+    url: https://fixtures.local/pass-profiles-params
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts: []
@@ -15,7 +22,10 @@ workloads:
     args:
       - --profile
       - ${profile.fast}
-    resources: {}
+    resources:
+      cpu: 1
+      memoryBytes: 16777216
+      pids: 64
 parameters:
   - name: gpu_util
     type: int

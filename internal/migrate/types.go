@@ -38,11 +38,12 @@ func PlanDigestOf(p *Plan) string {
 // ScanOptions are the resolved inputs for one scan (or the import's
 // re-scan). Every field is explicit so a re-scan can be byte-identical.
 type ScanOptions struct {
-	LegacyDir  string          // legacy repository checkout (contains control/)
-	StateDir   string          // legacy state root (runs/, benchmark-results/, ...)
-	INIPath    string          // production INI; default <StateDir>/config-production.ini
-	CacheRoots []CacheRootSpec // explicit --cache-root node=path entries
-	Docker     bool            // query the docker daemon for mutable image digests
+	LegacyDir      string          // legacy repository checkout (contains control/)
+	StateDir       string          // legacy state root (runs/, benchmark-results/, ...)
+	INIPath        string          // production INI; default <StateDir>/config-production.ini
+	LegacyRevision string          // explicit 40-hex source revision; defaults to legacy Git HEAD
+	CacheRoots     []CacheRootSpec // explicit --cache-root node=path entries
+	Docker         bool            // query the docker daemon for mutable image digests
 }
 
 // CacheRootSpec is one explicit node=root binding.

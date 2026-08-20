@@ -345,9 +345,6 @@ func importDB(ctx context.Context, sqlDB *sql.DB, validator *recipe.Validator,
 
 func importPlacement(ctx context.Context, q *db.Queries, nodeID string, pl Placement, verifiedNow string, rep *ImportReport) error {
 	ident := pl.Identity
-	if pl.Revision != "" {
-		ident += "@" + pl.Revision
-	}
 	id := artifactID(ident)
 	if _, err := q.GetArtifact(ctx, id); errors.Is(err, sql.ErrNoRows) {
 		meta, _ := json.Marshal(map[string]string{
@@ -358,7 +355,7 @@ func importPlacement(ctx context.Context, q *db.Queries, nodeID string, pl Place
 		if err := q.CreateArtifact(ctx, db.CreateArtifactParams{
 			ID:       id,
 			Kind:     "model",
-			Identity: pl.Identity,
+			Identity: ident,
 			Revision: nullStr(pl.Revision),
 			Metadata: string(meta),
 		}); err != nil {
@@ -371,7 +368,7 @@ func importPlacement(ctx context.Context, q *db.Queries, nodeID string, pl Place
 	// validates is a reported error, not a silent skip.
 	state := pl.State
 	diagnostics := pl.Diagnostics
-	if strings.HasPrefix(pl.Identity, "huggingface://") {
+	if strings.HasPrefix(pl.Identity, "hf://") {
 		diags := hf.ValidateSnapshot(pl.Path, hfHubDir(pl.Path))
 		if len(diags) > 0 {
 			state = "failed"

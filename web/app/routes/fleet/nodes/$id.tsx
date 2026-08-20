@@ -1,6 +1,6 @@
-import { useParams } from "react-router";
 import { toast } from "sonner";
 import { Cpu, HardDrive, RefreshCcw, Settings2 } from "lucide-react";
+import { useTailPathParam } from "~/lib/path-param";
 import {
   Table,
   TableBody,
@@ -46,7 +46,7 @@ function Section({
 }
 
 export default function NodeDetailRoute() {
-  const { id } = useParams<{ id: string }>();
+  const id = useTailPathParam();
   const nodeQ = useNode(id);
   const transfersQ = useTransfers();
   const events = useEventFeed();

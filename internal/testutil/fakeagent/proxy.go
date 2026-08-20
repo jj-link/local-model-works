@@ -133,6 +133,7 @@ func (p *Proxy) relay(conn net.Conn) {
 	tc := tls.Server(conn, &tls.Config{
 		Certificates: []tls.Certificate{p.dstPair},
 		ClientAuth:   tls.RequireAnyClientCert,
+		NextProtos:   []string{"h2"},
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
 				return io.ErrUnexpectedEOF
@@ -160,6 +161,7 @@ func (p *Proxy) relay(conn net.Conn) {
 	out := tls.Client(raw, &tls.Config{
 		Certificates:       []tls.Certificate{p.srcPair},
 		InsecureSkipVerify: true, // leaf SANs are node IDs, not the dial addr
+		NextProtos:         []string{"h2"},
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
 				return io.ErrUnexpectedEOF
@@ -178,28 +180,28 @@ func (p *Proxy) relay(conn net.Conn) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	// Destination→source (acks/errors): plain relay.
+	// Destination request bytes: plain relay to source.
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(tc, out)
+		_, _ = io.Copy(out, tc)
 	}()
-	// Source→destination: counted, pausable.
+	// Source response bytes: counted and pausable.
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 256*1024)
 		for {
-			n, rerr := tc.Read(buf)
+			n, readErr := out.Read(buf)
 			if n > 0 {
 				total := atomic.AddInt64(&p.relayed, int64(n))
-				if _, werr := out.Write(buf[:n]); werr != nil {
+				if _, writeErr := tc.Write(buf[:n]); writeErr != nil {
 					return
 				}
 				if p.threshold > 0 && total >= p.threshold && !p.heldOnce() {
 					p.hold()
-					return // held; Close() tears the connection down
+					return
 				}
 			}
-			if rerr != nil {
+			if readErr != nil {
 				return
 			}
 		}

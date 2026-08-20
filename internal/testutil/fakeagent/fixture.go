@@ -2,7 +2,6 @@ package fakeagent
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/hf"
 	"github.com/jj-link/local-model-works/internal/recipe"
 )
@@ -100,6 +98,9 @@ func (r FixtureRecipe) Manifest() recipe.Manifest {
 		Metadata: recipe.Metadata{
 			Name: r.Name, Version: r.Version,
 			DisplayName: r.Name, Description: "fakeagent fixture recipe", License: "MIT",
+			Source: &recipe.Source{
+				URL: "https://fixtures.local/fakeagent", Revision: strings.Repeat("0", 40), Path: ".",
+			},
 		},
 		Compatibility: compat,
 		Artifacts:     r.Artifacts,
@@ -146,27 +147,17 @@ func InstallRecipe(t *testing.T, s *Server, r FixtureRecipe) (string, *recipe.Ma
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}
-	digest, err := recipe.DigestOf(doc)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
-	m2, err := recipe.Parse(canon)
+	parsed, err := recipe.Parse(canon)
 	if err != nil {
 		t.Fatalf("parse canonical: %v", err)
 	}
-	if err := s.Q.CreateRecipe(s.Ctx, db.CreateRecipeParams{
-		Digest:      digest,
-		Name:        m2.Metadata.Name,
-		Version:     m2.Metadata.Version,
-		DisplayName: sql.NullString{String: m2.Metadata.DisplayName, Valid: m2.Metadata.DisplayName != ""},
-		Description: sql.NullString{String: m2.Metadata.Description, Valid: m2.Metadata.Description != ""},
-		License:     sql.NullString{String: m2.Metadata.License, Valid: m2.Metadata.License != ""},
-		TrustState:  recipe.TrustLocal,
-		Manifest:    string(canon),
-	}); err != nil {
-		t.Fatalf("create recipe: %v", err)
+	stored, err := s.Srv.Env().Recipes.Store(
+		s.Ctx, canon, recipe.RecipeSource{Type: "local", Path: "fakeagent"}, recipe.TrustLocal,
+	)
+	if err != nil {
+		t.Fatalf("store recipe: %v", err)
 	}
-	return digest, m2
+	return stored.Digest, parsed
 }
 
 func mustJSONRecipe(m recipe.Manifest) []byte {

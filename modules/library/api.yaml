@@ -253,8 +253,118 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /recipe-drafts:
+    get:
+      tags: [recipes]
+      operationId: listRecipeDrafts
+      responses:
+        '200':
+          description: Inspectable recipe drafts
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/RecipeDraft'}}
+    post:
+      tags: [recipes]
+      operationId: createRecipeDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecipeDraftSource'}
+      responses:
+        '202':
+          description: Draft analysis job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties: {run_id: {type: string}}
+
+  /recipe-drafts/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [recipes]
+      operationId: getRecipeDraft
+      responses:
+        '200': {description: Recipe draft, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+    put:
+      tags: [recipes]
+      operationId: updateRecipeDraft
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest, selected_assets]
+              properties:
+                manifest: {type: object}
+                selected_assets: {type: array, items: {type: string}}
+      responses:
+        '200': {description: Updated draft, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+    delete:
+      tags: [recipes]
+      operationId: deleteRecipeDraft
+      responses: {'204': {description: Draft deleted}}
+
+  /recipe-drafts/{id}/package:
+    post:
+      tags: [recipes]
+      operationId: packageRecipeDraft
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses:
+        '200': {description: Packaged draft, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+
+  /recipe-drafts/{id}/install:
+    post:
+      tags: [recipes]
+      operationId: installRecipeDraft
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission_diff_accepted]
+              properties: {permission_diff_accepted: {type: boolean}}
+      responses:
+        '201': {description: Installed recipe, content: {application/json: {schema: {$ref: '#/components/schemas/Recipe'}}}}
+
 components:
   schemas:
+    RecipeDraftSource:
+      type: object
+      additionalProperties: false
+      required: [remote, revision]
+      properties:
+        remote: {type: string}
+        revision: {type: string}
+        path: {type: string}
+    RecipeDraft:
+      type: object
+      required: [id, version, state, source, manifest, candidates, selected_assets, diagnostics, created_at, updated_at]
+      properties:
+        id: {type: string}
+        version: {type: integer}
+        state: {type: string, enum: [analyzing, needs_input, valid, packaged, installed, failed]}
+        source: {type: object}
+        resolved_commit: {type: string}
+        resolved_tree: {type: string}
+        manifest: {type: object}
+        candidates: {type: array, items: {type: object}}
+        selected_assets: {type: array, items: {type: string}}
+        diagnostics: {type: array, items: {type: object}}
+        package_digest: {type: string}
+        run_id: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     ArtifactKind:
       type: string
       enum: [model, dataset, adapter, checkpoint, recipe, image, result, file]

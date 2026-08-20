@@ -76,6 +76,8 @@ message ServerMessage {
     ReconcileRequest reconcile_request = 5;
     Certificate certificate = 6;
     Close close = 7;
+    ArtifactCommand artifact_command = 8;
+    ExtensionCommand extension_command = 9;
   }
 }
 
@@ -201,6 +203,7 @@ message CommandResult {
   // (empty for non-container ops). Distinguishes "still running" from "exited with
   // code N", which ok/exit_code alone cannot.
   string container_state = 6;
+  bytes output_json = 7;
 }
 
 message StateUpdate {
@@ -233,6 +236,35 @@ message LogChunk {
   uint64 end_offset = 8;
 }
 
+
+message ExtensionCommand {
+  string command_id = 1;
+  string phase = 2; // prepare | verify
+  string deployment_id = 3;
+  string run_id = 4;
+  int32 rank = 5;
+  bytes container_spec = 6;
+  uint32 timeout_seconds = 7;
+  uint32 output_limit_bytes = 8;
+  bytes output_schema = 9;
+}
+
+enum ArtifactOp {
+  ARTIFACT_OP_UNSPECIFIED = 0;
+  ARTIFACT_OP_VALIDATE = 1;
+  ARTIFACT_OP_FETCH = 2;
+}
+
+message ArtifactCommand {
+  string command_id = 1;
+  ArtifactOp op = 2;
+  string artifact_identity = 3;
+  // Agent-local cache root selected by the controller; empty uses the first
+  // configured cache root.
+  string cache_root = 4;
+  // Scoped bearer token lives only in this mTLS command.
+  string bearer_token = 5;
+}
 message PlacementReport {
   string artifact_id = 1;
   string path = 2;

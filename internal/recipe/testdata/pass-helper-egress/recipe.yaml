@@ -3,6 +3,13 @@ kind: Recipe
 metadata:
   name: lmw-demo-egress
   version: 1.0.0
+  displayName: lmw-demo-egress
+  description: Validation fixture pass-helper-egress.
+  license: MIT
+  source:
+    url: https://fixtures.local/pass-helper-egress
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts: []
@@ -13,7 +20,10 @@ workloads:
     command:
       - serve
     args: []
-    resources: {}
+    resources:
+      cpu: 1
+      memoryBytes: 16777216
+      pids: 64
 prepare:
   image:
     reference: ghcr.io/localmodelworks/demo-prep:1.0.0
@@ -25,3 +35,9 @@ prepare:
     - lmwprep
   network: egress
   timeoutSeconds: 300
+  outputSchema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      version: {type: integer, minimum: 1}
+    required: [version]

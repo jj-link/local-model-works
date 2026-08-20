@@ -1,0 +1,75 @@
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+const moduleRows = [
+  ["fleet", "Fleet", "/fleet", 10], ["library", "Library", "/library", 20],
+  ["serving", "Serving", "/serving", 30], ["benchmarks", "Benchmarks", "/benchmarks", 40],
+  ["workshop", "Workshop", "/workshop", 45], ["runs", "Runs", "/runs", 50],
+  ["settings", "Settings", "/settings", 60],
+] as const;
+
+const nodes = [{
+  id: "11111111-1111-7111-8111-111111111111", display_name: "RTX Workshop", status: "online",
+  last_heartbeat: "2026-08-20T12:00:00Z", inventory: { arch: "amd64", memory_bytes: 137438953472,
+    accelerators: [{ index: 0, uuid: "gpu-0", vendor: "NVIDIA", name: "RTX PRO 6000 Blackwell", memory_bytes: 103079215104, architecture: "sm120", features: [] }],
+    network_interfaces: [], rdma_devices: [] },
+}];
+const fabrics = [{ id: "22222222-2222-7222-8222-222222222222", name: "workshop-fabric", transport: "tcp", members: [nodes[0].id], state: "ok", version: "1" }];
+const deployments = [{ id: "33333333-3333-7333-8333-333333333333", recipe_name: "qwen3.8", profile: "rtx6000", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } }];
+
+async function fulfill(route: Route, body: unknown, status = 200) {
+  await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean } = {}) {
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/session") return fulfill(route, options.signedIn === false ? { code: "auth.unauthorized" } : { username: "operator", csrf_token: "test-csrf", expires_at: "2099-01-01T00:00:00Z" }, options.signedIn === false ? 401 : 200);
+    if (path === "/api/v1/modules") return fulfill(route, moduleRows.map(([id, title, moduleRoute, order]) => ({ id, title, route: moduleRoute, nav: { label: title, order, icon: id }, capabilities: [] })));
+    if (path === "/api/v1/nodes") return fulfill(route, options.failNodes ? { code: "test.failure", error: "node inventory unavailable" } : nodes, options.failNodes ? 503 : 200);
+    if (path === "/api/v1/fabrics") return fulfill(route, fabrics);
+    if (path === "/api/v1/deployments") return fulfill(route, deployments);
+    if (path === "/api/v1/runs") return fulfill(route, { items: [] });
+    if (path === "/api/v1/recipes" || path === "/api/v1/artifacts" || path === "/api/v1/transfers" || path === "/api/v1/recipe-drafts" || path === "/api/v1/benchmarks" || path === "/api/v1/benchmark-results" || path === "/api/v1/secrets") return fulfill(route, []);
+    if (path === "/api/v1/system/info") return fulfill(route, { version: "test", build: "test" });
+    if (path.startsWith("/api/v1/module-settings/")) return fulfill(route, { module: path.split("/").pop(), settings: {}, version: "1" });
+    return fulfill(route, request.method() === "GET" ? [] : {});
+  });
+}
+
+test("unauthenticated navigation lands on the operator login", async ({ page }) => {
+  await installAPI(page, { signedIn: false });
+  await page.goto("/workshop");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "Console" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeDisabled();
+});
+
+test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
+  await installAPI(page);
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/settings", "/modules"];
+  for (const path of routes) {
+    await page.goto(path);
+    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("Application Error");
+    await expect(page.locator("main").first()).toBeVisible();
+  }
+});
+
+test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {
+  await installAPI(page);
+  await page.goto("/workshop");
+  await expect(page.locator("#workshop-title")).toBeVisible();
+  await expect(page.getByText("RTX Workshop")).toBeVisible();
+  await expect(page.getByText("workshop-fabric")).toBeVisible();
+  await expect(page.getByText("qwen3.8@rtx6000")).toBeVisible();
+  await expect(page.getByText("96.0 GiB")).toBeVisible();
+});
+
+test("API failures expose a retryable operator state", async ({ page }) => {
+  await installAPI(page, { failNodes: true });
+  await page.goto("/workshop");
+  await expect(page.getByText("Workshop instruments unavailable")).toBeVisible();
+  await expect(page.getByText("Service Unavailable")).toBeVisible();
+  await expect(page.getByRole("button", { name: /retry/i })).toBeVisible();
+});

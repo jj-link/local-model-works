@@ -6,9 +6,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
+
+	"github.com/jj-link/local-model-works/internal/auth"
+	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/migrate"
 )
 
@@ -34,6 +40,10 @@ func run(args []string) error {
 	case "version":
 		fmt.Printf("lmw %s (%s)\n", Version, Commit)
 		return nil
+	case "admin":
+		return runAdmin(args[1:])
+	case "recipe":
+		return runRecipe(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
 	case "help", "-h", "--help":
@@ -50,6 +60,10 @@ func usage() {
 	fmt.Print(`lmw - Local Model Works operator CLI
 
 Usage:
+  lmw admin create --state DIR [--username NAME] [--password-stdin]
+  lmw recipe validate <dir>
+  lmw recipe pack <dir> --output <oci-layout>
+  lmw recipe init --from-git <url> --revision <ref> [--path <path>] --output <dir>
   lmw migrate dgx-dashboard scan   [--legacy DIR] [--state DIR] [--ini FILE]
                                     [--cache-root NODE=PATH]... [--out FILE]
                                     [--docker=false]
@@ -59,6 +73,110 @@ Usage:
                                     [--target DIR] [--force]
   lmw help
 `)
+}
+
+func runAdmin(args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		fmt.Print(`Usage:
+  lmw admin create --state DIR [--username NAME] [--password-stdin]
+
+Creates the sole operator account before the first lmw-server start.
+`)
+		return nil
+	}
+	if args[0] != "create" {
+		return fmt.Errorf("unknown admin action %q (want create)", args[0])
+	}
+	return runAdminCreate(args[1:], os.Stdin, os.Stdout)
+}
+
+func runAdminCreate(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet("admin create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", "/var/lib/local-model-works", "server state root")
+	username := fs.String("username", "admin", "operator username")
+	passwordStdin := fs.Bool("password-stdin", false, "read one password from stdin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("admin create: unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	*state = filepath.Clean(strings.TrimSpace(*state))
+	*username = strings.TrimSpace(*username)
+	if *state == "" || *state == "." {
+		return fmt.Errorf("admin create: --state must name a directory")
+	}
+	if *username == "" || len(*username) > 64 || strings.ContainsAny(*username, " \t\r\n") {
+		return fmt.Errorf("admin create: --username must be 1-64 non-whitespace characters")
+	}
+
+	password, err := readAdminPassword(stdin, stdout, *passwordStdin)
+	if err != nil {
+		return err
+	}
+	if password == "" {
+		return fmt.Errorf("admin create: password must not be empty")
+	}
+	if err := os.MkdirAll(*state, 0o700); err != nil {
+		return fmt.Errorf("admin create: state root: %w", err)
+	}
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(*state, "lmw.db"))
+	if err != nil {
+		return fmt.Errorf("admin create: %w", err)
+	}
+	defer sqlDB.Close()
+	q := db.New(sqlDB)
+	count, err := q.CountUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("admin create: count users: %w", err)
+	}
+	if count != 0 {
+		return fmt.Errorf("admin create: an operator user already exists")
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("admin create: hash password: %w", err)
+	}
+	if err := q.CreateUser(ctx, db.CreateUserParams{Username: *username, Argon2Hash: hash}); err != nil {
+		return fmt.Errorf("admin create: create user: %w", err)
+	}
+	fmt.Fprintf(stdout, "operator %s created in %s\n", *username, *state)
+	return nil
+}
+
+func readAdminPassword(stdin io.Reader, stdout io.Writer, fromStdin bool) (string, error) {
+	if fromStdin {
+		raw, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+		if err != nil {
+			return "", fmt.Errorf("admin create: read password: %w", err)
+		}
+		password := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+		if strings.ContainsAny(password, "\r\n") {
+			return "", fmt.Errorf("admin create: --password-stdin accepts exactly one line")
+		}
+		return password, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("admin create: stdin is not a terminal; use --password-stdin")
+	}
+	fmt.Fprint(stdout, "Password: ")
+	first, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(stdout)
+	if err != nil {
+		return "", fmt.Errorf("admin create: read password: %w", err)
+	}
+	fmt.Fprint(stdout, "Confirm password: ")
+	second, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(stdout)
+	if err != nil {
+		return "", fmt.Errorf("admin create: confirm password: %w", err)
+	}
+	if string(first) != string(second) {
+		return "", fmt.Errorf("admin create: passwords do not match")
+	}
+	return string(first), nil
 }
 
 func runMigrate(args []string) error {
@@ -138,6 +256,7 @@ func runScan(args []string) error {
 	fs.StringVar(&opts.LegacyDir, "legacy", "", "legacy DGX-Dashboard checkout (contains control/)")
 	fs.StringVar(&opts.StateDir, "state", "", "legacy state root (runs/, benchmark-results/, ...)")
 	fs.StringVar(&opts.INIPath, "ini", "", "production INI (default <state>/config-production.ini)")
+	fs.StringVar(&opts.LegacyRevision, "revision", "", "explicit 40-hex legacy source revision (default Git HEAD)")
 	fs.Var(&roots, "cache-root", "node model/cache root binding NODE=PATH (repeatable)")
 	fs.BoolVar(&opts.Docker, "docker", true, "query the docker daemon for mutable image digests")
 	fs.StringVar(&outPath, "out", "", "write the full plan JSON to FILE")
@@ -186,6 +305,7 @@ func runImport(args []string) error {
 	fs.StringVar(&opts.Scan.LegacyDir, "legacy", "", "legacy DGX-Dashboard checkout (contains control/)")
 	fs.StringVar(&opts.Scan.StateDir, "state", "", "legacy state root (runs/, benchmark-results/, ...)")
 	fs.StringVar(&opts.Scan.INIPath, "ini", "", "production INI (default <state>/config-production.ini)")
+	fs.StringVar(&opts.Scan.LegacyRevision, "revision", "", "explicit 40-hex legacy source revision (default Git HEAD)")
 	fs.Var(&roots, "cache-root", "node model/cache root binding NODE=PATH (repeatable)")
 	fs.Var(&nodeMaps, "node-map", "legacy node=enrolled node ID binding (repeatable)")
 	fs.BoolVar(&opts.Scan.Docker, "docker", true, "query the docker daemon for mutable image digests")

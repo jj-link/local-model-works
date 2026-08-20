@@ -3,6 +3,13 @@ kind: Recipe
 metadata:
   name: lmw-fail-untrusted
   version: 1.0.0
+  displayName: lmw-fail-untrusted
+  description: Validation fixture fail-untrusted-launch.
+  license: MIT
+  source:
+    url: https://fixtures.local/fail-untrusted-launch
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts: []
@@ -13,4 +20,7 @@ workloads:
     command:
       - serve
     args: []
-    resources: {}
+    resources:
+      cpu: 1
+      memoryBytes: 16777216
+      pids: 64

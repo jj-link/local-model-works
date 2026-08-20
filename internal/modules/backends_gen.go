@@ -11,6 +11,7 @@ import (
 	runs "github.com/jj-link/local-model-works/modules/runs/backend"
 	serving "github.com/jj-link/local-model-works/modules/serving/backend"
 	settings "github.com/jj-link/local-model-works/modules/settings/backend"
+	workshop "github.com/jj-link/local-model-works/modules/workshop/backend"
 )
 
 // Constructors is the compile-time list of first-party module backends,
@@ -22,4 +23,5 @@ var Constructors = []func(*moduleapi.Env) moduleapi.Module{
 	runs.New,
 	serving.New,
 	settings.New,
+	workshop.New,
 }

@@ -65,6 +65,36 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /nodes/{id}/telemetry:
+    get:
+      tags: [nodes]
+      operationId: getNodeTelemetry
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: resolution
+          in: query
+          schema: { type: string, enum: [5s, 1m], default: 5s }
+        - name: from
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: to
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10000, default: 2000 }
+      responses:
+        '200':
+          description: Ordered telemetry samples
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TelemetrySample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /nodes/{id}/approve:
     post:
       tags: [nodes]
@@ -438,3 +468,12 @@ components:
         version:
           type: string
           description: ETag for optimistic concurrency
+    TelemetrySample:
+      type: object
+      required: [node_id, ts, payload]
+      properties:
+        node_id: { type: string, format: uuid }
+        ts: { type: integer, format: int64 }
+        payload:
+          type: object
+          additionalProperties: true

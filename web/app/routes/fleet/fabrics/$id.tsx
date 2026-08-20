@@ -1,7 +1,8 @@
-import { Link, useParams } from "react-router";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { RefreshCcw } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { useTailPathParam } from "~/lib/path-param";
 import {
   Table,
   TableBody,
@@ -22,7 +23,7 @@ import { shortId } from "~/lib/format";
  * (PUT re-runs validation server-side) and delete.
  */
 export default function FabricDetailRoute() {
-  const { id } = useParams();
+  const id = useTailPathParam();
   const { data: fabric, isPending, isError, error, refetch } = useFabric(id);
   const { data: nodes } = useNodes();
   const update = useUpdateFabric();

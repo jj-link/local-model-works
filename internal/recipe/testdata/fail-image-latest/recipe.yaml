@@ -6,6 +6,10 @@ metadata:
   displayName: lmw-fail-latest
   description: Mutable image tag fixture.
   license: MIT
+  source:
+    url: https://fixtures.local/fail-image-latest
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts:

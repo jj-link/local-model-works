@@ -1,7 +1,8 @@
-import { Link, useParams } from "react-router";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { Power, ShieldCheck } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { useTailPathParam } from "~/lib/path-param";
 import {
   Table,
   TableBody,
@@ -40,7 +41,7 @@ const LOG_ACTIVE = new Set(["preparing", "starting", "healthy", "degraded", "sto
 
 /** Deployment detail: placements, endpoint, live logs, diagnostics, metadata. */
 export default function DeploymentDetailRoute() {
-  const { id } = useParams();
+  const id = useTailPathParam();
   const { data: d, isPending, isError, error, refetch } = useDeployment(id);
   const verify = useVerifyDeployment();
   const stop = useStopDeployment();

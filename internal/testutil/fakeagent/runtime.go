@@ -158,6 +158,13 @@ func (rt *FakeRuntime) Start(ctx context.Context, id string) error {
 	}
 	switch c.State {
 	case "created":
+		if c.Spec.Labels[runtime.LabelModule] == "extension" {
+			c.State = "exited"
+			_, _ = c.logs["stdout"].Write([]byte(`{"version":1}` + "\n"))
+			c.logs["stdout"].Close()
+			c.logs["stderr"].Close()
+			return nil
+		}
 		c.State = "running"
 		return nil
 	case "running":

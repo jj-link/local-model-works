@@ -1,6 +1,6 @@
-import { useParams } from "react-router";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
+import { useTailPathParam } from "~/lib/path-param";
 import {
   Table,
   TableBody,
@@ -28,7 +28,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Recipe detail: metadata panel, trust actions, and the manifest document. */
 export default function RecipeDetailRoute() {
-  const { id } = useParams();
+  const id = useTailPathParam();
   const { data: recipe, isPending, isError, error, refetch } = useRecipe(id);
   const setTrust = useSetRecipeTrust();
   const remove = useDeleteRecipe();

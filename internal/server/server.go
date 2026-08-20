@@ -28,8 +28,11 @@ import (
 	"github.com/jj-link/local-model-works/internal/modules"
 	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/internal/telemetry"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 const sessionCookie = "lmw_session"
@@ -64,6 +67,7 @@ type Server struct {
 	fabrics          *fabric.Service
 	jobs             *jobs.Registry
 	settings         *settings.Registry
+	telemetry        *telemetry.Service
 	env              *moduleapi.Env
 	modules          []moduleapi.Module
 	heartbeatTimeout time.Duration
@@ -93,26 +97,34 @@ func New(d Deps) *Server {
 	runsSvc := runs.New(d.DB, d.Q, bus, runRoot)
 	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes, d.CA)
 	fabrics := fabric.New(d.Q, bus)
-	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx)
+	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx, d.DB, d.Q)
 	settingsReg := settings.New(d.Q)
+	telemetrySvc := telemetry.New(d.DB, d.Q)
+	go telemetrySvc.RunRetention(d.Ctx)
 
 	v, err := recipe.NewValidator()
 	if err != nil {
 		panic(fmt.Sprintf("recipe validator: %v", err))
 	}
-	recipes, err := recipe.New(d.Q, bus, v, d.Cfg.TrustKeyPath(), d.Cfg.CatalogRoot())
+	recipes, err := recipe.New(d.DB, d.Q, bus, v, d.Cfg.TrustKeyPath(), d.Cfg.CatalogRoot(), d.Cfg.RecipeRoot())
 	if err != nil {
 		panic(fmt.Sprintf("recipe store: %v", err))
 	}
+	recipes.SetInstallHook(func() {
+		nodes.Broadcast(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_ReconcileRequest{
+			ReconcileRequest: &agentv1.ReconcileRequest{Reason: "artifact.rescan"},
+		}})
+	})
+	builder := recipebuilder.New(d.Q, d.Cfg.StateRoot, v, recipes)
 	box, err := auth.NewSecretBox(d.Cfg.SecretKeyPath())
 	if err != nil {
 		panic(fmt.Sprintf("secret box: %v", err))
 	}
-
+	jobsReg.SetSecretBox(box)
 	env := &moduleapi.Env{
 		Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
-		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, Runs: runsSvc,
-		Jobs: jobsReg, Settings: settingsReg, Secrets: box,
+		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder, Runs: runsSvc,
+		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc,
 		Nodes: nodes, Commands: broker, RunRoot: runRoot,
 	}
 	s := &Server{
@@ -127,6 +139,7 @@ func New(d Deps) *Server {
 		fabrics:          fabrics,
 		jobs:             jobsReg,
 		settings:         settingsReg,
+		telemetry:        telemetrySvc,
 		env:              env,
 		heartbeatTimeout: hbt,
 		version:          d.Version,
@@ -168,22 +181,6 @@ func (s *Server) Recover(ctx context.Context) (int, error) {
 	return s.runs.MarkInterrupted(ctx)
 }
 
-// BootstrapAdmin creates the initial operator account when none exists.
-func BootstrapAdmin(ctx context.Context, q *db.Queries, username, password string) error {
-	n, err := q.CountUsers(ctx)
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		return nil
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		return err
-	}
-	return q.CreateUser(ctx, db.CreateUserParams{Username: username, Argon2Hash: hash})
-}
-
 // Routes builds the browser/CLI HTTP API.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
@@ -197,6 +194,9 @@ func (s *Server) Routes() http.Handler {
 			a.Get("/system/info", s.handleSystemInfo)
 			a.Get("/modules", s.handleModules)
 			a.Get("/events", s.handleEvents)
+			a.Get("/metrics", s.handleMetrics)
+			a.Post("/migration/scan", s.handleMigrationScan)
+			a.Post("/migration/import", s.handleMigrationImport)
 			a.Post("/enrollment-tokens", s.handleCreateEnrollmentToken)
 			a.Get("/enrollment-tokens", s.handleListEnrollmentTokens)
 			a.Delete("/enrollment-tokens/{id}", s.handleDeleteEnrollmentToken)
@@ -217,14 +217,30 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	body, err := s.telemetry.Prometheus(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "telemetry.metrics", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
+}
+
 // securityHeaders applies the baseline hardening response headers.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := newCSPNonce()
+		if err != nil {
+			http.Error(w, "secure random unavailable", http.StatusInternalServerError)
+			return
+		}
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
-		next.ServeHTTP(w, r)
+		h.Set("Content-Security-Policy", cspPolicy(nonce))
+		next.ServeHTTP(w, r.WithContext(contextWithCSPNonce(r.Context(), nonce)))
 	})
 }
 
@@ -237,14 +253,22 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			token = cookie.Value
 		}
 		mutating := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPatch
-		csrf := r.Header.Get("X-CSRF-Token")
-		sess, err := s.sessions.Validate(token, csrf, mutating)
+		if mutating {
+			if _, err := s.sessions.Validate(token, "", false); err != nil {
+				writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid session")
+				return
+			}
+			expectedOrigin, err := s.cfg.NormalizedPublicOrigin()
+			if err != nil || r.Header.Get("Origin") != expectedOrigin {
+				writeErr(w, http.StatusForbidden, "auth.origin", "missing or invalid Origin")
+				return
+			}
+		}
+		sess, err := s.sessions.Validate(token, r.Header.Get("X-CSRF-Token"), mutating)
 		if err != nil {
 			if mutating {
-				if _, e := s.sessions.Validate(token, "", false); e == nil {
-					writeErr(w, http.StatusForbidden, "auth.csrf", "missing or invalid X-CSRF-Token")
-					return
-				}
+				writeErr(w, http.StatusForbidden, "auth.csrf", "missing or invalid X-CSRF-Token")
+				return
 			}
 			writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid session")
 			return

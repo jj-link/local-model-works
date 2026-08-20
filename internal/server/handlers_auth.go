@@ -29,7 +29,20 @@ func sessionView(s *auth.Session) map[string]any {
 	}
 }
 
+func (s *Server) requireConfiguredOrigin(w http.ResponseWriter, r *http.Request) bool {
+	expectedOrigin, err := s.cfg.NormalizedPublicOrigin()
+	if err != nil || r.Header.Get("Origin") != expectedOrigin {
+		writeErr(w, http.StatusForbidden, "auth.origin", "missing or invalid Origin")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConfiguredOrigin(w, r) {
+		return
+	}
+
 	var req loginRequest
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "auth.invalid_body", err.Error())
@@ -59,14 +72,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		handleErr(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    sess.Token,
-		Path:     "/",
-		MaxAge:   int(s.cfg.SessionTTL.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, sessionCookieFor(sess.Token, int(s.cfg.SessionTTL.Seconds())))
 	writeJSON(w, http.StatusOK, sessionView(sess))
 }
 
@@ -75,19 +81,32 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie != nil {
 		s.sessions.Logout(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, sessionCookieFor("", -1))
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie(sessionCookie)
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid session")
+		return
+	}
 	sess, err := s.sessions.Validate(cookie.Value, "", false)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid session")
 		return
 	}
 	writeJSON(w, http.StatusOK, sessionView(sess))
+}
+
+func sessionCookieFor(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     sessionCookie,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	}
 }

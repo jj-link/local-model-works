@@ -289,6 +289,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["prometheusMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/migration/import": {
         parameters: {
             query?: never;
@@ -298,7 +314,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a previously saved, digested migration plan */
+        /** Start a digest-gated import into an isolated staging state root */
         post: operations["migrationImport"];
         delete?: never;
         options?: never;
@@ -315,7 +331,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Scan the legacy DGX-Dashboard installation; returns a saved plan with digest */
+        /** Start a resumable legacy DGX-Dashboard scan job */
         post: operations["migrationScan"];
         delete?: never;
         options?: never;
@@ -417,6 +433,88 @@ export interface paths {
         put?: never;
         /** Issue a fresh 90-day client certificate for the node */
         post: operations["rotateNodeCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{id}/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNodeTelemetry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRecipeDrafts"];
+        put?: never;
+        post: operations["createRecipeDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecipeDraft"];
+        put: operations["updateRecipeDraft"];
+        post?: never;
+        delete: operations["deleteRecipeDraft"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["installRecipeDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["packageRecipeDraft"];
         delete?: never;
         options?: never;
         head?: never;
@@ -839,8 +937,10 @@ export interface components {
                 rank: number;
             }[];
             ports?: {
-                container_port?: number;
-                host_port?: number;
+                container_port: number;
+                host_port: number;
+                /** Format: uuid */
+                node_id: string;
                 node_name?: string;
                 protocol?: string;
             }[];
@@ -926,8 +1026,12 @@ export interface components {
             username: string;
         };
         MigrationImportRequest: {
-            /** @default false */
-            confirm: boolean;
+            /** @constant */
+            confirm: true;
+            ini_path?: string;
+            legacy_revision?: string;
+            legacy_root: string;
+            legacy_state: string;
             plan_digest: string;
         };
         MigrationPlan: {
@@ -965,13 +1069,12 @@ export interface components {
             unsupported: string[];
         };
         MigrationScanRequest: {
-            /** @description Per-node explicit cache roots; nodes without an entry use agent-reported roots */
-            cache_roots?: {
-                node_id: string;
-                path: string;
-            }[];
-            /** @description Default /home/workbench/Projects/personal/dgx-dashboard */
-            legacy_root?: string;
+            /** @default false */
+            docker: boolean;
+            ini_path?: string;
+            legacy_revision?: string;
+            legacy_root: string;
+            legacy_state: string;
         };
         Module: {
             artifactKinds?: string[];
@@ -1075,6 +1178,30 @@ export interface components {
                 version?: string;
             }[];
         };
+        RecipeDraft: {
+            candidates: Record<string, never>[];
+            /** Format: date-time */
+            created_at: string;
+            diagnostics: Record<string, never>[];
+            id: string;
+            manifest: Record<string, never>;
+            package_digest?: string;
+            resolved_commit?: string;
+            resolved_tree?: string;
+            run_id?: string;
+            selected_assets: string[];
+            source: Record<string, never>;
+            /** @enum {string} */
+            state: "analyzing" | "needs_input" | "valid" | "packaged" | "installed" | "failed";
+            /** Format: date-time */
+            updated_at: string;
+            version: number;
+        };
+        RecipeDraftSource: {
+            path?: string;
+            remote: string;
+            revision: string;
+        };
         RecipeImport: {
             source: components["schemas"]["RecipeSource"];
         };
@@ -1121,6 +1248,10 @@ export interface components {
             started_at?: string | null;
             state: components["schemas"]["RunState"];
         };
+        RunAccepted: {
+            /** Format: uuid */
+            run_id: string;
+        };
         /** @enum {string} */
         RunState: "queued" | "planning" | "waiting" | "running" | "verifying" | "succeeded" | "failed" | "cancelling" | "cancelled" | "interrupted";
         RunsPage: {
@@ -1151,6 +1282,9 @@ export interface components {
             username: string;
         };
         SystemInfo: {
+            /** Format: uri */
+            agent_url: string;
+            ca_fingerprint: string;
             commit: string;
             nodes: {
                 approved?: number;
@@ -1160,6 +1294,15 @@ export interface components {
             /** Format: date-time */
             time: string;
             version: string;
+        };
+        TelemetrySample: {
+            /** Format: uuid */
+            node_id: string;
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Format: int64 */
+            ts: number;
         };
         Transfer: {
             /** Format: uuid */
@@ -1832,6 +1975,27 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    prometheusMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current node metrics in Prometheus exposition format */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     migrationImport: {
         parameters: {
             query?: never;
@@ -1845,17 +2009,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Import report */
-            200: {
+            /** @description Import job accepted */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        counts: Record<string, never>;
-                        imported: Record<string, never>;
-                        unsupported: string[];
-                    };
+                    "application/json": components["schemas"]["RunAccepted"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -1877,13 +2037,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Migration plan */
-            200: {
+            /** @description Scan job accepted */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MigrationPlan"];
+                    "application/json": components["schemas"]["RunAccepted"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2088,6 +2248,203 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getNodeTelemetry: {
+        parameters: {
+            query?: {
+                resolution?: "5s" | "1m";
+                from?: number;
+                to?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ordered telemetry samples */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelemetrySample"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listRecipeDrafts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Inspectable recipe drafts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"][];
+                };
+            };
+        };
+    };
+    createRecipeDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeDraftSource"];
+            };
+        };
+        responses: {
+            /** @description Draft analysis job accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run_id: string;
+                    };
+                };
+            };
+        };
+    };
+    getRecipeDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recipe draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    updateRecipeDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    manifest: Record<string, never>;
+                    selected_assets: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    deleteRecipeDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    installRecipeDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    permission_diff_accepted: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Installed recipe */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Recipe"];
+                };
+            };
+        };
+    };
+    packageRecipeDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Packaged draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
         };
     };
     listRecipes: {

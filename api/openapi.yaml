@@ -75,6 +75,20 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /metrics:
+    get:
+      tags: [system]
+      operationId: prometheusMetrics
+      responses:
+        '200':
+          description: Current node metrics in Prometheus exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /modules:
     get:
       tags: [system]
@@ -172,7 +186,7 @@ paths:
     post:
       tags: [migration]
       operationId: migrationScan
-      summary: Scan the legacy DGX-Dashboard installation; returns a saved plan with digest
+      summary: Start a resumable legacy DGX-Dashboard scan job
       requestBody:
         required: true
         content:
@@ -180,12 +194,12 @@ paths:
             schema:
               $ref: '#/components/schemas/MigrationScanRequest'
       responses:
-        '200':
-          description: Migration plan
+        '202':
+          description: Scan job accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MigrationPlan'
+                $ref: '#/components/schemas/RunAccepted'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -197,7 +211,7 @@ paths:
     post:
       tags: [migration]
       operationId: migrationImport
-      summary: Execute a previously saved, digested migration plan
+      summary: Start a digest-gated import into an isolated staging state root
       requestBody:
         required: true
         content:
@@ -205,22 +219,12 @@ paths:
             schema:
               $ref: '#/components/schemas/MigrationImportRequest'
       responses:
-        '200':
-          description: Import report
+        '202':
+          description: Import job accepted
           content:
             application/json:
               schema:
-                type: object
-                required: [imported, unsupported, counts]
-                properties:
-                  imported:
-                    type: object
-                  unsupported:
-                    type: array
-                    items:
-                      type: string
-                  counts:
-                    type: object
+                $ref: '#/components/schemas/RunAccepted'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -309,7 +313,7 @@ components:
 
     SystemInfo:
       type: object
-      required: [version, commit, time, nodes]
+      required: [version, commit, time, nodes, agent_url, ca_fingerprint]
       properties:
         version:
           type: string
@@ -318,6 +322,12 @@ components:
         time:
           type: string
           format: date-time
+        agent_url:
+          type: string
+          format: uri
+        ca_fingerprint:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
         nodes:
           type: object
           properties:
@@ -408,22 +418,26 @@ components:
 
     MigrationScanRequest:
       type: object
+      required: [legacy_root, legacy_state]
+      additionalProperties: false
       properties:
         legacy_root:
           type: string
-          description: Default /home/workbench/Projects/personal/dgx-dashboard
-        cache_roots:
-          type: array
-          description: Per-node explicit cache roots; nodes without an entry use agent-reported roots
-          items:
-            type: object
-            required: [node_id, path]
-            properties:
-              node_id:
-                type: string
-              path:
-                type: string
-
+        legacy_state:
+          type: string
+        legacy_revision:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+        ini_path:
+          type: string
+        docker:
+          type: boolean
+          default: false
+    RunAccepted:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string, format: uuid }
     MigrationPlan:
       type: object
       required: [plan_digest, counts, recipes, unsupported]
@@ -501,10 +515,16 @@ components:
 
     MigrationImportRequest:
       type: object
-      required: [plan_digest]
+      required: [plan_digest, legacy_root, legacy_state, confirm]
+      additionalProperties: false
       properties:
         plan_digest:
           type: string
-        confirm:
-          type: boolean
-          default: false
+          pattern: '^sha256:[0-9a-f]{64}$'
+        legacy_root: { type: string }
+        legacy_state: { type: string }
+        legacy_revision:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+        ini_path: { type: string }
+        confirm: { const: true }

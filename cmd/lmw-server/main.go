@@ -69,19 +69,21 @@ func run(cfg config.Server, version, commit string) error {
 	defer sqlDB.Close()
 	q := db.New(sqlDB)
 
-	// Bootstrap the operator account once, from the environment.
-	if pw := os.Getenv(config.EnvAdminPassword); pw != "" {
-		if err := server.BootstrapAdmin(ctx, q, "admin", pw); err != nil {
-			return fmt.Errorf("bootstrap admin: %w", err)
-		}
-	} else {
-		n, err := q.CountUsers(ctx)
-		if err != nil {
-			return fmt.Errorf("count users: %w", err)
-		}
-		if n == 0 {
-			return fmt.Errorf("no operator user exists; set %s on first start", config.EnvAdminPassword)
-		}
+	// The operator is created explicitly before first start. Refuse to expose
+	// listeners without credentials rather than accepting a reusable secret
+	// from the service environment.
+	n, err := q.CountUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("count users: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("no operator user exists; run `lmw admin create --state %s` before starting lmw-server", cfg.StateRoot)
+	}
+	if _, err := cfg.NormalizedPublicOrigin(); err != nil {
+		return err
+	}
+	if _, err := cfg.NormalizedPublicAgentURL(); err != nil {
+		return err
 	}
 
 	chain, err := ca.LoadKeyCert(cfg.CAKeyPath(), cfg.CACertPath())

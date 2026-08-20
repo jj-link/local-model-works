@@ -21,6 +21,7 @@ settingsSchema:
       type: boolean
 jobKinds:
   - recipe-import
+  - recipe-draft
 artifactKinds:
   - model
   - dataset

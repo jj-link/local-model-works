@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -81,15 +82,15 @@ func gen(root string) error {
 	if err := validateYAML(publicPath, out); err != nil {
 		return err
 	}
-	if old, err := os.ReadFile(publicPath); err == nil && bytes.Equal(old, out) {
+	if old, err := os.ReadFile(publicPath); err != nil || !bytes.Equal(old, out) {
+		if err := os.WriteFile(publicPath, out, 0o644); err != nil {
+			return err
+		}
+		fmt.Println("wrote", publicPath)
+	} else {
 		fmt.Println(publicPath, "up to date")
-		return nil
 	}
-	if err := os.WriteFile(publicPath, out, 0o644); err != nil {
-		return err
-	}
-	fmt.Println("wrote", publicPath)
-	return nil
+	return generateGoContracts(root, core, fragments)
 }
 
 type fragment struct {
@@ -299,6 +300,84 @@ func mapSection(doc map[string]any, key string) map[string]any {
 	}
 	m, _ := comps[key].(map[string]any)
 	return m
+}
+
+func generateGoContracts(root string, _ map[string]any, fragments []fragment) error {
+	core, err := loadMap(filepath.Join(root, publicPath))
+	if err != nil {
+		return err
+	}
+	if err := runOAPICodegen(root, filepath.Join(root, corePath), "serverapi", filepath.Join(root, "internal", "serverapi", "openapi_gen.go")); err != nil {
+		return err
+	}
+	coreComponents, _ := core["components"].(map[string]any)
+	for _, fragment := range fragments {
+		document, err := loadMap(fragment.path)
+		if err != nil {
+			return err
+		}
+		components, _ := document["components"].(map[string]any)
+		if components == nil {
+			components = map[string]any{}
+			document["components"] = components
+		}
+		for _, section := range []string{"parameters", "responses", "schemas"} {
+			target, _ := components[section].(map[string]any)
+			if target == nil {
+				target = map[string]any{}
+				components[section] = target
+			}
+			source, _ := coreComponents[section].(map[string]any)
+			for name, value := range source {
+				if _, exists := target[name]; !exists {
+					target[name] = value
+				}
+			}
+		}
+		raw, err := yaml.Marshal(document)
+		if err != nil {
+			return err
+		}
+		temp, err := os.CreateTemp(filepath.Dir(fragment.path), ".api-bundled-*.yaml")
+		if err != nil {
+			return err
+		}
+		tempPath := temp.Name()
+		if _, err := temp.Write(raw); err != nil {
+			temp.Close()
+			os.Remove(tempPath)
+			return err
+		}
+		if err := temp.Close(); err != nil {
+			os.Remove(tempPath)
+			return err
+		}
+		output := filepath.Join(root, "modules", fragment.module, "backend", "api_gen.go")
+		err = runOAPICodegen(root, tempPath, "backend", output)
+		os.Remove(tempPath)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runOAPICodegen(root, specPath, packageName, outputPath string) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	command := exec.Command(
+		"go", "run", "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0",
+		"-generate", "types,chi-server", "-package", packageName,
+		"-o", outputPath, specPath,
+	)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("oapi-codegen %s: %w: %s", specPath, err, strings.TrimSpace(string(output)))
+	}
+	fmt.Println("wrote", outputPath)
+	return nil
 }
 
 // validateDoc validates a raw YAML map as an OpenAPI document.

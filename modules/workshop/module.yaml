@@ -1,0 +1,18 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: workshop
+title: Workshop
+route: /workshop
+nav:
+  label: Workshop
+  order: 45
+  icon: workshop
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties: {}
+capabilities:
+  - nodes.read
+  - fabrics.read
+  - deployments.read

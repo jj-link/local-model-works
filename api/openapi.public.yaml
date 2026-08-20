@@ -505,6 +505,20 @@ paths:
       summary: End the current session
       tags:
         - auth
+  /metrics:
+    get:
+      operationId: prometheusMetrics
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Current node metrics in Prometheus exposition format
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      tags:
+        - system
   /migration/import:
     post:
       operationId: migrationImport
@@ -515,25 +529,12 @@ paths:
               $ref: '#/components/schemas/MigrationImportRequest'
         required: true
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
-                properties:
-                  counts:
-                    type: object
-                  imported:
-                    type: object
-                  unsupported:
-                    items:
-                      type: string
-                    type: array
-                required:
-                  - imported
-                  - unsupported
-                  - counts
-                type: object
-          description: Import report
+                $ref: '#/components/schemas/RunAccepted'
+          description: Import job accepted
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
@@ -542,7 +543,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Execute a previously saved, digested migration plan
+      summary: Start a digest-gated import into an isolated staging state root
       tags:
         - migration
   /migration/scan:
@@ -555,19 +556,19 @@ paths:
               $ref: '#/components/schemas/MigrationScanRequest'
         required: true
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MigrationPlan'
-          description: Migration plan
+                $ref: '#/components/schemas/RunAccepted'
+          description: Scan job accepted
         "401":
           $ref: '#/components/responses/Unauthorized'
         "422":
           $ref: '#/components/responses/Unprocessable'
         "503":
           $ref: '#/components/responses/ServiceUnavailable'
-      summary: Scan the legacy DGX-Dashboard installation; returns a saved plan with digest
+      summary: Start a resumable legacy DGX-Dashboard scan job
       tags:
         - migration
   /modules:
@@ -743,6 +744,178 @@ paths:
       summary: Issue a fresh 90-day client certificate for the node
       tags:
         - nodes
+  /nodes/{id}/telemetry:
+    get:
+      operationId: getNodeTelemetry
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - in: query
+          name: resolution
+          schema:
+            default: 5s
+            enum:
+              - 5s
+              - 1m
+            type: string
+        - in: query
+          name: from
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: to
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            default: 2000
+            maximum: 10000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TelemetrySample'
+                type: array
+          description: Ordered telemetry samples
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      tags:
+        - nodes
+  /recipe-drafts:
+    get:
+      operationId: listRecipeDrafts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/RecipeDraft'
+                type: array
+          description: Inspectable recipe drafts
+      tags:
+        - recipes
+    post:
+      operationId: createRecipeDraft
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeDraftSource'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  run_id:
+                    type: string
+                required:
+                  - run_id
+                type: object
+          description: Draft analysis job accepted
+      tags:
+        - recipes
+  /recipe-drafts/{id}:
+    delete:
+      operationId: deleteRecipeDraft
+      responses:
+        "204":
+          description: Draft deleted
+      tags:
+        - recipes
+    get:
+      operationId: getRecipeDraft
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDraft'
+          description: Recipe draft
+      tags:
+        - recipes
+    parameters:
+      - $ref: '#/components/parameters/ID'
+    put:
+      operationId: updateRecipeDraft
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                manifest:
+                  type: object
+                selected_assets:
+                  items:
+                    type: string
+                  type: array
+              required:
+                - manifest
+                - selected_assets
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDraft'
+          description: Updated draft
+      tags:
+        - recipes
+  /recipe-drafts/{id}/install:
+    post:
+      operationId: installRecipeDraft
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                permission_diff_accepted:
+                  type: boolean
+              required:
+                - permission_diff_accepted
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+          description: Installed recipe
+      tags:
+        - recipes
+  /recipe-drafts/{id}/package:
+    post:
+      operationId: packageRecipeDraft
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDraft'
+          description: Packaged draft
+      tags:
+        - recipes
   /recipes:
     get:
       operationId: listRecipes
@@ -1559,10 +1732,17 @@ components:
                 type: integer
               host_port:
                 type: integer
+              node_id:
+                format: uuid
+                type: string
               node_name:
                 type: string
               protocol:
                 type: string
+            required:
+              - node_id
+              - host_port
+              - container_port
             type: object
           type: array
         profile:
@@ -1769,14 +1949,27 @@ components:
         - password
       type: object
     MigrationImportRequest:
+      additionalProperties: false
       properties:
         confirm:
-          default: false
-          type: boolean
+          const: true
+        ini_path:
+          type: string
+        legacy_revision:
+          pattern: ^[0-9a-f]{40}$
+          type: string
+        legacy_root:
+          type: string
+        legacy_state:
+          type: string
         plan_digest:
+          pattern: ^sha256:[0-9a-f]{64}$
           type: string
       required:
         - plan_digest
+        - legacy_root
+        - legacy_state
+        - confirm
       type: object
     MigrationPlan:
       properties:
@@ -1863,23 +2056,23 @@ components:
         - unsupported
       type: object
     MigrationScanRequest:
+      additionalProperties: false
       properties:
-        cache_roots:
-          description: Per-node explicit cache roots; nodes without an entry use agent-reported roots
-          items:
-            properties:
-              node_id:
-                type: string
-              path:
-                type: string
-            required:
-              - node_id
-              - path
-            type: object
-          type: array
-        legacy_root:
-          description: Default /home/workbench/Projects/personal/dgx-dashboard
+        docker:
+          default: false
+          type: boolean
+        ini_path:
           type: string
+        legacy_revision:
+          pattern: ^[0-9a-f]{40}$
+          type: string
+        legacy_root:
+          type: string
+        legacy_state:
+          type: string
+      required:
+        - legacy_root
+        - legacy_state
       type: object
     Module:
       properties:
@@ -2117,6 +2310,76 @@ components:
                 type: object
               type: array
           type: object
+    RecipeDraft:
+      properties:
+        candidates:
+          items:
+            type: object
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        diagnostics:
+          items:
+            type: object
+          type: array
+        id:
+          type: string
+        manifest:
+          type: object
+        package_digest:
+          type: string
+        resolved_commit:
+          type: string
+        resolved_tree:
+          type: string
+        run_id:
+          type: string
+        selected_assets:
+          items:
+            type: string
+          type: array
+        source:
+          type: object
+        state:
+          enum:
+            - analyzing
+            - needs_input
+            - valid
+            - packaged
+            - installed
+            - failed
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        version:
+          type: integer
+      required:
+        - id
+        - version
+        - state
+        - source
+        - manifest
+        - candidates
+        - selected_assets
+        - diagnostics
+        - created_at
+        - updated_at
+      type: object
+    RecipeDraftSource:
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        remote:
+          type: string
+        revision:
+          type: string
+      required:
+        - remote
+        - revision
+      type: object
     RecipeImport:
       properties:
         source:
@@ -2222,6 +2485,14 @@ components:
         - kind
         - state
       type: object
+    RunAccepted:
+      properties:
+        run_id:
+          format: uuid
+          type: string
+      required:
+        - run_id
+      type: object
     RunState:
       enum:
         - queued
@@ -2305,6 +2576,12 @@ components:
       type: object
     SystemInfo:
       properties:
+        agent_url:
+          format: uri
+          type: string
+        ca_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
         commit:
           type: string
         nodes:
@@ -2326,6 +2603,24 @@ components:
         - commit
         - time
         - nodes
+        - agent_url
+        - ca_fingerprint
+      type: object
+    TelemetrySample:
+      properties:
+        node_id:
+          format: uuid
+          type: string
+        payload:
+          additionalProperties: true
+          type: object
+        ts:
+          format: int64
+          type: integer
+      required:
+        - node_id
+        - ts
+        - payload
       type: object
     Transfer:
       properties:

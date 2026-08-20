@@ -30,6 +30,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/config"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/hardware"
+	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runtime"
 	"github.com/jj-link/local-model-works/internal/server"
 )
@@ -77,12 +78,15 @@ func NewServer(t *testing.T, root, agentListen string) *Server {
 		}
 	}
 	cfg := config.Server{
-		StateRoot:  root,
-		HTTPAddr:   "127.0.0.1:0",
-		AgentAddr:  agentListen,
-		ServerName: "localhost",
-		SessionTTL: 12 * time.Hour,
+		StateRoot:      root,
+		HTTPAddr:       "127.0.0.1:0",
+		AgentAddr:      agentListen,
+		ServerName:     "localhost",
+		PublicOrigin:   "https://lmw.example.test",
+		PublicAgentURL: "https://localhost:9443",
+		SessionTTL:     12 * time.Hour,
 	}
+	t.Cleanup(func() { _ = recipe.RemovePackage(cfg.RecipeRoot()) })
 	// Materialize the recipe/catalog trust key once, mirroring
 	// cmd/lmw-server (the recipe store loads it by path).
 	if _, err := os.Stat(cfg.TrustKeyPath()); os.IsNotExist(err) {
@@ -106,10 +110,24 @@ func NewServer(t *testing.T, root, agentListen string) *Server {
 		t.Fatalf("open db: %v", err)
 	}
 	q := db.New(sqlDB)
-	if err := server.BootstrapAdmin(ctx, q, "admin", "test-password"); err != nil {
+	count, err := q.CountUsers(ctx)
+	if err != nil {
 		cancel()
 		sqlDB.Close()
-		t.Fatalf("bootstrap admin: %v", err)
+		t.Fatalf("count test admins: %v", err)
+	}
+	if count == 0 {
+		hash, err := auth.HashPassword("test-password")
+		if err != nil {
+			cancel()
+			sqlDB.Close()
+			t.Fatalf("hash test admin: %v", err)
+		}
+		if err := q.CreateUser(ctx, db.CreateUserParams{Username: "admin", Argon2Hash: hash}); err != nil {
+			cancel()
+			sqlDB.Close()
+			t.Fatalf("create test admin: %v", err)
+		}
 	}
 	chain, err := ca.LoadKeyCert(cfg.CAKeyPath(), cfg.CACertPath())
 	if err != nil {

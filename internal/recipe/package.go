@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,14 +20,23 @@ import (
 
 // Media types and artifact types for the recipe package format.
 const (
-	ArtifactType        = "application/vnd.localmodelworks.recipe.v1"
-	ConfigMediaType     = "application/vnd.localmodelworks.recipe.config.v1+json"
-	LayerMediaType      = "application/vnd.localmodelworks.recipe.assets.v1.tar+gzip"
-	CatalogArtifactType = "application/vnd.localmodelworks.catalog.v1"
-	CatalogConfigType   = "application/vnd.localmodelworks.catalog.config.v1+json"
+	ArtifactType               = "application/vnd.localmodelworks.recipe.v1"
+	ConfigMediaType            = "application/vnd.localmodelworks.recipe.config.v1+json"
+	LayerMediaType             = "application/vnd.localmodelworks.recipe.assets.v1.tar+gzip"
+	CatalogArtifactType        = "application/vnd.localmodelworks.catalog.v1"
+	CatalogConfigType          = "application/vnd.localmodelworks.catalog.config.v1+json"
+	SigstoreBundleArtifactType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
 	// LabelPrefix marks LMW-managed containers.
 	LabelPrefix = "dev.localmodelworks."
+)
+
+const (
+	MaxConfigBytes          = 1 << 20
+	MaxCompressedLayerBytes = 64 << 20
+	MaxAssetFiles           = 256
+	MaxAssetFileBytes       = 16 << 20
+	MaxExtractedAssetBytes  = 128 << 20
 )
 
 // packageTarTime is the fixed mtime for deterministic layers.
@@ -44,6 +54,7 @@ type ociDescriptor struct {
 type ociManifest struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	ArtifactType  string            `json:"artifactType"`
+	Subject       *ociDescriptor    `json:"subject,omitempty"`
 	Config        ociDescriptor     `json:"config"`
 	Layers        []ociDescriptor   `json:"layers"`
 	Annotations   map[string]string `json:"annotations,omitempty"`
@@ -60,7 +71,7 @@ type PackResult struct {
 	ManifestDigest string
 	ManifestJSON   []byte
 	ConfigDigest   string
-	LayerDigest    string // empty when the package has no assets
+	LayerDigest    string
 	ConfigSize     int64
 	LayerSize      int64
 	ConfigJSON     []byte
@@ -90,25 +101,28 @@ func packErr(code, asset, msg string) *PackError {
 // PackManifest builds the OCI manifest for a validated canonical document and
 // its asset files (path -> content). Output is fully deterministic.
 func PackManifest(doc []byte, assets map[string][]byte, annotations map[string]string) (*PackResult, error) {
+	if len(doc) > MaxConfigBytes {
+		return nil, packErr("recipe.config_too_large", "", "canonical config exceeds 1 MiB")
+	}
 	canon, err := Canonical(doc)
 	if err != nil {
 		return nil, err
 	}
+	if len(canon) > MaxConfigBytes {
+		return nil, packErr("recipe.config_too_large", "", "canonical config exceeds 1 MiB")
+	}
 	configSum := sha256.Sum256(canon)
 	configDigest := "sha256:" + hex.EncodeToString(configSum[:])
-
-	var layerDigest string
-	var layerSize int64
-	var layerBytes []byte
-	if len(assets) > 0 {
-		layerBytes, err = buildAssetLayer(assets)
-		if err != nil {
-			return nil, err
-		}
-		lsum := sha256.Sum256(layerBytes)
-		layerDigest = "sha256:" + hex.EncodeToString(lsum[:])
-		layerSize = int64(len(layerBytes))
+	layerBytes, err := buildAssetLayer(assets)
+	if err != nil {
+		return nil, err
 	}
+	if len(layerBytes) > MaxCompressedLayerBytes {
+		return nil, packErr("recipe.layer_too_large", "", "compressed asset layer exceeds 64 MiB")
+	}
+	lsum := sha256.Sum256(layerBytes)
+	layerDigest := "sha256:" + hex.EncodeToString(lsum[:])
+	layerSize := int64(len(layerBytes))
 
 	ann := map[string]string{
 		"org.opencontainers.artifact.created": "2026-01-01T00:00:00Z",
@@ -121,10 +135,8 @@ func PackManifest(doc []byte, assets map[string][]byte, annotations map[string]s
 		SchemaVersion: 2,
 		ArtifactType:  ArtifactType,
 		Config:        ociDescriptor{MediaType: ConfigMediaType, Digest: configDigest, Size: int64(len(canon))},
+		Layers:        []ociDescriptor{{MediaType: LayerMediaType, Digest: layerDigest, Size: layerSize}},
 		Annotations:   ann,
-	}
-	if layerDigest != "" {
-		m.Layers = []ociDescriptor{{MediaType: LayerMediaType, Digest: layerDigest, Size: layerSize}}
 	}
 	manifestJSON, err := json.Marshal(m)
 	if err != nil {
@@ -146,6 +158,19 @@ func PackManifest(doc []byte, assets map[string][]byte, annotations map[string]s
 // buildAssetLayer produces a deterministic tar.gz of the asset files:
 // sorted entries, fixed mtime, PAX format, gzip with zero header time.
 func buildAssetLayer(assets map[string][]byte) ([]byte, error) {
+	if len(assets) > MaxAssetFiles {
+		return nil, packErr("recipe.too_many_assets", "", "asset count exceeds 256")
+	}
+	total := 0
+	for name, data := range assets {
+		if len(data) > MaxAssetFileBytes {
+			return nil, packErr("recipe.asset_too_large", name, "asset exceeds 16 MiB")
+		}
+		total += len(data)
+		if total > MaxExtractedAssetBytes {
+			return nil, packErr("recipe.assets_too_large", "", "assets exceed 128 MiB")
+		}
+	}
 	var names []string
 	for n := range assets {
 		names = append(names, n)
@@ -197,10 +222,8 @@ func WriteLayout(dir string, res *PackResult) error {
 	if err := os.WriteFile(path.Join(blobDir, res.ConfigDigest[len("sha256:"):]), res.ConfigJSON, 0o644); err != nil {
 		return err
 	}
-	if res.LayerDigest != "" {
-		if err := os.WriteFile(path.Join(blobDir, res.LayerDigest[len("sha256:"):]), res.layerBytes, 0o644); err != nil {
-			return err
-		}
+	if err := os.WriteFile(path.Join(blobDir, res.LayerDigest[len("sha256:"):]), res.layerBytes, 0o644); err != nil {
+		return err
 	}
 	if err := os.WriteFile(path.Join(blobDir, res.ManifestDigest[len("sha256:"):]), res.ManifestJSON, 0o644); err != nil {
 		return err
@@ -217,12 +240,211 @@ func WriteLayout(dir string, res *PackResult) error {
 	return VerifyLayout(dir)
 }
 
+// ReadLayout loads and verifies one complete recipe package.
+func ReadLayout(dir string) (*PackResult, error) {
+	if err := VerifyLayout(dir); err != nil {
+		return nil, err
+	}
+	idxRaw, err := os.ReadFile(path.Join(dir, "index.json"))
+	if err != nil {
+		return nil, err
+	}
+	var idx ociIndex
+	if err := json.Unmarshal(idxRaw, &idx); err != nil || len(idx.Blobs) != 1 {
+		return nil, fmt.Errorf("invalid recipe package index")
+	}
+	manifestJSON, err := os.ReadFile(path.Join(dir, "blobs", "sha256", strings.TrimPrefix(idx.Blobs[0].Digest, "sha256:")))
+	if err != nil {
+		return nil, err
+	}
+	var manifest ociManifest
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		return nil, err
+	}
+	configJSON, err := os.ReadFile(path.Join(dir, "blobs", "sha256", strings.TrimPrefix(manifest.Config.Digest, "sha256:")))
+	if err != nil {
+		return nil, err
+	}
+	layerBytes, err := os.ReadFile(path.Join(dir, "blobs", "sha256", strings.TrimPrefix(manifest.Layers[0].Digest, "sha256:")))
+	if err != nil {
+		return nil, err
+	}
+	return &PackResult{
+		ManifestDigest: idx.Blobs[0].Digest,
+		ManifestJSON:   manifestJSON,
+		ConfigDigest:   manifest.Config.Digest,
+		LayerDigest:    manifest.Layers[0].Digest,
+		ConfigSize:     int64(len(configJSON)),
+		LayerSize:      int64(len(layerBytes)),
+		ConfigJSON:     configJSON,
+		layerBytes:     layerBytes,
+	}, nil
+}
+
+// ReadPackageLayer returns the verified deterministic asset layer for one
+// installed manifest digest.
+func ReadPackageLayer(root, manifestDigest string) ([]byte, string, error) {
+	if !sha256DigestRE.MatchString(manifestDigest) {
+		return nil, "", fmt.Errorf("invalid recipe package digest")
+	}
+	dir := filepath.Join(root, strings.TrimPrefix(manifestDigest, "sha256:"))
+	result, err := ReadLayout(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	if result.ManifestDigest != manifestDigest {
+		return nil, "", fmt.Errorf("recipe package digest mismatch")
+	}
+	return append([]byte(nil), result.layerBytes...), result.LayerDigest, nil
+}
+
+// PersistPackage atomically publishes a verified package and extracted asset
+// tree below root/<manifest-sha>. The returned bool is true only when this
+// call created the package and therefore owns rollback on a later DB failure.
+func PersistPackage(root string, res *PackResult) (string, bool, error) {
+	if !sha256DigestRE.MatchString(res.ManifestDigest) {
+		return "", false, fmt.Errorf("invalid recipe manifest digest")
+	}
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return "", false, err
+	}
+	final := path.Join(root, strings.TrimPrefix(res.ManifestDigest, "sha256:"))
+	if _, err := os.Stat(final); err == nil {
+		if err := VerifyLayout(final); err != nil {
+			return "", false, fmt.Errorf("stored package verification: %w", err)
+		}
+		if err := verifyExtractedAssets(final); err != nil {
+			return "", false, fmt.Errorf("stored assets verification: %w", err)
+		}
+		return final, false, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, err
+	}
+	tmp, err := os.MkdirTemp(root, ".package-*")
+	if err != nil {
+		return "", false, err
+	}
+	defer os.RemoveAll(tmp)
+	if err := WriteLayout(tmp, res); err != nil {
+		return "", false, err
+	}
+	assets := path.Join(tmp, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		return "", false, err
+	}
+	if err := UnpackLayer(res.layerBytes, assets); err != nil {
+		return "", false, err
+	}
+	if err := verifyExtractedAssets(tmp); err != nil {
+		return "", false, err
+	}
+	if err := freezeAssets(assets); err != nil {
+		return "", false, err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		if _, statErr := os.Stat(final); statErr == nil {
+			if verifyErr := VerifyLayout(final); verifyErr != nil {
+				return "", false, verifyErr
+			}
+			return final, false, nil
+		}
+		return "", false, err
+	}
+	return final, true, nil
+}
+
+func freezeAssets(root string) error {
+	return filepath.Walk(root, func(current string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.Chmod(current, 0o555)
+		}
+		return os.Chmod(current, 0o555)
+	})
+}
+
+func verifyExtractedAssets(packageDir string) error {
+	res, err := ReadLayout(packageDir)
+	if err != nil {
+		return err
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(res.layerBytes))
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	expected := map[string]bool{}
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, MaxAssetFileBytes+1))
+		if err != nil || len(data) > MaxAssetFileBytes {
+			return fmt.Errorf("read extracted asset %q", header.Name)
+		}
+		stored, err := os.ReadFile(filepath.Join(packageDir, "assets", filepath.FromSlash(header.Name)))
+		if err != nil || !bytes.Equal(data, stored) {
+			return fmt.Errorf("extracted asset %q mismatch", header.Name)
+		}
+		expected[filepath.Clean(header.Name)] = true
+	}
+	return filepath.Walk(filepath.Join(packageDir, "assets"), func(current string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(filepath.Join(packageDir, "assets"), current)
+		if err != nil || !expected[rel] {
+			return fmt.Errorf("unexpected extracted asset %q", rel)
+		}
+		return nil
+	})
+}
+
+// RemovePackage thaws a service-owned immutable tree before deletion.
+func RemovePackage(root string) error {
+	if err := filepath.Walk(root, func(current string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.IsDir() {
+			return os.Chmod(current, 0o755)
+		}
+		return os.Chmod(current, 0o644)
+	}); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.RemoveAll(root)
+}
+
 // VerifyLayout checks that every descriptor target exists with the exact
 // digest and size the descriptor promises.
 func VerifyLayout(dir string) error {
+	layoutRaw, err := os.ReadFile(path.Join(dir, "oci-layout"))
+	if err != nil || strings.TrimSpace(string(layoutRaw)) != `{"imageLayoutVersion":"1.0.0"}` {
+		return fmt.Errorf("invalid oci-layout")
+	}
 	idxRaw, err := os.ReadFile(path.Join(dir, "index.json"))
 	if err != nil {
 		return fmt.Errorf("layout index: %w", err)
+	}
+	if len(idxRaw) > MaxConfigBytes {
+		return fmt.Errorf("layout index exceeds size limit")
 	}
 	var idx ociIndex
 	if err := json.Unmarshal(idxRaw, &idx); err != nil {
@@ -242,27 +464,41 @@ func VerifyLayout(dir string) error {
 	if err := json.Unmarshal(manifestRaw, &man); err != nil {
 		return fmt.Errorf("manifest: %w", err)
 	}
+	if man.ArtifactType != ArtifactType || man.Config.MediaType != ConfigMediaType ||
+		len(man.Layers) != 1 || man.Layers[0].MediaType != LayerMediaType {
+		return fmt.Errorf("recipe package must contain one config and exactly one asset layer")
+	}
 	if err := readBlob(dir, man.Config); err != nil {
 		return fmt.Errorf("config blob: %w", err)
 	}
-	for _, l := range man.Layers {
-		if err := readBlob(dir, l); err != nil {
-			return fmt.Errorf("layer blob: %w", err)
-		}
+	if err := readBlob(dir, man.Layers[0]); err != nil {
+		return fmt.Errorf("layer blob: %w", err)
 	}
 	return nil
 }
 
 var sha256DigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// readBlob verifies one blob against its descriptor. The digest is matched
-// against the exact OCI form before it is used as a file name, so a
-// malformed or crafted descriptor cannot panic or escape the blob dir.
+// readBlob verifies one bounded blob against its descriptor.
 func readBlob(dir string, d ociDescriptor) error {
 	if !sha256DigestRE.MatchString(d.Digest) {
 		return fmt.Errorf("invalid blob digest %q", d.Digest)
 	}
+	max := int64(MaxConfigBytes)
+	if d.MediaType == LayerMediaType {
+		max = MaxCompressedLayerBytes
+	}
+	if d.Size < 0 || d.Size > max {
+		return fmt.Errorf("blob %s exceeds size limit", d.Digest)
+	}
 	p := path.Join(dir, "blobs", "sha256", d.Digest[len("sha256:"):])
+	info, err := os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("blob %s: %w", d.Digest, err)
+	}
+	if info.Size() > max || info.Size() != d.Size {
+		return fmt.Errorf("blob %s size mismatch", d.Digest)
+	}
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		return fmt.Errorf("blob %s: %w", d.Digest, err)
@@ -270,9 +506,6 @@ func readBlob(dir string, d ociDescriptor) error {
 	sum := sha256.Sum256(raw)
 	if "sha256:"+hex.EncodeToString(sum[:]) != d.Digest {
 		return fmt.Errorf("blob %s digest mismatch", d.Digest)
-	}
-	if d.Size > 0 && int64(len(raw)) != d.Size {
-		return fmt.Errorf("blob %s size mismatch", d.Digest)
 	}
 	return nil
 }
@@ -386,12 +619,17 @@ func ReadLayoutDigest(dir string) (string, error) {
 // UnpackLayer extracts a recipe asset layer (tar.gz) into dest, preserving
 // file modes and rejecting entries that escape dest.
 func UnpackLayer(layer []byte, dest string) error {
+	if len(layer) > MaxCompressedLayerBytes {
+		return packErr("recipe.layer_too_large", "", "compressed asset layer exceeds 64 MiB")
+	}
 	gz, err := gzip.NewReader(bytes.NewReader(layer))
 	if err != nil {
 		return err
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	files := 0
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -401,21 +639,37 @@ func UnpackLayer(layer []byte, dest string) error {
 			return err
 		}
 		clean := path.Clean(hdr.Name)
-		if clean == ".." || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") {
+		if clean == "." || clean != hdr.Name || clean == ".." || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") {
 			return fmt.Errorf("layer entry %q escapes destination", hdr.Name)
 		}
 		full := path.Join(dest, clean)
 		switch hdr.Typeflag {
 		case tar.TypeReg:
+			files++
+			if files > MaxAssetFiles {
+				return packErr("recipe.too_many_assets", "", "asset count exceeds 256")
+			}
+			if hdr.Size < 0 || hdr.Size > MaxAssetFileBytes {
+				return packErr("recipe.asset_too_large", hdr.Name, "asset exceeds 16 MiB")
+			}
+			total += hdr.Size
+			if total > MaxExtractedAssetBytes {
+				return packErr("recipe.assets_too_large", "", "assets exceed 128 MiB")
+			}
 			if err := os.MkdirAll(path.Dir(full), 0o755); err != nil {
 				return err
 			}
-			data, err := io.ReadAll(io.LimitReader(tr, 256<<20))
+			file, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o555)
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(full, data, 0o555); err != nil {
-				return err
+			_, copyErr := io.CopyN(file, tr, hdr.Size)
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
 			}
 		case tar.TypeDir:
 			if err := os.MkdirAll(full, 0o755); err != nil {

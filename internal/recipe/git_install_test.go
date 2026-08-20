@@ -43,7 +43,13 @@ kind: Recipe
 metadata:
   name: lmw-immutable-demo
   version: 1.0.0
+  displayName: Immutable demo
   description: Immutability proof package (v1).
+  license: Apache-2.0
+  source:
+    url: https://fixtures.local/immutable-demo
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts: []
@@ -56,7 +62,7 @@ workloads:
     args:
       - --flag
       - one
-    resources: {}
+    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
 assets:
   - serve.sh
 `
@@ -66,7 +72,13 @@ kind: Recipe
 metadata:
   name: lmw-immutable-demo
   version: 1.1.0
+  displayName: Immutable demo
   description: Immutability proof package (v2, source changed).
+  license: Apache-2.0
+  source:
+    url: https://fixtures.local/immutable-demo
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts: []
@@ -79,7 +91,7 @@ workloads:
     args:
       - --flag
       - two
-    resources: {}
+    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
 assets:
   - serve.sh
 `
@@ -101,7 +113,9 @@ func TestGitInstallImmutability(t *testing.T) {
 	t.Cleanup(func() { dbh.Close() })
 	q := db.New(dbh)
 	bus := events.NewEventBus(q)
-	svc, err := recipe.New(q, bus, v, "", t.TempDir())
+	packageRoot := filepath.Join(t.TempDir(), "recipes")
+	t.Cleanup(func() { _ = recipe.RemovePackage(packageRoot) })
+	svc, err := recipe.New(dbh, q, bus, v, "", t.TempDir(), packageRoot)
 	if err != nil {
 		t.Fatalf("recipe service: %v", err)
 	}
@@ -170,8 +184,8 @@ func TestGitInstallImmutability(t *testing.T) {
 		t.Fatalf("import @C1: %v", err)
 	}
 	d := rec.Digest
-	if d != res.ConfigDigest {
-		t.Fatalf("stored digest %q != packer config digest %q", d, res.ConfigDigest)
+	if d != res.ManifestDigest {
+		t.Fatalf("stored digest %q != packer manifest digest %q", d, res.ManifestDigest)
 	}
 	if rec.TrustState != recipe.TrustUntrusted {
 		t.Fatalf("git import must be untrusted, got %q", rec.TrustState)

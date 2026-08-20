@@ -95,6 +95,10 @@ func encodeRegistryAuth(auth *Auth) (string, error) {
 }
 
 func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string, error) {
+	if err := ValidateManagedSpec(spec); err != nil {
+		return "", err
+	}
+
 	cfg := &container.Config{
 		Image:      ImageRef(spec),
 		Hostname:   spec.Name,
@@ -110,6 +114,12 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 		CapDrop:        capDrops(spec.CapDrop),
 		ShmSize:        spec.ShmBytes,
 		RestartPolicy:  container.RestartPolicy{Name: "no"},
+	}
+	if spec.TmpfsBytes > 0 {
+		hostCfg.Tmpfs = map[string]string{
+			"/tmp": fmt.Sprintf("rw,exec,nosuid,nodev,size=%d", spec.TmpfsBytes),
+			"/run": "rw,nosuid,nodev,size=67108864",
+		}
 	}
 	if spec.NoNewPrivileges {
 		hostCfg.SecurityOpt = append(hostCfg.SecurityOpt, "no-new-privileges:true")
@@ -189,7 +199,7 @@ func (r *dockerRuntime) Inspect(ctx context.Context, idOrName string) (*Containe
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", idOrName, err)
 	}
-	ci := &ContainerInfo{ID: info.ID, Name: strings.TrimPrefix(info.Name, "/"), State: info.State.Status}
+	ci := &ContainerInfo{ID: info.ID, Name: strings.TrimPrefix(info.Name, "/"), State: info.State.Status, Labels: info.Config.Labels}
 	if info.State.ExitCode != 0 {
 		ci.ExitCode = info.State.ExitCode
 		ci.Error = info.State.Error

@@ -11,17 +11,21 @@
     "metadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version"],
+      "required": ["name", "version", "displayName", "description", "license", "source"],
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$" },
         "version": { "type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?(\\+([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?$" },
-        "displayName": { "type": "string", "maxLength": 120 },
-        "description": { "type": "string", "maxLength": 4000 },
-        "license": { "type": "string", "maxLength": 100 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "license": {
+          "type": "string",
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*( (AND|OR) [A-Za-z0-9][A-Za-z0-9.-]*)*( WITH [A-Za-z0-9][A-Za-z0-9.-]*)?$"
+        },
         "source": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["url"],
+          "required": ["url", "revision", "path"],
           "properties": {
             "url": { "type": "string", "format": "uri" },
             "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
@@ -267,11 +271,13 @@
         "resources": {
           "type": "object",
           "additionalProperties": false,
+          "required": ["cpu", "memoryBytes", "pids"],
           "properties": {
             "cpu": { "type": "number", "minimum": 0.1 },
             "memoryBytes": { "type": "integer", "minimum": 16777216 },
-            "shmBytes": { "type": "integer", "minimum": 67108864, "default": 67108864 },
-            "pids": { "type": "integer", "minimum": 64, "default": 1024 }
+            "shmBytes": { "type": "integer", "minimum": 67108864 },
+            "tmpfsBytes": { "type": "integer", "minimum": 67108864, "maximum": 34359738368 },
+            "pids": { "type": "integer", "minimum": 64 }
           }
         },
         "devices": {
@@ -296,7 +302,7 @@
             }
           }
         },
-        "networkMode": { "type": "string", "enum": ["bridge", "host", "none"], "default": "bridge" },
+        "networkMode": { "type": "string", "enum": ["bridge", "host", "none"], "default": "none" },
         "readiness": { "$ref": "#/$defs/probe" },
         "verify": { "$ref": "#/$defs/verifyProbe" },
         "ranks": {
@@ -319,7 +325,7 @@
       "type": "object",
       "additionalProperties": false,
       "description": "Strictly sandboxed prepare/verify helper container.",
-      "required": ["image", "command", "args"],
+      "required": ["image", "command", "args", "outputSchema"],
       "properties": {
         "image": {
           "type": "object",
@@ -340,7 +346,17 @@
         },
         "network": { "type": "string", "enum": ["none", "egress"], "default": "none" },
         "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 7200, "default": 900 },
-        "outputLimitBytes": { "type": "integer", "minimum": 4096, "maximum": 10485760, "default": 1048576 }
+        "outputLimitBytes": { "type": "integer", "minimum": 4096, "maximum": 10485760, "default": 1048576 },
+        "outputSchema": {
+          "type": "object",
+          "required": ["$schema", "type", "properties", "required"],
+          "properties": {
+            "$schema": { "const": "https://json-schema.org/draft/2020-12/schema" },
+            "type": { "const": "object" },
+            "properties": { "type": "object" },
+            "required": { "type": "array", "items": { "type": "string" }, "contains": { "const": "version" } }
+          }
+        }
       }
     }
   }

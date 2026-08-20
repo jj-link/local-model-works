@@ -32,6 +32,10 @@ import (
 	"strings"
 	"testing"
 
+	sigsign "github.com/sigstore/sigstore-go/pkg/sign"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	"github.com/jj-link/local-model-works/internal/artifactidentity"
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
@@ -60,15 +64,16 @@ func (offlineNodes) Online(string) bool                       { return false }
 // fixtureEnv wires the real validator, recipe store, and deploy service
 // against a fresh migrated database.
 type fixtureEnv struct {
-	ctx         context.Context
-	t           *testing.T
-	validator   *recipe.Validator
-	dbh         *sql.DB
-	q           *db.Queries
-	svc         *recipe.Service
-	dep         *deploy.Service
-	catalogRoot string
-	gitRepo     string // temp repo holding testdata/pass-git-pinned under "pkg"
+	ctx           context.Context
+	t             *testing.T
+	validator     *recipe.Validator
+	dbh           *sql.DB
+	q             *db.Queries
+	svc           *recipe.Service
+	dep           *deploy.Service
+	catalogRoot   string
+	catalogSigner *sigsign.EphemeralKeypair
+	gitRepo       string // temp repo holding testdata/pass-git-pinned under "pkg"
 }
 
 func newFixtureEnv(t *testing.T) *fixtureEnv {
@@ -86,7 +91,21 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 		t.Fatalf("validator: %v", err)
 	}
 	catalogRoot := t.TempDir()
-	svc, err := recipe.New(q, bus, v, "", catalogRoot)
+	signer, err := sigsign.NewEphemeralKeypair(nil)
+	if err != nil {
+		t.Fatalf("catalog signer: %v", err)
+	}
+	publicKey, err := signer.GetPublicKeyPem()
+	if err != nil {
+		t.Fatalf("catalog public key: %v", err)
+	}
+	trustPath := filepath.Join(t.TempDir(), "trust.pem")
+	if err := os.WriteFile(trustPath, []byte(publicKey), 0o600); err != nil {
+		t.Fatalf("catalog trust key: %v", err)
+	}
+	packageRoot := filepath.Join(t.TempDir(), "recipes")
+	t.Cleanup(func() { _ = recipe.RemovePackage(packageRoot) })
+	svc, err := recipe.New(dbh, q, bus, v, trustPath, catalogRoot, packageRoot)
 	if err != nil {
 		t.Fatalf("recipe service: %v", err)
 	}
@@ -130,7 +149,10 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 		t.Fatalf("rev-parse: %v", err)
 	}
 	_ = rev
-	return &fixtureEnv{ctx: ctx, t: t, validator: v, dbh: dbh, q: q, svc: svc, dep: dep, catalogRoot: catalogRoot, gitRepo: repo}
+	return &fixtureEnv{
+		ctx: ctx, t: t, validator: v, dbh: dbh, q: q, svc: svc, dep: dep,
+		catalogRoot: catalogRoot, catalogSigner: signer, gitRepo: repo,
+	}
 }
 
 func (e *fixtureEnv) gitHead(t *testing.T) string {
@@ -306,29 +328,73 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		if err := json.Unmarshal(rec.Source, &src); err != nil {
 			t.Fatalf("source: %v", err)
 		}
-		if src.Revision != rev || src.Tree != rev {
-			t.Fatalf("import must record the full 40-hex commit; got revision=%q tree=%q want %q", src.Revision, src.Tree, rev)
+		tree, err := gitOutput(t, env.gitRepo, "rev-parse", "HEAD^{tree}")
+		if err != nil {
+			t.Fatalf("tree: %v", err)
+		}
+		if src.Revision != rev || src.Tree != tree {
+			t.Fatalf("import provenance: revision=%q tree=%q, want revision=%q tree=%q", src.Revision, src.Tree, rev, tree)
 		}
 	case "catalog":
 		m, res, err := recipe.PackFromDir(dir, env.validator)
 		if err != nil {
 			t.Fatalf("pack: %v", err)
 		}
-		layoutDir := filepath.Join(env.catalogRoot, m.Metadata.Name)
+		layoutDir := filepath.Join(env.catalogRoot, "packages", m.Metadata.Name)
 		if err := recipe.WriteLayout(layoutDir, res); err != nil {
 			t.Fatalf("layout: %v", err)
 		}
-		rec, err := env.svc.Import(env.ctx, recipe.RecipeSource{
-			Type: "catalog", Reference: m.Metadata.Name,
-		})
+		index := map[string]any{
+			"apiVersion": "localmodelworks/v1alpha1",
+			"kind":       "RecipeCatalog",
+			"metadata":   map[string]any{"name": "test-catalog"},
+			"recipes": []any{map[string]any{
+				"name": m.Metadata.Name, "version": m.Metadata.Version, "summary": "fixture",
+				"oci": map[string]any{"reference": "file://" + layoutDir, "digest": res.ManifestDigest},
+			}},
+		}
+		indexJSON, err := json.Marshal(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := recipe.Canonical(indexJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := sigsign.Bundle(&sigsign.PlainData{Data: canonical}, env.catalogSigner, sigsign.BundleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundleJSON, err := protojson.Marshal(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.json"), indexJSON, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.sigstore.json"), bundleJSON, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := env.svc.Import(env.ctx, recipe.RecipeSource{Type: "catalog", Reference: m.Metadata.Name})
 		if err != nil {
 			t.Fatalf("catalog import: %v", err)
 		}
-		if rec.Digest != res.ConfigDigest {
-			t.Fatalf("digest %q != packed config digest %q", rec.Digest, res.ConfigDigest)
+		if rec.Digest != res.ManifestDigest {
+			t.Fatalf("digest %q != packed manifest digest %q", rec.Digest, res.ManifestDigest)
 		}
-		if rec.TrustState != recipe.TrustLocal {
-			t.Fatalf("catalog import must store local, got %q", rec.TrustState)
+		if rec.TrustState != recipe.TrustVerified {
+			t.Fatalf("signed catalog import must be verified, got %q", rec.TrustState)
+		}
+		for _, artifact := range m.Artifacts {
+			identity, err := artifactidentity.Canonical(
+				artifact.Source.Type, artifact.Source.Identity, artifact.Source.Revision, artifact.Source.Digest,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := env.q.GetArtifactByIdentity(env.ctx, identity); err != nil {
+				t.Fatalf("installed recipe did not upsert artifact %s: %v", identity, err)
+			}
 		}
 	case "trust":
 		doc := loadDoc(t, dir)
@@ -365,7 +431,51 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		if plan == nil || plan.Ready {
 			t.Fatalf("empty-fleet plan must be not-ready, got %+v", plan)
 		}
+
 	default:
 		t.Fatalf("unknown fixture kind %q", fc.Kind)
+	}
+}
+func TestCatalogRejectsTamperedSignedIndex(t *testing.T) {
+	env := newFixtureEnv(t)
+	index := map[string]any{
+		"apiVersion": "localmodelworks/v1alpha1",
+		"kind":       "RecipeCatalog",
+		"metadata":   map[string]any{"name": "signed-catalog"},
+		"recipes": []any{map[string]any{
+			"name": "catalog-demo", "version": "1.0.0", "summary": "signed",
+			"oci": map[string]any{
+				"reference": "registry.example.test/lmw/catalog-demo",
+				"digest":    "sha256:" + strings.Repeat("a", 64),
+			},
+		}},
+	}
+	indexJSON, err := json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := recipe.Canonical(indexJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := sigsign.Bundle(&sigsign.PlainData{Data: canonical}, env.catalogSigner, sigsign.BundleOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleJSON, err := protojson.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.sigstore.json"), bundleJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index["metadata"] = map[string]any{"name": "tampered-catalog"}
+	tampered, _ := json.Marshal(index)
+	if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.json"), tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.svc.Import(env.ctx, recipe.RecipeSource{Type: "catalog", Reference: "catalog-demo"}); err == nil ||
+		!strings.Contains(err.Error(), "catalog signature") {
+		t.Fatalf("tampered catalog error = %v", err)
 	}
 }

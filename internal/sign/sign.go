@@ -1,34 +1,24 @@
-// Package sign verifies recipe package signatures. A signature blob is
-// JSON: {"alg": "Ed25519", "key_fingerprint": "sha256:<hex>", "signature":
-// "<base64>"} where the signature covers the canonical recipe document
-// (the package config blob) and key_fingerprint identifies the signing
-// key for audit.
+// Package sign verifies key-signed Sigstore bundles for recipe packages and catalogs.
 package sign
 
 import (
+	"bytes"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"time"
+
+	sigbundle "github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
+	"github.com/sigstore/sigstore/pkg/signature"
 )
 
-// SignatureBlob is one detached signature.
-type SignatureBlob struct {
-	Alg            string `json:"alg"`
-	KeyFingerprint string `json:"key_fingerprint"`
-	Signature      string `json:"signature"`
-}
-
-// NewKeyPEM generates a fresh Ed25519 key pair and returns the PEM PKIX
-// public key for recipe/catalog signature verification. The private key is
-// discarded: server-side verification only needs the public half. Products
-// that sign recipes keep their own key; this materializes a key for a new
-// control plane whose operator has not yet configured one.
+// NewKeyPEM generates a fresh Ed25519 verification key. Production catalogs
+// and recipe publishers retain the corresponding private key outside LMW.
 func NewKeyPEM() ([]byte, error) {
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -41,50 +31,40 @@ func NewKeyPEM() ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), nil
 }
 
-// VerifyEd25519 checks sigJSON over doc against the PEM public key.
-func VerifyEd25519(sigJSON, doc, keyPEM []byte) error {
-	var sig SignatureBlob
-	if err := unmarshal(sigJSON, &sig); err != nil {
-		return fmt.Errorf("signature blob: %w", err)
+// VerifyBundle verifies a Sigstore JSON bundle over artifact with the
+// configured PEM public key. It is deliberately offline: key-signed bundles
+// need neither Fulcio nor Rekor and must not trigger network access.
+func VerifyBundle(bundleJSON, artifact, keyPEM []byte) error {
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return fmt.Errorf("trust key: no PEM block found")
 	}
-	if sig.Alg != "Ed25519" {
-		return fmt.Errorf("unsupported algorithm %q", sig.Alg)
-	}
-	raw, err := base64.StdEncoding.DecodeString(sig.Signature)
-	if err != nil {
-		return fmt.Errorf("signature encoding: %w", err)
-	}
-	pub, err := parsePublicKey(keyPEM)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return fmt.Errorf("trust key: %w", err)
 	}
-	fp := sha256.Sum256(pub)
-	want := "sha256:" + hex.EncodeToString(fp[:])
-	if sig.KeyFingerprint != "" && sig.KeyFingerprint != want {
-		return fmt.Errorf("key fingerprint mismatch: blob %s, configured %s", sig.KeyFingerprint, want)
+	keyVerifier, err := signature.LoadVerifier(publicKey, crypto.SHA256)
+	if err != nil {
+		return fmt.Errorf("trust key: %w", err)
 	}
-	if !ed25519.Verify(pub, doc, raw) {
-		return fmt.Errorf("signature does not validate")
+	expiringKey := root.NewExpiringKey(keyVerifier, time.Time{}, time.Time{})
+	trusted := root.NewTrustedPublicKeyMaterial(func(string) (root.TimeConstrainedVerifier, error) {
+		return expiringKey, nil
+	})
+	verifier, err := verify.NewVerifier(trusted, verify.WithNoObserverTimestamps())
+	if err != nil {
+		return fmt.Errorf("sigstore verifier: %w", err)
+	}
+	var bundle sigbundle.Bundle
+	if err := bundle.UnmarshalJSON(bundleJSON); err != nil {
+		return fmt.Errorf("sigstore bundle: %w", err)
+	}
+	_, err = verifier.Verify(&bundle, verify.NewPolicy(
+		verify.WithArtifact(bytes.NewReader(artifact)),
+		verify.WithKey(),
+	))
+	if err != nil {
+		return fmt.Errorf("sigstore verification: %w", err)
 	}
 	return nil
-}
-
-func parsePublicKey(pemBytes []byte) (ed25519.PublicKey, error) {
-	block, _ := pem.Decode(pemBytes)
-	if block == nil {
-		return nil, fmt.Errorf("no PEM block found")
-	}
-	pk, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	ed, ok := pk.(ed25519.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("key is %T, want ed25519", pk)
-	}
-	return ed, nil
-}
-
-func unmarshal(b []byte, v any) error {
-	return json.Unmarshal(b, v)
 }

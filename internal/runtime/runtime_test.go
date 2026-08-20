@@ -51,3 +51,19 @@ func TestRegistryAuthEncoding(t *testing.T) {
 		t.Fatalf("decoded auth = %+v, want u/p", cfg)
 	}
 }
+
+func TestValidateManagedSpec(t *testing.T) {
+	valid := &ContainerSpec{Labels: ManagedLabels("deployment", "run", "recipe", "1.0.0", 0, "serving")}
+	if err := ValidateManagedSpec(valid); err != nil {
+		t.Fatalf("valid spec: %v", err)
+	}
+	for name, spec := range map[string]*ContainerSpec{
+		"unmanaged": {},
+		"identity":  {Labels: map[string]string{LabelManaged: "true", LabelRank: "0"}},
+		"rank":      {Labels: map[string]string{LabelManaged: "true", LabelRun: "run", LabelRank: "bad"}},
+	} {
+		if err := ValidateManagedSpec(spec); err == nil {
+			t.Fatalf("%s spec unexpectedly accepted", name)
+		}
+	}
+}

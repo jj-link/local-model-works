@@ -35,8 +35,8 @@ func New(env *moduleapi.Env) moduleapi.Module { return &Module{env: env} }
 
 func (m *Module) Descriptor() moduleapi.Descriptor { return descriptor }
 
-// RegisterJobs: the settings module renders state other modules produce.
-func (m *Module) RegisterJobs(*jobs.Registry) {}
+// RegisterJobs installs resumable, digest-gated migration operations.
+func (m *Module) RegisterJobs(reg *jobs.Registry) { m.registerMigrationJobs(reg) }
 
 // RegisterSettings: the settings module has an empty settingsSchema, so it
 // registers nothing.
@@ -44,11 +44,7 @@ func (m *Module) RegisterSettings(*settings.Registry) {}
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Get("/modules/{id}/settings", m.getModuleSettings)
-	r.Put("/modules/{id}/settings", m.putModuleSettings)
-	r.Get("/secrets", m.listSecrets)
-	r.Post("/secrets", m.putSecret)
-	r.Delete("/secrets/{id}", m.deleteSecret)
+	HandlerFromMux(m, r)
 }
 
 // secretVersion is the authenticated-data version bound into every sealed

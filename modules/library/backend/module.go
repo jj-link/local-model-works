@@ -25,6 +25,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/settings"
 )
 
@@ -82,6 +83,18 @@ var importOutputSchema = json.RawMessage(`{
   }
 }`)
 
+var draftInputSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "required":["remote","revision"],"additionalProperties":false,
+  "properties":{"remote":{"type":"string","minLength":1},"revision":{"type":"string","minLength":1},"path":{"type":"string"}}
+}`)
+var draftOutputSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "required":["id","version","state"],"properties":{
+    "id":{"type":"string"},"version":{"type":"integer"},"state":{"type":"string"}
+  }
+}`)
+
 // RegisterJobs declares the recipe-import job: the same import path as the
 // synchronous POST /recipes/import handler (shared importRecipe). A
 // registration failure means the frozen manifest schema failed to compile
@@ -95,6 +108,12 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 		Executor:     m.importJob,
 	}); err != nil {
 		panic(fmt.Sprintf("library jobs: %v", err))
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-draft", Title: "Inspect recipe source",
+		InputSchema: draftInputSchema, OutputSchema: draftOutputSchema, Executor: m.draftJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library draft job: %v", err))
 	}
 }
 
@@ -121,6 +140,23 @@ func (m *Module) importJob(ctx context.Context, c *jobs.Context) (map[string]any
 	return out, nil
 }
 
+func (m *Module) draftJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	source := recipebuilder.GitSource{}
+	raw, _ := json.Marshal(job.Input)
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return nil, err
+	}
+	job.Logf("inspecting pinned Git source %s at %s", source.Remote, source.Revision)
+	draft, err := m.env.RecipeBuilder.CreateFromGit(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	output := map[string]any{}
+	raw, _ = json.Marshal(draft)
+	_ = json.Unmarshal(raw, &output)
+	return output, nil
+}
+
 // RegisterSettings declares the operator settings (catalog URLs, local
 // auto-trust) from the manifest's frozen schema; a compile failure is a
 // wiring bug.
@@ -132,17 +168,7 @@ func (m *Module) RegisterSettings(reg *settings.Registry) {
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Get("/recipes", m.listRecipes)
-	r.Post("/recipes/import", m.importRecipeHandler)
-	r.Get("/recipes/{digest}", m.getRecipe)
-	r.Delete("/recipes/{digest}", m.deleteRecipe)
-	r.Post("/recipes/{digest}/trust", m.setRecipeTrust)
-	r.Get("/artifacts", m.listArtifacts)
-	r.Get("/artifacts/{id}/placements", m.listArtifactPlacements)
-	r.Post("/transfers", m.createTransfer)
-	r.Get("/transfers", m.listTransfers)
-	r.Get("/transfers/{id}", m.getTransfer)
-	r.Delete("/transfers/{id}", m.cancelTransfer)
+	HandlerFromMux(m, r)
 }
 
 // importRecipe installs one recipe from its source. It is shared by the

@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -14,14 +16,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/jj-link/local-model-works/internal/artifactidentity"
 	"github.com/jj-link/local-model-works/internal/auth"
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
@@ -66,6 +69,7 @@ func (s *Server) StartAgentListener(ctx context.Context) (string, error) {
 			next.ServeHTTP(w, r)
 		})
 	})
+	mux.Get("/packages/{digest}/layer", s.handlePackageLayer)
 	if p, h := agentv1connect.NewEnrollmentServiceHandler(s); p != "" {
 		mux.Mount(p, h)
 	}
@@ -379,11 +383,9 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			}
 		case *agentv1.AgentMessage_Telemetry:
 			t := body.Telemetry
-			ts := t.GetAt().AsTime().Unix()
-			ts -= ts % 5
 			data, err := json.Marshal(t)
 			if err == nil {
-				_ = s.q.InsertTelemetry5s(ctx, db.InsertTelemetry5sParams{NodeID: nodeID, Ts: ts, Payload: string(data)})
+				_ = s.telemetry.Ingest(ctx, nodeID, t.GetAt().AsTime(), data)
 			}
 		case *agentv1.AgentMessage_CommandResult:
 			s.bus.Publish(ctx, "run.command_result", nodeID, mustJSON(body.CommandResult))
@@ -420,6 +422,7 @@ func (s *Server) markOffline(ctx context.Context, nodeID string) {
 			return
 		}
 		s.bus.Publish(ctx, "node.offline", nodeID, nil)
+		s.deploys.MarkNodeOffline(ctx, nodeID)
 	}
 }
 
@@ -491,29 +494,50 @@ func (s *Server) appendLog(nodeID string, lc *agentv1.LogChunk) {
 // identity (its transfer-gate keys are identity-based).
 func (s *Server) applyPlacementReport(ctx context.Context, nodeID string, pr *agentv1.PlacementReport) {
 	identity := pr.GetArtifactId()
+	parsed, err := artifactidentity.Parse(identity)
+	if err != nil {
+		s.bus.Publish(ctx, "artifact.placement.rejected", nodeID, mustJSON(map[string]any{
+			"identity": identity, "error": err.Error(),
+		}))
+		return
+	}
 	art, err := s.q.GetArtifactByIdentity(ctx, identity)
-	if err == nil {
-		verified := sql.NullString{}
-		if v := pr.GetVerifiedAt(); v != nil && !v.AsTime().IsZero() {
-			verified = sql.NullString{String: dbTime(v.AsTime()), Valid: true}
-		}
-		diagnostics := make([]map[string]any, 0, len(pr.GetDiagnostics()))
-		for _, d := range pr.GetDiagnostics() {
-			diagnostics = append(diagnostics, map[string]any{
-				"code": d.GetCode(), "severity": d.GetSeverity(), "message": d.GetMessage(),
-			})
-		}
-		dj, _ := json.Marshal(diagnostics)
-		if err := s.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
-			ArtifactID: art.ID, NodeID: nodeID, Path: pr.GetPath(), State: pr.GetState(),
-			VerifiedAt: verified, Diagnostics: string(dj), SizeBytes: int64(pr.GetSizeBytes()),
+	if errors.Is(err, sql.ErrNoRows) {
+		sum := sha256.Sum256([]byte(identity))
+		if err := s.q.CreateArtifact(ctx, db.CreateArtifactParams{
+			ID: "artifact-" + hex.EncodeToString(sum[:8]), Kind: parsed.Kind, Identity: identity,
+			Revision: optionalSQLString(parsed.Revision), Digest: optionalSQLString(parsed.Digest), Metadata: "{}",
 		}); err != nil {
-			s.bus.Publish(ctx, "artifact.placement", nodeID, mustJSON(pr))
 			return
 		}
+		art, err = s.q.GetArtifactByIdentity(ctx, identity)
+	}
+	if err != nil {
+		return
+	}
+	verified := sql.NullString{}
+	if v := pr.GetVerifiedAt(); v != nil && !v.AsTime().IsZero() {
+		verified = sql.NullString{String: dbTime(v.AsTime()), Valid: true}
+	}
+	diagnostics := make([]map[string]any, 0, len(pr.GetDiagnostics()))
+	for _, d := range pr.GetDiagnostics() {
+		diagnostics = append(diagnostics, map[string]any{
+			"code": d.GetCode(), "severity": d.GetSeverity(), "message": d.GetMessage(),
+		})
+	}
+	dj, _ := json.Marshal(diagnostics)
+	if err := s.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
+		ArtifactID: art.ID, NodeID: nodeID, Path: pr.GetPath(), State: pr.GetState(),
+		VerifiedAt: verified, Diagnostics: string(dj), SizeBytes: int64(pr.GetSizeBytes()),
+	}); err != nil {
+		return
 	}
 	s.bus.Publish(ctx, "artifact.placement", nodeID, mustJSON(pr))
 	s.deploys.OnPlacementReport(ctx, nodeID, identity, pr.GetState())
+}
+
+func optionalSQLString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
 }
 
 func (s *Server) applyTransferProgress(ctx context.Context, nodeID string, tp *agentv1.TransferProgress) {

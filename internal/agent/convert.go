@@ -3,6 +3,7 @@ package agent
 import (
 	"github.com/jj-link/local-model-works/internal/hardware"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // toProtoInventory renders the hardware inventory for the wire.
@@ -63,6 +64,7 @@ func toProtoInventory(inv hardware.Inventory) *agentv1.Inventory {
 // toProtoTelemetry renders one telemetry sample for the wire.
 func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 	out := &agentv1.Telemetry{
+		At: timestamppb.Now(),
 		Cpu: &agentv1.CpuTelemetry{
 			UsagePercent: t.CPUUsagePercent,
 			Cores:        t.CPUCores,

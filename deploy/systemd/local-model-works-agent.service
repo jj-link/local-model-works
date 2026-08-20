@@ -1,0 +1,28 @@
+[Unit]
+Description=Local Model Works node agent
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lmw-agent run
+EnvironmentFile=/etc/local-model-works/agent.env
+StateDirectory=local-model-works-agent
+StateDirectoryMode=0750
+RuntimeDirectory=local-model-works-agent
+UMask=0027
+Restart=always
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/local-model-works-agent
+
+[Install]
+WantedBy=multi-user.target

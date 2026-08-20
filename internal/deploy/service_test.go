@@ -15,6 +15,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/inventory"
 	"github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/runtime"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -73,6 +74,30 @@ func (f *fakeNodes) workloadCommands() []sentMsg {
 	for _, s := range f.msgs {
 		if s.msg.GetWorkloadCommand() != nil {
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (f *fakeNodes) artifactCommands() []sentMsg {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []sentMsg
+	for _, sent := range f.msgs {
+		if sent.msg.GetArtifactCommand() != nil {
+			out = append(out, sent)
+		}
+	}
+	return out
+}
+
+func (f *fakeNodes) extensionCommands() []sentMsg {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []sentMsg
+	for _, sent := range f.msgs {
+		if sent.msg.GetExtensionCommand() != nil {
+			out = append(out, sent)
 		}
 	}
 	return out
@@ -147,6 +172,25 @@ func (h *harness) seedRecipe(t *testing.T, digest, manifest string) {
 	}); err != nil {
 		t.Fatalf("create recipe: %v", err)
 	}
+	packageID := "package-" + strings.TrimPrefix(digest, "sha256:")
+	if err := h.q.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: packageID, Kind: "recipe", Identity: "recipe://" + digest,
+		Digest: nullString(digest), Metadata: "{}",
+	}); err != nil {
+		t.Fatalf("create recipe package artifact: %v", err)
+	}
+	nodes, err := h.q.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range nodes {
+		if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
+			ArtifactID: packageID, NodeID: node.ID, Path: "/var/lib/lmw/recipes/" + digest,
+			State: "valid", Diagnostics: "[]",
+		}); err != nil {
+			t.Fatalf("seed recipe package placement: %v", err)
+		}
+	}
 }
 
 func (h *harness) seedArtifact(t *testing.T, id, identity string) {
@@ -178,6 +222,7 @@ const noArtifactManifest = `{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
 		"args": ["--port", "8000"],
+		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
 	}]
@@ -190,6 +235,7 @@ const gpuManifest = `{
 	"workloads": [{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
+		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
 		"devices": {"accelerator": {"all": true}},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
@@ -202,13 +248,14 @@ const artifactManifest = `{
 	"metadata": {"name": "test-serve", "version": "1"},
 	"artifacts": [{
 		"name": "model", "kind": "model",
-		"source": {"type": "local", "identity": "local://test-model"},
+		"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		"mount": "/var/lib/lmw/artifacts/model"
 	}],
 	"workloads": [{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
 		"args": ["--model", "{{ .Artifacts.model }}"],
+		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
 	}]
@@ -223,6 +270,162 @@ func (h *harness) createDeployment(t *testing.T, digest string, overrides ...Pla
 		t.Fatalf("create: %v", err)
 	}
 	return dep
+}
+
+func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"hard","version":"1"},
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":["--node","${node.id}","--addr","${node.address}"],
+	    "resources":{"cpu":2,"memoryBytes":33554432,"tmpfsBytes":67108864,"pids":128}
+	  }]
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "node-exact", nil, "")
+	h.seedRecipe(t, "recipe-hard", manifest)
+	h.createDeployment(t, "recipe-hard", PlacementOverride{NodeID: "node-exact", Rank: 0})
+	commands := h.nodes.workloadCommands()
+	if len(commands) != 1 {
+		t.Fatalf("workload commands = %d", len(commands))
+	}
+	var spec runtime.ContainerSpec
+	if err := json.Unmarshal(commands[0].msg.GetWorkloadCommand().GetContainerSpec(), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.NetworkMode != "none" || !spec.ReadonlyRootfs || !spec.NoNewPrivileges ||
+		len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" ||
+		spec.CPU != 2 || spec.MemoryBytes != 33554432 || spec.PidsLimit != 128 || spec.TmpfsBytes != 67108864 {
+		t.Fatalf("hardened spec = %+v", spec)
+	}
+	if len(spec.Cmd) < 4 || spec.Cmd[1] != "node-exact" {
+		t.Fatalf("rendered node arguments = %v", spec.Cmd)
+	}
+}
+
+func TestExtensionCommandsBracketWorkload(t *testing.T) {
+	extension := `{
+	  "image":{"reference":"helper:v1","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	  "command":["helper"],"args":[],"outputSchema":{
+	    "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+	    "properties":{"version":{"type":"integer"}},"required":["version"]
+	  }
+	}`
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"extensions","version":"1"},
+	  "workloads":[{
+	    "image":{"reference":"workload:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	  }],"prepare":` + extension + `,"verify":` + extension + `
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "node", nil, "")
+	h.seedRecipe(t, "recipe-extensions", manifest)
+	deployment := h.createDeployment(t, "recipe-extensions", PlacementOverride{NodeID: "node", Rank: 0})
+	extensions := h.nodes.extensionCommands()
+	if len(extensions) != 1 || extensions[0].msg.GetExtensionCommand().GetPhase() != "prepare" ||
+		len(h.nodes.workloadCommands()) != 0 {
+		t.Fatalf("initial commands extensions=%d workloads=%d", len(extensions), len(h.nodes.workloadCommands()))
+	}
+	prepare := extensions[0].msg.GetExtensionCommand()
+	var prepareSpec runtime.ContainerSpec
+	if err := json.Unmarshal(prepare.GetContainerSpec(), &prepareSpec); err != nil {
+		t.Fatal(err)
+	}
+	if prepareSpec.NetworkMode != "none" || !prepareSpec.ReadonlyRootfs || !prepareSpec.NoNewPrivileges ||
+		prepareSpec.Labels[runtime.LabelModule] != "extension" {
+		t.Fatalf("prepare sandbox = %+v", prepareSpec)
+	}
+	h.svc.mu.Lock()
+	h.svc.inflight = map[string]*inflightCmd{}
+	h.svc.mu.Unlock()
+	// A reconnect while prepare is in progress re-drives the idempotent helper.
+	h.svc.dispatchNext(context.Background(), deployment.ID, 0, h.svc.runIDFor(context.Background(), deployment.ID), h.svc.placementFor(context.Background(), deployment.ID, 0))
+	extensions = h.nodes.extensionCommands()
+	if len(extensions) != 2 || extensions[1].msg.GetExtensionCommand().GetPhase() != "prepare" {
+		t.Fatalf("prepare recovery commands = %+v", extensions)
+	}
+	prepare = extensions[1].msg.GetExtensionCommand()
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
+		CommandId: prepare.GetCommandId(), Ok: true, OutputJson: []byte(`{\"version\":1}`),
+	})
+	workloads := h.nodes.workloadCommands()
+	if len(workloads) != 1 || workloads[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+		t.Fatalf("workloads after prepare = %+v", workloads)
+	}
+	for _, operation := range []agentv1.WorkloadOp{
+		agentv1.WorkloadOp_WORKLOAD_OP_PULL,
+		agentv1.WorkloadOp_WORKLOAD_OP_CREATE,
+		agentv1.WorkloadOp_WORKLOAD_OP_START,
+	} {
+		commands := h.nodes.workloadCommands()
+		command := commands[len(commands)-1].msg.GetWorkloadCommand()
+		if command.GetOp() != operation {
+			t.Fatalf("operation = %s, want %s", command.GetOp(), operation)
+		}
+		h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+	}
+	extensions = h.nodes.extensionCommands()
+	if len(extensions) != 3 || extensions[2].msg.GetExtensionCommand().GetPhase() != "verify" {
+		t.Fatalf("verify extension commands = %+v", extensions)
+	}
+	verify := extensions[2].msg.GetExtensionCommand()
+	h.svc.mu.Lock()
+	h.svc.inflight = map[string]*inflightCmd{}
+	h.svc.mu.Unlock()
+	h.svc.dispatchNext(context.Background(), deployment.ID, 0, h.svc.runIDFor(context.Background(), deployment.ID), h.svc.placementFor(context.Background(), deployment.ID, 0))
+	extensions = h.nodes.extensionCommands()
+	if len(extensions) != 4 || extensions[3].msg.GetExtensionCommand().GetPhase() != "verify" {
+		t.Fatalf("verify recovery commands = %+v", extensions)
+	}
+	verify = extensions[3].msg.GetExtensionCommand()
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
+		CommandId: verify.GetCommandId(), Ok: true, OutputJson: []byte(`{\"version\":1}`),
+	})
+	if got := ParseDispatch(deploymentRow(t, h, deployment.ID).Dispatch).Get(0); got != PhaseStarted {
+		t.Fatalf("phase after verify = %s", got)
+	}
+	h.svc.setPhase(context.Background(), deployment.ID, 0, PhaseVerifying)
+	if _, err := h.svc.Stop(context.Background(), deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	extensions = h.nodes.extensionCommands()
+	stopExtension := extensions[len(extensions)-1].msg.GetExtensionCommand()
+	if stopExtension.GetPhase() != "stop" {
+		t.Fatalf("extension stop = %+v", stopExtension)
+	}
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: stopExtension.GetCommandId(), Ok: true})
+	workloads = h.nodes.workloadCommands()
+	if got := workloads[len(workloads)-1].msg.GetWorkloadCommand().GetOp(); got != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("workload operation after extension stop = %s", got)
+	}
+}
+
+func TestVariantSelectionUsesActuallyPlacedAccelerator(t *testing.T) {
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"variant","version":"1"},
+	  "compatibility":{"nodeCount":1,"accelerator":{"vendor":"nvidia","count":1}},
+	  "workloads":[
+	    {"match":{"accelerator":{"vendor":"nvidia","architectures":["sm_120"]}},
+	     "image":{"reference":"sm120:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	     "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}},
+	    {"image":{"reference":"fallback:v1","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	     "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}}
+	  ]
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "heterogeneous", []inventory.Accelerator{
+		{Index: 0, UUID: "gpu-old", Vendor: "nvidia", Architecture: "sm_90", MemoryBytes: 16 << 30},
+		{Index: 1, UUID: "gpu-match", Vendor: "nvidia", Architecture: "sm_120", MemoryBytes: 16 << 30},
+	}, "")
+	h.seedRecipe(t, "recipe-variant", manifest)
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{RecipeDigest: "recipe-variant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.WorkloadIndex != 0 || len(plan.Placements) != 1 || plan.Placements[0].AcceleratorUUID != "gpu-match" {
+		t.Fatalf("variant plan = %+v", plan)
+	}
 }
 
 func deploymentRow(t *testing.T, h *harness, depID string) db.GetDeploymentRow {
@@ -308,14 +511,49 @@ func TestPlanCreatePersistsWorkloadIndex(t *testing.T) {
 	}
 }
 
+func TestHFOriginFetchIsPreparableAndDispatched(t *testing.T) {
+	revision := strings.Repeat("a", 40)
+	identity := "hf://Acme/Model@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
+	)
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedArtifact(t, "hf-artifact", identity)
+	h.seedRecipe(t, "recipe-origin", manifest)
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-origin", Placements: []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
+		t.Fatalf("origin plan = %+v, err=%v", plan, err)
+	}
+	deployment := h.createDeployment(t, "recipe-origin", PlacementOverride{NodeID: "dest", Rank: 0})
+	commands := h.nodes.artifactCommands()
+	if len(commands) != 1 || commands[0].nodeID != "dest" ||
+		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
+		t.Fatalf("artifact commands = %+v", commands)
+	}
+	if len(h.nodes.workloadCommands()) != 0 {
+		t.Fatal("workload dispatched before origin placement validation")
+	}
+	command := commands[0].msg.GetArtifactCommand()
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: false, Error: "origin unavailable"})
+	row := deploymentRow(t, h, deployment.ID)
+	if row.ObservedState != "failed" || !strings.Contains(row.Diagnostics, "artifact.fetch_failed") {
+		t.Fatalf("deployment after artifact failure = %+v", row)
+	}
+}
+
 // TestMissingArtifactGatesThenUnblocks: a rank whose node lacks a valid
 // placement is gated; a peer transfer is initiated; the destination's valid
 // placement report marks the transfer succeeded and re-drives dispatch.
 func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
-	const identity = "local://test-model"
+	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
-	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
 	h.seedArtifact(t, "art-1", identity)
 	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
 	h.seedRecipe(t, "recipe-art", artifactManifest)
@@ -336,18 +574,13 @@ func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
 		t.Fatalf("workload commands before gate passed: %+v", wcs)
 	}
 	tcs := h.nodes.transferCommands()
-	if len(tcs) != 2 {
-		t.Fatalf("transfer commands = %d, want 2 (dest+source)", len(tcs))
+	if len(tcs) != 1 {
+		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
 	}
-	roles := map[string]string{}
-	var tid string
-	for _, s := range tcs {
-		tc := s.msg.GetTransferCommand()
-		roles[s.nodeID] = tc.GetRole()
-		tid = tc.GetTransferId()
-	}
-	if roles["dest"] != "dest" || roles["src"] != "source" {
-		t.Fatalf("transfer roles = %+v", roles)
+	tc := tcs[0].msg.GetTransferCommand()
+	tid := tc.GetTransferId()
+	if tcs[0].nodeID != "dest" || tc.GetRole() != "dest" || tc.GetPeerAddress() != "100.86.3.45:4433" {
+		t.Fatalf("transfer command = node:%s command:%+v", tcs[0].nodeID, tc)
 	}
 	if state, _ := transferState(t, h, tid); state != "pending" {
 		t.Fatalf("transfer state = %s, want pending", state)
@@ -379,18 +612,18 @@ func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
 // TestInvalidPlacementFailsTransfer: a placement report with state != valid
 // marks the in-flight transfer failed and fails the affected rank.
 func TestInvalidPlacementFailsTransfer(t *testing.T) {
-	const identity = "local://test-model"
+	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
-	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
 	h.seedArtifact(t, "art-1", identity)
 	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
 	h.seedRecipe(t, "recipe-art", artifactManifest)
 
 	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
 	tcs := h.nodes.transferCommands()
-	if len(tcs) != 2 {
-		t.Fatalf("transfer commands = %d, want 2", len(tcs))
+	if len(tcs) != 1 {
+		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
 	}
 	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
 
@@ -409,18 +642,18 @@ func TestInvalidPlacementFailsTransfer(t *testing.T) {
 // TestFailedTransferAckFailsRank: a failed transfer ack marks the transfer
 // row failed and fails the affected rank's run.
 func TestFailedTransferAckFailsRank(t *testing.T) {
-	const identity = "local://test-model"
+	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "100.86.3.45:4433")
-	h.seedNode(t, "src", gpuAccs("s"), "")
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
 	h.seedArtifact(t, "art-1", identity)
 	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
 	h.seedRecipe(t, "recipe-art", artifactManifest)
 
 	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
 	tcs := h.nodes.transferCommands()
-	if len(tcs) != 2 {
-		t.Fatalf("transfer commands = %d, want 2", len(tcs))
+	if len(tcs) != 1 {
+		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
 	}
 	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
 

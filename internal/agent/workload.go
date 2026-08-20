@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"regexp"
 	"sync"
 	"time"
 
@@ -51,6 +53,8 @@ func newWorkloads(a *Agent) *workloads {
 	}
 }
 
+var workloadID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
 // containerName is the deterministic name for one workload rank.
 func containerName(deploymentID, runID string, rank int32) string {
 	name := "lmw-" + shortID(deploymentID)
@@ -59,16 +63,41 @@ func containerName(deploymentID, runID string, rank int32) string {
 	}
 	return fmt.Sprintf("%s-r%d", name, rank)
 }
-
 func shortID(id string) string {
-	id = strings.ReplaceAll(id, "-", "")
-	if len(id) > 8 {
-		id = id[:8]
-	}
 	if id == "" {
-		id = "adhoc"
+		return "none"
 	}
-	return id
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:6])
+}
+
+func validateWorkloadIdentity(deploymentID, runID string, rank int32) error {
+	if (deploymentID == "" && runID == "") ||
+		(deploymentID != "" && !workloadID.MatchString(deploymentID)) ||
+		(runID != "" && !workloadID.MatchString(runID)) ||
+		rank < 0 {
+		return fmt.Errorf("workload.identity_invalid")
+	}
+	return nil
+}
+
+func validateContainerIdentity(labels map[string]string, deploymentID, runID string, rank int32) error {
+	if labels[runtime.LabelManaged] != "true" {
+		return fmt.Errorf("container.unmanaged")
+	}
+	if labels[runtime.LabelDeployment] != deploymentID ||
+		labels[runtime.LabelRun] != runID ||
+		labels[runtime.LabelRank] != fmt.Sprint(rank) {
+		return fmt.Errorf("container.identity_mismatch")
+	}
+	return nil
+}
+
+func validateSpecIdentity(spec *runtime.ContainerSpec, deploymentID, runID string, rank int32) error {
+	if err := runtime.ValidateManagedSpec(spec); err != nil {
+		return err
+	}
+	return validateContainerIdentity(spec.Labels, deploymentID, runID, rank)
 }
 
 // handleWorkload executes one container lifecycle command and reports the
@@ -76,6 +105,11 @@ func shortID(id string) string {
 func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand) {
 	w := a.workloads
 	cmdID := wc.GetCommandId()
+	deploymentID, runID := wc.GetDeploymentId(), wc.GetRunId()
+	if err := validateWorkloadIdentity(deploymentID, runID, wc.GetRank()); err != nil {
+		a.result(cmdID, false, 0, err.Error(), "", "")
+		return
+	}
 	var spec *runtime.ContainerSpec
 	if len(wc.GetContainerSpec()) > 0 {
 		var s runtime.ContainerSpec
@@ -85,7 +119,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 		}
 		spec = &s
 	}
-	name := containerName(wc.GetDeploymentId(), wc.GetRunId(), wc.GetRank())
+	name := containerName(deploymentID, runID, wc.GetRank())
 	if spec != nil {
 		spec.Name = name
 		w.mu.Lock()
@@ -109,7 +143,16 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, "create requires a container spec", "", "")
 			return
 		}
-		if _, err := a.rt.Inspect(ctx, name); err == nil {
+		if err := validateSpecIdentity(spec, deploymentID, runID, wc.GetRank()); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+
+		if info, err := a.rt.Inspect(ctx, name); err == nil {
+			if identityErr := validateContainerIdentity(info.Labels, deploymentID, runID, wc.GetRank()); identityErr != nil {
+				a.result(cmdID, false, 0, identityErr.Error(), "", "")
+				return
+			}
 			a.result(cmdID, false, 0, "container.exists: "+name, "", "")
 			return
 		}
@@ -120,7 +163,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 		}
 		a.result(cmdID, true, 0, "", id, "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_START:
-		id, err := a.resolve(name)
+		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
 		if err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
@@ -132,7 +175,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 		a.result(cmdID, true, 0, "", id, "")
 		w.startTailer(ctx, wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank(), id)
 	case agentv1.WorkloadOp_WORKLOAD_OP_STOP:
-		id, err := a.resolve(name)
+		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
 		if err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
@@ -143,27 +186,38 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 		}
 		a.result(cmdID, true, 0, "", id, "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_REMOVE:
-		id, err := a.resolve(name)
-		force := false
-		if err == nil {
-			if info, ierr := a.rt.Inspect(ctx, id); ierr == nil && info.State == "running" {
-				force = true
-			}
+		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
+		if err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
 		}
-		if err := a.rt.Remove(ctx, name, force); err != nil {
+		force := false
+		if info, ierr := a.rt.Inspect(ctx, id); ierr == nil && info.State == "running" {
+			force = true
+		}
+		if err := a.rt.Remove(ctx, id, force); err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		w.stopTailer(wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank())
 		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_INSPECT:
-		info, err := a.rt.Inspect(ctx, name)
+		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
+		if err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		info, err := a.rt.Inspect(ctx, id)
 		if err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		a.result(cmdID, true, int32(info.ExitCode), info.Error, info.ID, info.State)
 	case agentv1.WorkloadOp_WORKLOAD_OP_LOGS:
+		if _, err := a.resolve(name, deploymentID, runID, wc.GetRank()); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
 		a.handleLogRequest(ctx, &agentv1.LogRequest{
 			RunId:        wc.GetRunId(),
 			DeploymentId: wc.GetDeploymentId(),
@@ -176,12 +230,15 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 }
 
 // resolve finds a managed container by its deterministic name.
-func (a *Agent) resolve(name string) (string, error) {
+func (a *Agent) resolve(name, deploymentID, runID string, rank int32) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	info, err := a.rt.Inspect(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("container.missing: %s", name)
+	}
+	if err := validateContainerIdentity(info.Labels, deploymentID, runID, rank); err != nil {
+		return "", fmt.Errorf("%w: %s", err, name)
 	}
 	return info.ID, nil
 }

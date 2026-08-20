@@ -85,9 +85,17 @@ func (a *Agent) session(ctx context.Context) error {
 			a.handleLogRequest(ctx, b.LogRequest)
 		case *agentv1.ServerMessage_TransferCommand:
 			go a.handleTransfer(ctx, b.TransferCommand)
+		case *agentv1.ServerMessage_ArtifactCommand:
+			go a.handleArtifact(ctx, b.ArtifactCommand)
+		case *agentv1.ServerMessage_ExtensionCommand:
+			go a.handleExtension(ctx, b.ExtensionCommand)
 		case *agentv1.ServerMessage_ReconcileRequest:
 			a.noteReconcile(b.ReconcileRequest.GetReason())
-			a.reconcile(ctx, b.ReconcileRequest)
+			if b.ReconcileRequest.GetReason() == "artifact.rescan" {
+				a.reportPlacements(ctx)
+			} else {
+				a.reconcile(ctx, b.ReconcileRequest)
+			}
 		case *agentv1.ServerMessage_Certificate:
 			if err := a.applyCertificate(b.Certificate); err != nil {
 				log.Printf("agent: apply certificate: %v", err)

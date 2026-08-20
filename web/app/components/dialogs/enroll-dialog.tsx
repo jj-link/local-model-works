@@ -15,9 +15,12 @@ import {
   useCreateEnrollmentToken,
   useDeleteEnrollmentToken,
   useEnrollmentTokens,
+  useSystemInfo,
 } from "~/lib/queries";
 import { CopyButton } from "~/components/copy-button";
 import { shortId } from "~/lib/format";
+const shellArg = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
 
 /**
  * Enroll a node: create a one-use, ten-minute token, show the install
@@ -27,10 +30,13 @@ export function EnrollDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const createToken = useCreateEnrollmentToken();
   const deleteToken = useDeleteEnrollmentToken();
   const { data: tokens } = useEnrollmentTokens(open);
+  const { data: system } = useSystemInfo();
   const [description, setDescription] = useState("");
+  const [runAs, setRunAs] = useState("workbench");
+  const [cacheRoot, setCacheRoot] = useState("");
   const [fresh, setFresh] = useState<{ token: string; expiresAt: string } | null>(null);
 
-  const agentUrl = `https://lmw.tailnet.ts:9443`;
+  const agentUrl = system?.agent_url ?? "";
 
   const onCreate = async () => {
     try {
@@ -45,8 +51,10 @@ export function EnrollDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     }
   };
 
-  const installCommand = (token: string) =>
-    `lmw-agent install --server ${agentUrl} --ca-sha256 <fingerprint> --token ${token} --run-as workbench`;
+  const installCommand = (token: string) => {
+    const cache = cacheRoot ? ` --cache-root ${shellArg(cacheRoot)}` : "";
+    return `lmw-agent install --server ${shellArg(agentUrl)} --ca-sha256 ${shellArg(system?.ca_fingerprint ?? "")} --token ${shellArg(token)} --run-as ${shellArg(runAs)}${cache}`;
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,6 +93,22 @@ export function EnrollDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             onChange={(e) => setDescription(e.target.value)}
             placeholder="e.g. spark3 replacement"
           />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="enroll-run-as">Run as</Label>
+            <Input id="enroll-run-as" value={runAs} onChange={(e) => setRunAs(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="enroll-cache-root">Cache root (optional)</Label>
+            <Input
+              id="enroll-cache-root"
+              value={cacheRoot}
+              onChange={(e) => setCacheRoot(e.target.value)}
+              placeholder="/home/operator/.cache/huggingface"
+            />
+          </div>
         </div>
 
         {tokens && tokens.length > 0 ? (

@@ -94,9 +94,9 @@ export function HighlightedPre({
     <pre
       className={cn(
         "overflow-auto rounded border border-hairline bg-background/60 p-3 font-mono text-xs leading-relaxed",
+        maxLines ? "max-h-[620em]" : undefined,
         className,
       )}
-      style={maxLines ? { maxHeight: `${maxLines * 1.55}em` } : undefined}
       aria-label={`${language} document`}
     >
       <code>{nodes}</code>

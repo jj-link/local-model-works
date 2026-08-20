@@ -6,6 +6,10 @@ metadata:
   displayName: lmw-fail-traversal
   description: Asset path traversal fixture.
   license: MIT
+  source:
+    url: https://fixtures.local/fail-asset-traversal
+    revision: "0000000000000000000000000000000000000000"
+    path: .
 compatibility:
   nodeCount: 1
 artifacts:

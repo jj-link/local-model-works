@@ -12,8 +12,14 @@ settingsSchema:
   type: object
   additionalProperties: false
   properties: {}
+jobKinds:
+  - migration-scan
+  - migration-import
+artifactKinds:
+  - file
 apiFragment: api.yaml
 capabilities:
   - secrets.read
   - secrets.write
   - modules.settings
+  - migrations.write

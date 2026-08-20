@@ -23,8 +23,10 @@ import (
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/internal/telemetry"
 )
 
 // Nav is the sidebar entry for a module.
@@ -55,17 +57,19 @@ type Descriptor struct {
 // placements/leases, secrets, and event streaming; modules add the
 // operator-facing experience on top of these services.
 type Env struct {
-	Q        *db.Queries
-	DB       *sql.DB
-	Bus      *events.EventBus
-	CA       *ca.CA
-	Deploy   *deploy.Service
-	Fabrics  *fabric.Service
-	Recipes  *recipe.Service
-	Runs     *runs.Service
-	Jobs     *jobs.Registry
-	Settings *settings.Registry
-	Secrets  *auth.SecretBox
+	Q             *db.Queries
+	DB            *sql.DB
+	Bus           *events.EventBus
+	CA            *ca.CA
+	Deploy        *deploy.Service
+	Fabrics       *fabric.Service
+	Recipes       *recipe.Service
+	RecipeBuilder *recipebuilder.Service
+	Runs          *runs.Service
+	Jobs          *jobs.Registry
+	Settings      *settings.Registry
+	Secrets       *auth.SecretBox
+	Telemetry     *telemetry.Service
 	// Nodes is the live agent session registry (send workload/transfer/log
 	// commands, query online state).
 	Nodes *nodes.Registry

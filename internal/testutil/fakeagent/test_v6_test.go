@@ -17,17 +17,18 @@ import (
 // advertises a man-in-the-middle relay address, and the artifact row both
 // sides report against.
 type transferFixture struct {
-	t       *testing.T
-	s       *Server
-	fx      *HFFixture
-	src     *Agent
-	dst     *Agent
-	srcNode string
-	dstNode string
-	art     db.Artifact
-	dstBind string // destination's real peer listener (pre-reserved)
-	destRel string // destination-relative transfer root
-	total   int64  // resolved byte count of the snapshot
+	t            *testing.T
+	s            *Server
+	fx           *HFFixture
+	src          *Agent
+	dst          *Agent
+	srcNode      string
+	dstNode      string
+	art          db.Artifact
+	srcBind      string // source's real peer listener (pre-reserved)
+	destRel      string // destination-relative transfer root
+	total        int64  // transferred byte count of the model repository
+	lastTransfer string
 }
 
 func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture {
@@ -35,18 +36,15 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 	s := NewServer(t, "", "127.0.0.1:0")
 	srcRoot := t.TempDir()
 	fx := BuildHFFixture(t, srcRoot, 256<<10)
-	dstBind := FreeTCPPort(t)
+	srcBind := FreeTCPPort(t)
 
 	tokS, tokD := s.IssueToken(t), s.IssueToken(t)
 	src := StartAgent(t, s, AgentOpts{
 		Hostname: "spark-src", Token: tokS, IP: "10.0.0.21/24",
-		CacheRoots: []string{srcRoot},
+		CacheRoots: []string{srcRoot}, PeerBind: srcBind, PeerAdvertise: phase1RelayAddr,
 	})
-	// The destination advertises the phase-1 relay address (bound later by
-	// the test's proxy); its real listener is the pre-reserved dstBind.
 	dst := StartAgent(t, s, AgentOpts{
 		Hostname: "spark-dst", Token: tokD, IP: "10.0.0.22/24",
-		PeerBind: dstBind, PeerAdvertise: phase1RelayAddr,
 	})
 	ns, nd := src.NodeID(), dst.NodeID()
 	s.ApproveNode(t, ns)
@@ -57,29 +55,41 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 	// The artifact row (agents report placements by identity, so the
 	// identity must match what the agent derives from the cache layout).
 	artID, _ := newID()
-	art := db.Artifact{ID: artID, Kind: "huggingface", Identity: "huggingface://acme/test-model"}
+	art := db.Artifact{ID: artID, Kind: "model", Identity: "hf://acme/test-model@" + fx.Sha40}
 	if err := s.Q.CreateArtifact(s.Ctx, db.CreateArtifactParams{
 		ID: artID, Kind: art.Kind, Identity: art.Identity,
 		Revision: sql.NullString{String: fx.Sha40, Valid: true},
 	}); err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
+	storedArtifact, err := s.Q.GetArtifactByIdentity(s.Ctx, art.Identity)
+	if err != nil {
+		t.Fatalf("get canonical artifact: %v", err)
+	}
+	art = storedArtifact
+	artID = art.ID
 	// Operator-verified placement on the source (the agent's own cache scan
 	// reports "pending"; this upsert is the controller-side validation).
 	var total int64
-	for _, f := range WalkTree(t, fx.Snapshot) {
-		total += f.Size
+	for _, file := range WalkTree(t, fx.ModelDir) {
+		info, err := os.Lstat(filepath.Join(fx.ModelDir, filepath.FromSlash(file.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().IsRegular() {
+			total += file.Size
+		}
 	}
 	if err := s.Q.UpsertPlacement(s.Ctx, db.UpsertPlacementParams{
-		ArtifactID: artID, NodeID: ns, Path: fx.Snapshot, State: "valid", SizeBytes: total,
+		ArtifactID: artID, NodeID: ns, Path: fx.ModelDir, State: "valid", SizeBytes: total,
 	}); err != nil {
 		t.Fatalf("upsert source placement: %v", err)
 	}
 
 	return &transferFixture{
 		t: t, s: s, fx: fx, src: src, dst: dst, srcNode: ns, dstNode: nd,
-		art: art, dstBind: dstBind,
-		destRel: "models--acme--test-model/snapshots/" + fx.Sha40,
+		art: art, srcBind: srcBind,
+		destRel: "models--acme--test-model",
 		total:   total,
 	}
 }
@@ -89,20 +99,26 @@ func (f *transferFixture) dstTree() string {
 	return filepath.Join(f.dst.cfg.TransferDir(), f.destRel)
 }
 
-// startProxied creates the MITM relay on proxyAddr (already advertised by
-// the destination's inventory), points it at the destination's real
-// listener, and starts the real StartTransfer source->dest.
+func (f *transferFixture) stagingTree() string {
+	return filepath.Join(f.dst.cfg.TransferDir(), ".untrusted-"+f.lastTransfer)
+}
+
+// startProxied creates the MITM relay advertised by the source and points it
+// at the source's real listener before starting the destination pull.
 func (f *transferFixture) startProxied(t *testing.T, proxyAddr string, threshold int64) *Proxy {
 	t.Helper()
 	dstCert, dstKey := NodeCertPEM(t, f.dst)
 	srcCert, srcKey := NodeCertPEM(t, f.src)
-	p := NewProxy(t, CAPEM(t, f.s), dstCert, dstKey, srcCert, srcKey, threshold)
-	SetDstAddr(f.dstBind)
+	// Incoming client is destination: present source cert; upstream client
+	// represents destination to the real source.
+	p := NewProxy(t, CAPEM(t, f.s), srcCert, srcKey, dstCert, dstKey, threshold)
+	SetDstAddr(f.srcBind)
 	p.StartOn(proxyAddr)
 	tid, err := f.s.Srv.Deployments().StartTransfer(f.s.Ctx, f.art, f.srcNode, f.dstNode, f.destRel)
 	if err != nil {
 		t.Fatalf("start transfer: %v", err)
 	}
+	f.lastTransfer = tid
 	t.Logf("transfer %s via relay %s (threshold %d of %d bytes)", tid, proxyAddr, threshold, f.total)
 	return p
 }
@@ -161,7 +177,8 @@ func TestV6_TransferInterruptResume(t *testing.T) {
 
 	// The partial tree exists: shard A complete.
 	dstTree := f.dstTree()
-	shardA := filepath.Join(dstTree, filepath.Base(f.fx.ShardA))
+	relativeShardA, _ := filepath.Rel(f.fx.ModelDir, f.fx.BlobFile)
+	shardA := filepath.Join(f.stagingTree(), relativeShardA)
 	Deadline(t, 20*time.Second, func() bool {
 		fi, err := os.Stat(shardA)
 		return err == nil && fi.Size() == f.fx.ShardSize
@@ -174,36 +191,29 @@ func TestV6_TransferInterruptResume(t *testing.T) {
 		}
 	}
 
-	// Interrupt: tear the relay down. The receiver's stream fails and it
-	// removes the partial tree (transfer.go fail -> RemoveAll); the source
-	// acks the error to the controller.
+	// Interrupt: the untrusted staging tree remains resumable but never
+	// becomes a valid placement.
 	p1.Close()
-	Deadline(t, 20*time.Second, func() bool {
-		_, err := os.Stat(dstTree)
-		return os.IsNotExist(err)
-	}, "partial destination tree removed after interrupt")
+	if _, err := os.Stat(f.stagingTree()); err != nil {
+		t.Fatalf("untrusted staging was not retained: %v", err)
+	}
 
-	// Phase 2: resume. The destination re-advertises a fresh relay address
-	// (agent restart, same identity) and a new StartTransfer re-dispatches
-	// the copy — a full re-send is the designed resume.
+	// Phase 2: the source advertises a fresh relay and the destination pulls
+	// with a fresh one-use credential.
 	resumeAddr := FreeTCPPort(t)
-	f.dst = f.dst.Restart(t, f.dstBind, resumeAddr)
-	// The source dials the address stored in the destination's inventory
-	// row; wait for the re-advertisement to persist before dispatching.
-	s.WaitPeerListen(t, f.dstNode, resumeAddr)
+	f.src = f.src.Restart(t, f.srcBind, resumeAddr)
+	s.WaitPeerListen(t, f.srcNode, resumeAddr)
 	p2 := f.startProxied(t, resumeAddr, 0)
 	t.Cleanup(p2.Close)
 
 	row := f.waitDestValid(40 * time.Second)
 
-	// Destination tree matches the source file-for-file (symlinks are
-	// dereferenced on the wire, so the destination materializes them as
-	// regular files with identical content).
-	srcInv := WalkTree(t, f.fx.Snapshot)
+	// Destination repository matches the source, including relative symlinks.
+	srcInv := WalkTree(t, f.fx.ModelDir)
 	dstInv := WalkTree(t, dstTree)
 	CompareTrees(t, "source", srcInv, "destination", dstInv)
-	// The destination snapshot passes the product's validator.
-	if ds := Validate(dstTree, filepath.Dir(filepath.Dir(dstTree))); len(ds) != 0 {
+	destinationSnapshot := filepath.Join(dstTree, "snapshots", f.fx.Sha40)
+	if ds := Validate(destinationSnapshot, dstTree); len(ds) != 0 {
 		t.Fatalf("destination snapshot validation: %v", ds)
 	}
 	// The placement row carries the verified content.
@@ -243,7 +253,8 @@ func TestV6_TransferCorruptionHealedByResend(t *testing.T) {
 	Deadline(t, 20*time.Second, p1.Held, "relay to hold the stream mid-transfer")
 
 	dstTree := f.dstTree()
-	shardA := filepath.Join(dstTree, filepath.Base(f.fx.ShardA))
+	relativeShardA, _ := filepath.Rel(f.fx.ModelDir, f.fx.BlobFile)
+	shardA := filepath.Join(f.stagingTree(), relativeShardA)
 	Deadline(t, 20*time.Second, func() bool {
 		fi, err := os.Stat(shardA)
 		return err == nil && fi.Size() == f.fx.ShardSize
@@ -271,30 +282,28 @@ func TestV6_TransferCorruptionHealedByResend(t *testing.T) {
 		t.Fatalf("corrupted shard did not survive the interruption (err %v)", err)
 	}
 
-	// Resume: restart the destination (fresh relay address, same identity),
-	// new StartTransfer — a full re-send overwrites the corrupted shard.
+	// Resume with a fresh destination process and a new source relay.
+	f.dst = f.dst.Restart(t, "", "")
 	resumeAddr := FreeTCPPort(t)
-	f.dst = f.dst.Restart(t, f.dstBind, resumeAddr)
-	// Wait for the re-advertisement to persist in the inventory row
-	// before dispatching the re-send.
-	f.s.WaitPeerListen(t, f.dstNode, resumeAddr)
+	f.src = f.src.Restart(t, f.srcBind, resumeAddr)
+	f.s.WaitPeerListen(t, f.srcNode, resumeAddr)
 	p2 := f.startProxied(t, resumeAddr, 0)
 	t.Cleanup(p2.Close)
 	f.waitDestValid(40 * time.Second)
 
-	// The corrupted byte is gone: the re-send rewrote the file.
-	after, err := os.ReadFile(shardA)
+	// The published tree contains the original, verified shard.
+	finalShardA := filepath.Join(dstTree, relativeShardA)
+	after, err := os.ReadFile(finalShardA)
 	if err != nil {
 		t.Fatalf("read shard A after resume: %v", err)
 	}
 	if !bytes.Equal(after, original) {
 		t.Fatalf("corrupted shard survived the resume re-send")
 	}
-	// Full tree agreement and validator pass.
-	srcInv := WalkTree(t, f.fx.Snapshot)
+	srcInv := WalkTree(t, f.fx.ModelDir)
 	dstInv := WalkTree(t, dstTree)
 	CompareTrees(t, "source", srcInv, "destination", dstInv)
-	if ds := Validate(dstTree, filepath.Dir(filepath.Dir(dstTree))); len(ds) != 0 {
+	if ds := Validate(filepath.Join(dstTree, "snapshots", f.fx.Sha40), dstTree); len(ds) != 0 {
 		t.Fatalf("destination snapshot validation: %v", ds)
 	}
 

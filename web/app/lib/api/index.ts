@@ -19,6 +19,8 @@ export type RecipeDetail = Schemas["RecipeDetail"];
 export type RecipeSource = Schemas["RecipeSource"];
 export type RecipeImport = Schemas["RecipeImport"];
 export type RecipeTrustRequest = Schemas["RecipeTrustRequest"];
+export type RecipeDraft = Schemas["RecipeDraft"];
+export type RecipeDraftSource = Schemas["RecipeDraftSource"];
 export type Artifact = Schemas["Artifact"];
 export type ArtifactKind = Schemas["ArtifactKind"];
 export type Placement = Schemas["Placement"];
@@ -41,15 +43,9 @@ export type Secret = Schemas["Secret"];
 export type SecretWrite = Schemas["SecretWrite"];
 export type SystemInfo = Schemas["SystemInfo"];
 export type EnrollmentToken = Schemas["EnrollmentToken"];
-export type MigrationPlan = Schemas["MigrationPlan"];
 export type MigrationScanRequest = Schemas["MigrationScanRequest"];
 export type MigrationImportRequest = Schemas["MigrationImportRequest"];
-export type MigrationImportReport = {
-  counts: Record<string, unknown>;
-  imported: Record<string, unknown>;
-  unsupported: string[];
-};
-
+export type RunAccepted = Schemas["RunAccepted"];
 type Sig = { signal?: AbortSignal };
 
 /* ------------------------------------------------------------------ */
@@ -127,6 +123,23 @@ export const setRecipeTrust = (digest: string, body: RecipeTrustRequest) =>
   http.post<Recipe>(`/recipes/${digest}/trust`, body);
 
 export const importRecipe = (body: RecipeImport) => http.post<Recipe>("/recipes/import", body);
+
+export const createRecipeDraft = (body: RecipeDraftSource) =>
+  http.post<{ run_id: string }>("/recipe-drafts", body);
+export const listRecipeDrafts = ({ signal }: Sig = {}) =>
+  http.get<RecipeDraft[]>("/recipe-drafts", { signal });
+export const getRecipeDraft = (id: string, { signal }: Sig = {}) =>
+  http.get<RecipeDraft>(`/recipe-drafts/${id}`, { signal });
+export const updateRecipeDraft = (
+  id: string,
+  version: number,
+  body: { manifest: Record<string, unknown>; selected_assets: string[] },
+) => http.put<RecipeDraft>(`/recipe-drafts/${id}`, body, { headers: { "if-match": String(version) } });
+export const packageRecipeDraft = (id: string) =>
+  http.post<RecipeDraft>(`/recipe-drafts/${id}/package`);
+export const installRecipeDraft = (id: string, permissionDiffAccepted: boolean) =>
+  http.post<Recipe>(`/recipe-drafts/${id}/install`, { permission_diff_accepted: permissionDiffAccepted });
+export const deleteRecipeDraft = (id: string) => http.del<void>(`/recipe-drafts/${id}`);
 
 /* ------------------------------------------------------------------ */
 /* artifacts + transfers                                               */
@@ -231,11 +244,11 @@ export const deleteSecret = (id: string) => http.del<void>(`/secrets/${id}`);
 /* migration                                                           */
 /* ------------------------------------------------------------------ */
 
-export const migrationScan = (body: MigrationScanRequest = {}) =>
-  http.post<MigrationPlan>("/migration/scan", body);
+export const migrationScan = (body: MigrationScanRequest) =>
+  http.post<RunAccepted>("/migration/scan", body);
 
 export const migrationImport = (body: MigrationImportRequest) =>
-  http.post<MigrationImportReport>("/migration/import", body);
+  http.post<RunAccepted>("/migration/import", body);
 
 /* ------------------------------------------------------------------ */
 /* SSE stream URLs (consumed by the streamEvents helper)               */

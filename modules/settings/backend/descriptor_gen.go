@@ -10,4 +10,4 @@ import (
 )
 
 // descriptor is this module's frozen manifest.
-var descriptor = moduleapi.Descriptor{APIVersion: "localmodelworks/v1alpha1", Kind: "Module", ID: "settings", Title: "Settings", Route: "/settings", Nav: moduleapi.Nav{Label: "Settings", Order: 90, Icon: "settings"}, SettingsSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}"), APIFragment: "api.yaml", Capabilities: []string{"secrets.read", "secrets.write", "modules.settings"}}
+var descriptor = moduleapi.Descriptor{APIVersion: "localmodelworks/v1alpha1", Kind: "Module", ID: "settings", Title: "Settings", Route: "/settings", Nav: moduleapi.Nav{Label: "Settings", Order: 90, Icon: "settings"}, SettingsSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}"), JobKinds: []string{"migration-scan", "migration-import"}, ArtifactKinds: []string{"file"}, APIFragment: "api.yaml", Capabilities: []string{"secrets.read", "secrets.write", "modules.settings", "migrations.write"}}

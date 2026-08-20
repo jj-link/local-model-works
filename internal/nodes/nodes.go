@@ -84,6 +84,23 @@ func (r *Registry) Send(nodeID string, m *agentv1.ServerMessage) bool {
 	return conn != nil && conn.Send(m)
 }
 
+// Broadcast queues a message for every currently connected node.
+func (r *Registry) Broadcast(message *agentv1.ServerMessage) int {
+	r.mu.Lock()
+	connections := make([]*Conn, 0, len(r.conns))
+	for _, connection := range r.conns {
+		connections = append(connections, connection)
+	}
+	r.mu.Unlock()
+	sent := 0
+	for _, connection := range connections {
+		if connection.Send(message) {
+			sent++
+		}
+	}
+	return sent
+}
+
 // Online reports whether the node currently has a live session.
 func (r *Registry) Online(nodeID string) bool {
 	r.mu.Lock()

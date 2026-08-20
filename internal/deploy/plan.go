@@ -55,6 +55,7 @@ type PlacementOverride struct {
 
 // PortPreview is one published port (openapi plan ports item).
 type PortPreview struct {
+	NodeID        string `json:"node_id"`
 	NodeName      string `json:"node_name,omitempty"`
 	HostPort      int32  `json:"host_port"`
 	ContainerPort int32  `json:"container_port"`
@@ -126,12 +127,15 @@ type CreateRequest struct {
 type dispatchPhases map[int32]string
 
 const (
-	PhaseNone     = "none"
-	PhasePulled   = "pulled"
-	PhaseCreated  = "created"
-	PhaseStarted  = "started"
-	PhaseStopping = "stopping"
-	PhaseStopped  = "stopped"
+	PhaseNone      = "none"
+	PhasePreparing = "preparing"
+	PhasePrepared  = "prepared"
+	PhasePulled    = "pulled"
+	PhaseCreated   = "created"
+	PhaseVerifying = "verifying"
+	PhaseStarted   = "started"
+	PhaseStopping  = "stopping"
+	PhaseStopped   = "stopped"
 )
 
 func (d dispatchPhases) Get(rank int32) string {
@@ -185,8 +189,8 @@ func (p *Plan) LeaseResources() []string {
 	if p.Fabric != nil && *p.Fabric != "" {
 		add("fabric:" + *p.Fabric)
 	}
-	for _, po := range p.Ports {
-		add(fmt.Sprintf("port:%s:%d", po.NodeName, po.HostPort))
+	for _, port := range p.Ports {
+		add(fmt.Sprintf("port:%s:%d", port.NodeID, port.HostPort))
 	}
 	sort.Strings(out)
 	return out

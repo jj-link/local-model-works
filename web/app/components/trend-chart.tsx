@@ -29,6 +29,8 @@ export function TrendChart({
     () => series.map((s) => `${s.label}:${s.points.length}:${s.points.at(-1)?.[1] ?? ""}`).join("|"),
     [series],
   );
+  const heightClass = height === 220 ? "h-[220px]" : "h-[180px]";
+
 
   useEffect(() => {
     const el = hostRef.current;
@@ -105,10 +107,10 @@ export function TrendChart({
 
   if (series.length === 0 || series.every((s) => s.points.length === 0)) {
     return (
-      <div className="flex items-center justify-center rounded border border-hairline bg-background/40 px-4 text-xs text-muted" style={{ height }}>
+      <div className={`flex ${heightClass} items-center justify-center rounded border border-hairline bg-background/40 px-4 text-xs text-muted`}>
         no data
       </div>
     );
   }
-  return <div ref={hostRef} className="w-full" style={{ height }} aria-label={yLabel ?? "trend chart"} role="img" />;
+  return <div ref={hostRef} className={`w-full ${heightClass}`} aria-label={yLabel ?? "trend chart"} role="img" />;
 }

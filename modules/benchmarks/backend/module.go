@@ -58,9 +58,7 @@ func (m *Module) RegisterSettings(reg *settings.Registry) {
 
 // RegisterHTTP mounts the module's routes on the authenticated group.
 func (m *Module) RegisterHTTP(r chi.Router) {
-	r.Post("/benchmarks", m.create)
-	r.Get("/benchmarks", m.list)
-	r.Get("/benchmarks/results", m.results)
+	HandlerFromMux(m, r)
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
