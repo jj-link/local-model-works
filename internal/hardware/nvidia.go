@@ -63,8 +63,8 @@ func (d *nvidiaDriver) Probe(ctx context.Context) (Inventory, error) {
 	}
 	inv := Inventory{Accelerators: make([]Accelerator, 0, count)}
 	// DGX Spark / GB10 exposes unified memory, so NVML's DeviceGetMemoryInfo
-	// reports [N/A]; fall back to the host total so unified-memory parts
-	// still show a schedulable memory figure instead of zero.
+	// reports [N/A] (or a zero total); fall back to the host total so
+	// unified-memory parts still show a schedulable memory figure.
 	fbp := hostSample(ctx).MemoryTotalBytes
 	for i := 0; i < count; i++ {
 		dev, rc := lib.DeviceGetHandleByIndex(i)
@@ -78,7 +78,7 @@ func (d *nvidiaDriver) Probe(ctx context.Context) (Inventory, error) {
 		if uuid, rc := lib.DeviceGetUUID(dev); rc == nvml.SUCCESS {
 			a.UUID = uuid
 		}
-		if mem, rc := lib.DeviceGetMemoryInfo(dev); rc == nvml.SUCCESS {
+		if mem, rc := lib.DeviceGetMemoryInfo(dev); rc == nvml.SUCCESS && mem.Total > 0 {
 			a.MemoryBytes = int64(mem.Total)
 		} else if fbp > 0 {
 			a.MemoryBytes = int64(fbp)

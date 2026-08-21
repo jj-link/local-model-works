@@ -71,11 +71,11 @@ func parseMeminfo(raw []byte, t *Telemetry) {
 		var val uint64
 		if _, err := fmtSscanf(line, &key, &val); err == nil {
 			switch key {
-			case "MemTotal:":
+			case "MemTotal":
 				t.MemoryTotalBytes = val * 1024
-			case "MemAvailable:":
+			case "MemAvailable":
 				t.MemoryUsedBytes = (t.MemoryTotalBytes - val*1024 + 1023) / 1024 * 1024
-			case "SwapTotal:", "SwapFree:":
+			case "SwapTotal", "SwapFree":
 			}
 		}
 	}
