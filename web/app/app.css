@@ -60,6 +60,33 @@
   --radius: 0.375rem;
 }
 
+/* Tailwind v4 + shadcn ship LIGHT default values for --background /
+   --foreground (and shadcn reads --card/--border/...), emitted in a later
+   layer, so the bundle otherwise renders white-with-black-text. Custom
+   properties honor !important, which guarantees the dark instrument
+   palette wins regardless of the later shadcn declaration. */
+:root {
+  --background: #0b0d0e !important;
+  --foreground: #e9e4d9 !important;
+  --card: #14181a !important;
+  --card-foreground: #e9e4d9 !important;
+  --popover: #1b2023 !important;
+  --popover-foreground: #e9e4d9 !important;
+  --primary: #ffb000 !important;
+  --primary-foreground: #0b0d0e !important;
+  --secondary: #1b2023 !important;
+  --secondary-foreground: #e9e4d9 !important;
+  --muted: #1b2023 !important;
+  --muted-foreground: #919a9d !important;
+  --accent: #5ed6d0 !important;
+  --accent-foreground: #0b0d0e !important;
+  --destructive: #ef635d !important;
+  --destructive-foreground: #0b0d0e !important;
+  --border: #313a3e !important;
+  --input: #313a3e !important;
+  --ring: #ffb000 !important;
+}
+
 html,
 body {
   height: 100%;
