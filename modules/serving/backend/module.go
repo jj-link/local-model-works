@@ -186,6 +186,27 @@ func (m *Module) stop(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, dep)
 }
 
+// start — POST /deployments/{id}/start: restart a fully-stopped deployment
+// (re-acquire leases and re-dispatch), making stop reversible.
+func (m *Module) start(w http.ResponseWriter, r *http.Request) {
+	dep, err := m.env.Deploy.Start(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, dep)
+}
+
+// deleteDeployment — DELETE /deployments/{id}: remove a fully-stopped
+// deployment and its runs, freeing the recipe/placement slot.
+func (m *Module) deleteDeployment(w http.ResponseWriter, r *http.Request) {
+	if err := m.env.Deploy.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // verify — POST /deployments/{id}/verify: run the workload probe against
 // the live endpoint.
 func (m *Module) verify(w http.ResponseWriter, r *http.Request) {

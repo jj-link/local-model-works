@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { toast } from "sonner";
-import { Power, ShieldCheck } from "lucide-react";
+import { Play, Power, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
 import {
@@ -15,6 +15,8 @@ import {
   useDeployment,
   useVerifyDeployment,
   useStopDeployment,
+  useStartDeployment,
+  useDeleteDeployment,
   useNodes,
 } from "~/lib/queries";
 import { StatusDot } from "~/components/status-dot";
@@ -45,6 +47,8 @@ export default function DeploymentDetailRoute() {
   const { data: d, isPending, isError, error, refetch } = useDeployment(id);
   const verify = useVerifyDeployment();
   const stop = useStopDeployment();
+  const start = useStartDeployment();
+  const del = useDeleteDeployment();
   const { data: nodes } = useNodes();
 
   if (isPending) {
@@ -94,6 +98,26 @@ export default function DeploymentDetailRoute() {
             >
               <ShieldCheck aria-hidden /> {verify.isPending ? "verifying…" : "verify"}
             </Button>
+            {d.observed_state === "stopped" && d.desired_state === "stopped" ? (
+              <ConfirmDialog
+                title="Start deployment"
+                description={`Restart ${d.recipe_name ?? d.id}? Leases are re-acquired and the workload is re-dispatched.`}
+                confirmLabel="start"
+                onConfirm={async () => {
+                  try {
+                    const r = await start.mutateAsync(d.id);
+                    toast.success("Deployment starting", { description: `observed: ${r.observed_state}` });
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "start failed");
+                    throw e;
+                  }
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Play aria-hidden /> start
+                </span>
+              </ConfirmDialog>
+            ) : null}
             {d.desired_state === "running" ? (
               <ConfirmDialog
                 title="Stop deployment"
@@ -112,6 +136,27 @@ export default function DeploymentDetailRoute() {
               >
                 <span className="inline-flex items-center gap-1.5">
                   <Power aria-hidden /> stop
+                </span>
+              </ConfirmDialog>
+            ) : null}
+            {d.observed_state === "stopped" && d.desired_state === "stopped" ? (
+              <ConfirmDialog
+                title="Delete deployment"
+                description={`Delete ${d.recipe_name ?? d.id}? This frees its recipe/placement slot. The deployment and its run records are removed.`}
+                confirmLabel="delete"
+                tone="destructive"
+                onConfirm={async () => {
+                  try {
+                    await del.mutateAsync(d.id);
+                    toast.success("Deployment deleted");
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "delete failed");
+                    throw e;
+                  }
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Trash2 aria-hidden /> delete
                 </span>
               </ConfirmDialog>
             ) : null}

@@ -237,6 +237,12 @@ UPDATE deployments SET run_id = ?,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ?;
 
+-- name: DeleteDeployment :exec
+DELETE FROM deployments WHERE id = ?;
+
+-- name: DeleteDeploymentRuns :exec
+DELETE FROM runs WHERE deployment_id = ?;
+
 -- name: CreateRun :exec
 INSERT INTO runs (id, module, kind, state, resources, input, deployment_id,
                   legacy_identity)

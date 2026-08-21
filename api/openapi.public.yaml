@@ -174,6 +174,22 @@ paths:
       tags:
         - deployments
   /deployments/{id}:
+    delete:
+      operationId: deleteDeployment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        "204":
+          description: Deployment deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+      summary: Delete a fully-stopped deployment and its runs, freeing the slot
+      tags:
+        - deployments
     get:
       operationId: getDeployment
       parameters:
@@ -212,6 +228,29 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
+      tags:
+        - deployments
+  /deployments/{id}/start:
+    post:
+      operationId: startDeployment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+          description: Deployment restarted (running)
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+      summary: Restart a fully-stopped deployment, re-acquiring leases and re-dispatching
       tags:
         - deployments
   /deployments/{id}/stop:

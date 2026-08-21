@@ -189,6 +189,12 @@ export const verifyDeployment = (id: string) =>
 export const stopDeployment = (id: string) =>
   http.post<Deployment>(`/deployments/${id}/stop`);
 
+export const startDeployment = (id: string) =>
+  http.post<Deployment>(`/deployments/${id}/start`);
+
+export const deleteDeployment = (id: string) =>
+  http.del<void>(`/deployments/${id}`);
+
 /* ------------------------------------------------------------------ */
 /* runs                                                                */
 /* ------------------------------------------------------------------ */

@@ -262,12 +262,18 @@ type ServerInterface interface {
 	// PlanDeployment Preview a deployment: placement, artifact preparation, ports, risks, conflicts
 	// (POST /deployments/plan)
 	PlanDeployment(w http.ResponseWriter, r *http.Request)
+	// DeleteDeployment Delete a fully-stopped deployment and its runs, freeing the slot
+	// (DELETE /deployments/{id})
+	DeleteDeployment(w http.ResponseWriter, r *http.Request, id ID)
 
 	// (GET /deployments/{id})
 	GetDeployment(w http.ResponseWriter, r *http.Request, id ID)
 	// DeploymentLogs Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
 	// (GET /deployments/{id}/logs)
 	DeploymentLogs(w http.ResponseWriter, r *http.Request, id ID, params DeploymentLogsParams)
+	// StartDeployment Restart a fully-stopped deployment, re-acquiring leases and re-dispatching
+	// (POST /deployments/{id}/start)
+	StartDeployment(w http.ResponseWriter, r *http.Request, id ID)
 	// StopDeployment Stop exactly this deployment's workload (label-scoped)
 	// (POST /deployments/{id}/stop)
 	StopDeployment(w http.ResponseWriter, r *http.Request, id ID)
@@ -297,6 +303,12 @@ func (_ Unimplemented) PlanDeployment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// DeleteDeployment Delete a fully-stopped deployment and its runs, freeing the slot
+// (DELETE /deployments/{id})
+func (_ Unimplemented) DeleteDeployment(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /deployments/{id})
 func (_ Unimplemented) GetDeployment(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -305,6 +317,12 @@ func (_ Unimplemented) GetDeployment(w http.ResponseWriter, r *http.Request, id 
 // DeploymentLogs Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
 // (GET /deployments/{id}/logs)
 func (_ Unimplemented) DeploymentLogs(w http.ResponseWriter, r *http.Request, id ID, params DeploymentLogsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartDeployment Restart a fully-stopped deployment, re-acquiring leases and re-dispatching
+// (POST /deployments/{id}/start)
+func (_ Unimplemented) StartDeployment(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -362,6 +380,32 @@ func (siw *ServerInterfaceWrapper) PlanDeployment(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PlanDeployment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteDeployment operation middleware
+func (siw *ServerInterfaceWrapper) DeleteDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteDeployment(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -430,6 +474,32 @@ func (siw *ServerInterfaceWrapper) DeploymentLogs(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeploymentLogs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartDeployment operation middleware
+func (siw *ServerInterfaceWrapper) StartDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartDeployment(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -611,10 +681,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/deployments", wrapper.CreateDeployment)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/deployments/{id}", wrapper.DeleteDeployment)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/deployments/{id}", wrapper.GetDeployment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/deployments/{id}/logs", wrapper.DeploymentLogs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/deployments/{id}/start", wrapper.StartDeployment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/deployments/{id}/stop", wrapper.StopDeployment)

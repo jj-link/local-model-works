@@ -417,6 +417,24 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
+const deleteDeployment = `-- name: DeleteDeployment :exec
+DELETE FROM deployments WHERE id = ?
+`
+
+func (q *Queries) DeleteDeployment(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteDeployment, id)
+	return err
+}
+
+const deleteDeploymentRuns = `-- name: DeleteDeploymentRuns :exec
+DELETE FROM runs WHERE deployment_id = ?
+`
+
+func (q *Queries) DeleteDeploymentRuns(ctx context.Context, deploymentID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, deleteDeploymentRuns, deploymentID)
+	return err
+}
+
 const deleteEnrollmentToken = `-- name: DeleteEnrollmentToken :exec
 DELETE FROM enrollment_tokens WHERE id = ?
 `

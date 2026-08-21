@@ -96,7 +96,8 @@ export interface paths {
         get: operations["getDeployment"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a fully-stopped deployment and its runs, freeing the slot */
+        delete: operations["deleteDeployment"];
         options?: never;
         head?: never;
         patch?: never;
@@ -113,6 +114,23 @@ export interface paths {
         get: operations["deploymentLogs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deployments/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart a fully-stopped deployment, re-acquiring leases and re-dispatching */
+        post: operations["startDeployment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1603,6 +1621,29 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deployment deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     deploymentLogs: {
         parameters: {
             query?: {
@@ -1627,6 +1668,32 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    startDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deployment restarted (running) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     stopDeployment: {

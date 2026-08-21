@@ -2288,6 +2288,147 @@ func (s *Service) Stop(ctx context.Context, depID string) (*Deployment, error) {
 	return s.Get(ctx, depID)
 }
 
+// Start re-drives a fully-stopped deployment back to running, making the
+// stop/start lifecycle reversible without losing the deployment's identity.
+// It recomputes the live plan from the persisted placement, creates a fresh
+// serve run, re-acquires the exact resource leases, resets every rank's
+// dispatch phase to the beginning, and re-dispatches PULL->CREATE->START.
+// The deployment must be observed `stopped`; a deployment still stopping is
+// rejected.
+func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) {
+	row, err := s.q.GetDeployment(ctx, depID)
+	if err != nil {
+		return nil, ErrUnknown
+	}
+	if row.DesiredState == "running" {
+		return nil, fmt.Errorf("%w: deployment is already running", ErrState)
+	}
+	if row.ObservedState != "stopped" {
+		return nil, fmt.Errorf("%w: deployment is %s (start requires observed stopped)", ErrState, row.ObservedState)
+	}
+
+	ps := ParsePlacementSet(row.Placement)
+	var overrides []PlacementOverride
+	for _, e := range ps.Entries {
+		overrides = append(overrides, PlacementOverride{NodeID: e.NodeID, Rank: e.Rank})
+	}
+	plan, err := s.Plan(ctx, PlanRequest{
+		RecipeDigest: row.RecipeDigest,
+		Profile:      row.Profile,
+		Placements:   overrides,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !plan.Ready {
+		return nil, fmt.Errorf("%w: %v", ErrNotReady, diag.Decode(diag.Encode(plan.Diagnostics)))
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	qtx := db.New(tx)
+
+	runIDStr, _ := id.New()
+	input, _ := json.Marshal(map[string]any{
+		"recipe_digest": plan.RecipeDigest,
+		"profile":       plan.Profile,
+		"plan_digest":   plan.Digest,
+	})
+	if err := qtx.CreateRun(ctx, db.CreateRunParams{
+		ID: runIDStr, Module: "serving", Kind: "serve", State: "queued",
+		Resources: "[]", Input: string(input),
+		DeploymentID: sql.NullString{String: depID, Valid: true},
+	}); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := qtx.UpdateDeploymentRunID(ctx, db.UpdateDeploymentRunIDParams{
+		RunID: sql.NullString{String: runIDStr, Valid: true},
+		ID:    depID,
+	}); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	endpoint := ""
+	if plan.Endpoint.Host != "" {
+		endpoint = fmt.Sprintf("%s:%d", plan.Endpoint.Host, plan.Endpoint.Port)
+	}
+	if endpoint != "" {
+		if err := qtx.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
+			ObservedState: "unknown",
+			Endpoint:      sql.NullString{String: endpoint, Valid: true},
+			ID:            depID,
+		}); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+	// Desired running plus an empty dispatch document restarts the state
+	// machine from PhaseNone for every rank.
+	if err := qtx.UpdateDeploymentState(ctx, db.UpdateDeploymentStateParams{
+		DesiredState: "running", ID: depID,
+	}); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := qtx.SetDeploymentDispatch(ctx, db.SetDeploymentDispatchParams{
+		Dispatch: "{}", ID: depID,
+	}); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := s.runs.AcquireLeases(ctx, qtx, "deployment", depID, plan.LeaseResources()); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	s.bus.Publish(ctx, "deployment.started", depID, mustJSON(map[string]any{
+		"deployment_id": depID, "run_id": runIDStr, "recipe": plan.RecipeName,
+	}))
+	_ = s.runs.SetState(ctx, runIDStr, runs.Planning, "", "")
+	_ = s.runs.SetState(ctx, runIDStr, runs.Waiting, "", "")
+	for _, pl := range plan.Placements {
+		s.dispatchNext(ctx, depID, pl.Rank, runIDStr, pl)
+	}
+	return s.Get(ctx, depID)
+}
+
+// Delete removes a fully-stopped deployment and its runs, freeing the
+// recipe/placement slot for a fresh deployment. A deployment that is
+// running or still stopping is rejected.
+func (s *Service) Delete(ctx context.Context, depID string) error {
+	row, err := s.q.GetDeployment(ctx, depID)
+	if err != nil {
+		return ErrUnknown
+	}
+	if row.DesiredState != "stopped" || row.ObservedState != "stopped" {
+		return fmt.Errorf("%w: deployment is %s/%s (delete requires stopped/stopped)", ErrState, row.DesiredState, row.ObservedState)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	qtx := db.New(tx)
+	if err := qtx.DeleteDeploymentRuns(ctx, sql.NullString{String: depID, Valid: true}); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := qtx.DeleteDeployment(ctx, depID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bus.Publish(ctx, "deployment.deleted", depID, mustJSON(map[string]any{"deployment_id": depID}))
+	return nil
+}
+
 // ---------------------------------------------------------------- verify
 
 // Verify runs the workload probe against the live endpoint.

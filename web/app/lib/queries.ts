@@ -325,6 +325,25 @@ export function useStopDeployment() {
   });
 }
 
+export function useStartDeployment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.startDeployment(id),
+    onSuccess: (d) => {
+      invalidates(qk.deployments)(qc);
+      qc.setQueryData<api.Deployment>(qk.deployment(d.id), d);
+    },
+  });
+}
+
+export function useDeleteDeployment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteDeployment(id),
+    onSuccess: () => invalidates(qk.deployments)(qc),
+  });
+}
+
 export function useCancelRun() {
   const qc = useQueryClient();
   return useMutation({

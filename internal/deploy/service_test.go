@@ -744,3 +744,96 @@ func contains(ss []string, s string) bool {
 	}
 	return false
 }
+
+// TestStartReDrivesStoppedAndDeleteFreesSlot exercises the reverse
+// lifecycle: a fully-stopped deployment can be started again (fresh run,
+// re-acquired leases, re-dispatched from the beginning), a running
+// deployment rejects start, and a stopped deployment can be deleted to
+// free its slot (deployment and its runs removed).
+func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+
+	row := deploymentRow(t, h, dep.ID)
+	ps := ParsePlacementSet(row.Placement)
+	acc := ps.Entries[0].AcceleratorUUID
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, observed_state='healthy' WHERE id=?",
+		`{"0":"started"}`, dep.ID); err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DiagnosticCode: "container.missing",
+	})
+	row = deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopped" {
+		t.Fatalf("observed = %s, want stopped", row.ObservedState)
+	}
+
+	// --- Start ---
+	started, err := h.svc.Start(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if started.DesiredState != "running" {
+		t.Fatalf("desired = %s, want running", started.DesiredState)
+	}
+	if started.RunID == dep.RunID {
+		t.Fatalf("start did not create a fresh run")
+	}
+	row = deploymentRow(t, h, dep.ID)
+	if got := ParseDispatch(row.Dispatch).Get(0); got != PhaseNone && got != PhasePrepared {
+		t.Fatalf("rank 0 phase after start = %s, want none/prepared", got)
+	}
+	var n int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE resource=? AND state='active'",
+		"gpu:node-a:"+acc).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("active gpu leases = %d (err %v), want 1", n, err)
+	}
+	cmds := h.nodes.workloadCommands()
+	if last := cmds[len(cmds)-1].msg.GetWorkloadCommand().GetOp(); last != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+		t.Fatalf("last workload op after start = %v, want PULL", last)
+	}
+
+	// Starting an already-running deployment is rejected.
+	if _, err := h.svc.Start(ctx, dep.ID); err == nil {
+		t.Fatalf("start of running deployment should fail")
+	}
+
+	// Deleting a running deployment is rejected.
+	if err := h.svc.Delete(ctx, dep.ID); err == nil {
+		t.Fatalf("delete of running deployment should fail")
+	}
+
+	// --- Stop again, then Delete ---
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("second stop: %v", err)
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DiagnosticCode: "container.missing",
+	})
+	if err := h.svc.Delete(ctx, dep.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := h.svc.Get(ctx, dep.ID); err != ErrUnknown {
+		t.Fatalf("Get after delete err = %v, want ErrUnknown", err)
+	}
+	var nr int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM runs WHERE deployment_id=?", dep.ID).Scan(&nr); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if nr != 0 {
+		t.Fatalf("runs remaining = %d, want 0", nr)
+	}
+}
+
