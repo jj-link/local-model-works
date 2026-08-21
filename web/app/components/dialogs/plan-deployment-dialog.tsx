@@ -46,9 +46,8 @@ export function PlanDeploymentDialog({
     if (!p || typeof p !== "object") return [];
     return Object.keys(p as Record<string, unknown>);
   }, [recipeDetail]);
-
   const nodeCount =
-    ((recipeDetail?.compatibility as { node_count?: number } | undefined)?.node_count ?? 1) || 1;
+    ((recipeDetail?.compatibility as { nodeCount?: number } | undefined)?.nodeCount ?? 1) || 1;
 
   useEffect(() => {
     if (open) {
@@ -121,7 +120,7 @@ export function PlanDeploymentDialog({
               <Label>Recipe</Label>
               <select
                 aria-label="Recipe"
-                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring [color-scheme:dark]"
                 value={recipeDigest}
                 onChange={(e) => {
                   setRecipeDigest(e.target.value);
@@ -141,7 +140,7 @@ export function PlanDeploymentDialog({
               <Label>Profile</Label>
               <select
                 aria-label="Profile"
-                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 [color-scheme:dark]"
                 value={profile}
                 onChange={(e) => setProfile(e.target.value)}
                 disabled={detailFetching}
@@ -163,7 +162,7 @@ export function PlanDeploymentDialog({
                   <select
                     key={i}
                     aria-label={`Rank ${i} node`}
-                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
+                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring [color-scheme:dark]"
                     value={nodeOverrides[i] ?? ""}
                     onChange={(e) =>
                       setNodeOverrides((prev) => ({ ...prev, [i]: e.target.value }))

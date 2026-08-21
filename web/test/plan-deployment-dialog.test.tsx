@@ -11,18 +11,21 @@ import { server } from "../msw/server";
 
 const D = "sha256:3a2e1e83a23a63803d39224b3a0641dd50f223000a1f756f538803ba32e888e2";
 
+// Mirrors the live GET /recipes/:digest response: compatibility uses
+// camelCase `nodeCount` (not snake_case), on both the top level and the
+// embedded manifest.
 const recipe = {
   name: "deepseek-v4-flash-0731-dspark-tp2",
   version: "1.0.0",
   digest: D,
   trust_state: "local",
   installed_at: "2026-08-21T06:17:58Z",
-  compatibility: { node_count: 2, accelerator: { vendor: "nvidia", architectures: ["sm_121"], count: 1 } },
+  compatibility: { nodeCount: 2, accelerator: { vendor: "nvidia", architectures: ["sm_121"], count: 1 } },
 };
 
 const recipeDetail = {
   ...recipe,
-  manifest: { name: recipe.name, version: recipe.version, compatibility: recipe.compatibility },
+  manifest: { apiVersion: "lmw/v1", kind: "Recipe", metadata: { name: recipe.name }, compatibility: recipe.compatibility, artifacts: [], workloads: [], assets: [] },
 };
 
 const nodes = [
