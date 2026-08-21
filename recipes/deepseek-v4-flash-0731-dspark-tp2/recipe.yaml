@@ -1,0 +1,161 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: deepseek-v4-flash-0731-dspark-tp2
+  version: 1.0.0
+  displayName: DeepSeek V4 Flash (DSpark 2x DGX Spark)
+  description: >-
+    Two-node GB10 (DGX Spark) vLLM TP=2 with DSpark speculative decoding for
+    deepseek-ai/DeepSeek-V4-Flash-0731. 1M-token ceiling, nvfp4_ds_mla KV cache,
+    RoCE fabric between the two ranks. Head node serves the OpenAI API on :8888;
+    the worker rank is headless. Sourced from
+    MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark.
+  license: MIT
+  source:
+    url: https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark
+    revision: "9cce187ff596b8bc90faa751010bf60542f93da0"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts:
+  - name: model
+    kind: model
+    source:
+      type: huggingface
+      identity: hf://deepseek-ai/DeepSeek-V4-Flash-0731
+      revision: "9e165c30e2704aec5d9d593cce3eebd58bbef1cb"
+    mount: /models/hub/models--deepseek-ai--DeepSeek-V4-Flash-0731
+    validation: snapshot
+workloads:
+  - match:
+      nodeCount: 2
+      accelerator:
+        vendor: nvidia
+    image:
+      reference: ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
+      digest: sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
+    command:
+      - /bin/bash
+      - /lmw/assets/serve.sh
+    args: []
+    ranks:
+      - 0
+      - 1
+    env:
+      # rank / distributed wiring
+      NODE_RANK: "${node.rank}"
+      WORLD_SIZE: "2"
+      MASTER_ADDR: "${fabric.address}"
+      MASTER_PORT: "25000"
+      # model / serve
+      MODEL_PATH: "${artifact.model.path}"
+      SERVED: "deepseek-v4-flash-0731"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8888"
+      MAX_MODEL_LEN: "1048576"
+      MAX_NUM_SEQS: "6"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      LONG_PREFILL_TOKEN_THRESHOLD: "1024"
+      MTP_NUM_TOKENS: "5"
+      KV_CACHE_DTYPE: "fp8_ds_mla"
+      GPU_MEMORY_UTILIZATION: "0.85"
+      CUDA_VISIBLE_DEVICES: "0"
+      # capability profile + custom vllm modules (recipe assets)
+      PYTHONPATH: "/lmw/assets"
+      DGX_MODEL_CAPABILITIES_PATH: "/lmw/assets/capabilities.json"
+      DGX_MODEL_CAPABILITIES_SHA256: "c68f3bf45b65f1896f01330e97ff54fa35048a7bb8550f1f6bf8fb6a97251785"
+      # NCCL / RoCE fabric
+      VLLM_HOST_IP: "${node.address}"
+      GLOO_SOCKET_IFNAME: "enp1s0f1np1"
+      TP_SOCKET_IFNAME: "enp1s0f1np1"
+      NCCL_SOCKET_IFNAME: "enp1s0f1np1"
+      NCCL_IB_HCA: "rocep1s0f1"
+      NCCL_IB_GID_INDEX: "5"
+      NCCL_IB_ADDR_FAMILY: "AF_INET"
+      NCCL_IB_ROCE_VERSION_NUM: "2"
+      NCCL_IB_DISABLE: "0"
+      NCCL_NET: "IB"
+      NCCL_CROSS_NIC: "1"
+      NCCL_NVLS_ENABLE: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: "INFO"
+      # CUDA / arch
+      TORCH_CUDA_ARCH_LIST: "12.1a"
+      FLASHINFER_CUDA_ARCH_LIST: "12.1a"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      DG_JIT_USE_NVRTC: "0"
+      DG_JIT_NVCC_COMPILER: "/usr/local/cuda/bin/nvcc"
+      # DSpark / B12X tuning (matching the production contract)
+      VLLM_USE_B12X_MOE: "1"
+      VLLM_USE_B12X_WO_PROJECTION: "1"
+      VLLM_TRITON_MLA_SPARSE: "1"
+      VLLM_USE_FLASHINFER_SAMPLER: "1"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "256"
+      VLLM_B12X_W4A16_FORCE_BLOCKS_PER_SM: "0"
+      VLLM_B12X_W4A16_FORCE_BLOCKS_MAX_M: "16"
+      VLLM_B12X_W4A16_FORCE_TILE_CONFIG: ""
+      B12X_W4A16_TC_DECODE: "0"
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      VLLM_SKIP_INIT_MEMORY_CHECK: "1"
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
+      VLLM_DSPARK_CONFIDENCE_SCHEDULER: "off"
+      VLLM_DSPARK_CONFIDENCE_THRESHOLD: "0.0"
+      VLLM_DSPARK_HARDWARE_SCHEDULER_EARLY_STOP: "1"
+      VLLM_DSPARK_REPLICATE_MARKOV_W1: "1"
+      VLLM_DSPARK_LOCAL_ARGMAX: "1"
+      VLLM_DSPARK_FUSED_MARKOV_ARGMAX: "0"
+      VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK: "1"
+      VLLM_DSPARK_REFERENCE_KV_QUANT_DEQUANT: "0"
+      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE: "0"
+      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE_EXACT: "0"
+      VLLM_DSV4_B12X_COMPRESSED_MLA: "0"
+      DECODE_AWARE_PREFILL_INTERVAL: "8"
+      DECODE_AWARE_THROTTLED_TOKENS: "6"
+      DSPARK_SLOT_CLAMP: "1"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
+      # offline HF (model artifact is pre-placed by LMW)
+      HF_HOME: "/models/hub"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # writable scratch
+      HOME: "/tmp/home"
+      NUMBA_CACHE_DIR: "/tmp/numba"
+      TRITON_CACHE_DIR: "/tmp/triton"
+      XDG_CACHE_HOME: "/tmp/cache"
+      VLLM_CACHE_ROOT: "/tmp/vllm-cache"
+    devices:
+      accelerator:
+        all: true
+      rdma:
+        all: true
+    networkMode: host
+    permissions:
+      - devices.rdma
+      - network.host
+      - memory.shm-large
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    resources:
+      cpu: 16
+      memoryBytes: 103079215104
+      shmBytes: 34359738368
+      tmpfsBytes: 8589934592
+      pids: 8192
+assets:
+  - serve.sh
+  - model_capabilities.py
+  - decode_aware_scheduler.py
+  - capabilities.json

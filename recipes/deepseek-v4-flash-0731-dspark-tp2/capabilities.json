@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "api": "openai-completions",
+  "input": ["text"],
+  "max_output_tokens": 393216,
+  "quantization": {
+    "weights": "FP8"
+  },
+  "tools": {
+    "supported": true,
+    "parallel": true
+  },
+  "reasoning": {
+    "supported": true,
+    "can_disable": true,
+    "levels": ["high", "max"],
+    "default": "high",
+    "request_format": "qwen-chat-template",
+    "response_field": "reasoning_content"
+  }
+}
