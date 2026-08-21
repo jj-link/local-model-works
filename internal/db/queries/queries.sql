@@ -159,6 +159,10 @@ FROM artifact_placements WHERE artifact_id = ?;
 SELECT id, artifact_id, node_id, path, state, verified_at, diagnostics, size_bytes
 FROM artifact_placements WHERE node_id = ?;
 
+-- name: GetPlacement :one
+SELECT id, artifact_id, node_id, path, state, verified_at, diagnostics, size_bytes
+FROM artifact_placements WHERE artifact_id = ? AND node_id = ? AND path = ?;
+
 -- name: CreateRecipe :exec
 INSERT OR IGNORE INTO recipes (digest, name, version, display_name, description,
                                license, source, trust_state, manifest)

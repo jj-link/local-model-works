@@ -526,10 +526,28 @@ func (s *Server) applyPlacementReport(ctx context.Context, nodeID string, pr *ag
 		})
 	}
 	dj, _ := json.Marshal(diagnostics)
+	// Dedup: agents re-report their whole placement set on every rescan, so
+	// without change detection the activity stream floods with identical
+	// artifact.placement events. Only publish (and notify the deploy
+	// service) when the row is new or a tracked field actually changed.
+	prev, perr := s.q.GetPlacement(ctx, db.GetPlacementParams{
+		ArtifactID: art.ID, NodeID: nodeID, Path: pr.GetPath(),
+	})
+	changed := true
+	if perr == nil {
+		verifiedChanged := prev.VerifiedAt.Valid != verified.Valid ||
+			(prev.VerifiedAt.Valid && verified.Valid && prev.VerifiedAt.String != verified.String)
+		changed = prev.State != pr.GetState() ||
+			prev.SizeBytes != int64(pr.GetSizeBytes()) ||
+			verifiedChanged
+	}
 	if err := s.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
 		ArtifactID: art.ID, NodeID: nodeID, Path: pr.GetPath(), State: pr.GetState(),
 		VerifiedAt: verified, Diagnostics: string(dj), SizeBytes: int64(pr.GetSizeBytes()),
 	}); err != nil {
+		return
+	}
+	if !changed {
 		return
 	}
 	s.bus.Publish(ctx, "artifact.placement", nodeID, mustJSON(pr))

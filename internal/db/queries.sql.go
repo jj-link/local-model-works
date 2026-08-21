@@ -796,6 +796,33 @@ func (q *Queries) GetNodeCredential(ctx context.Context, nodeID string) (NodeCre
 	return i, err
 }
 
+const getPlacement = `-- name: GetPlacement :one
+SELECT id, artifact_id, node_id, path, state, verified_at, diagnostics, size_bytes
+FROM artifact_placements WHERE artifact_id = ? AND node_id = ? AND path = ?
+`
+
+type GetPlacementParams struct {
+	ArtifactID string `json:"artifact_id"`
+	NodeID     string `json:"node_id"`
+	Path       string `json:"path"`
+}
+
+func (q *Queries) GetPlacement(ctx context.Context, arg GetPlacementParams) (ArtifactPlacement, error) {
+	row := q.db.QueryRowContext(ctx, getPlacement, arg.ArtifactID, arg.NodeID, arg.Path)
+	var i ArtifactPlacement
+	err := row.Scan(
+		&i.ID,
+		&i.ArtifactID,
+		&i.NodeID,
+		&i.Path,
+		&i.State,
+		&i.VerifiedAt,
+		&i.Diagnostics,
+		&i.SizeBytes,
+	)
+	return i, err
+}
+
 const getRecipe = `-- name: GetRecipe :one
 SELECT digest, name, version, display_name, description, license, source,
        trust_state, manifest, installed_at
