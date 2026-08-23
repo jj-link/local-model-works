@@ -100,42 +100,65 @@
       "maxLength": 8192,
       "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.address|artifact\\.[a-z0-9][a-z0-9_]*\\.path|profile\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
     },
+    "variantSource": {
+
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "identity"],
+      "properties": {
+        "type": { "type": "string", "enum": ["huggingface", "oci", "file"] },
+        "identity": {
+          "type": "string",
+          "pattern": "^(hf://[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+|[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-zA-Z0-9._/-]+)$",
+          "maxLength": 512
+        },
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "huggingface" } } },
+          "then": { "required": ["revision"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "file" } } },
+          "then": { "required": ["digest"] }
+        }
+      ]
+    },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "kind", "source", "mount"],
+      "required": ["name", "kind", "mount"],
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
         "kind": { "type": "string", "enum": ["model", "dataset", "adapter", "checkpoint", "file"] },
-        "source": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["type", "identity"],
-          "properties": {
-            "type": { "type": "string", "enum": ["huggingface", "oci", "file"] },
-            "identity": {
-              "type": "string",
-              "pattern": "^(hf://[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+|[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-zA-Z0-9._/-]+)$",
-              "maxLength": 512
-            },
-            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
-          },
-          "allOf": [
-            {
-              "if": { "properties": { "type": { "const": "huggingface" } } },
-              "then": { "required": ["revision"] }
-            },
-            {
-              "if": { "properties": { "type": { "const": "file" } } },
-              "then": { "required": ["digest"] }
+        "source": { "$ref": "#/$defs/variantSource" },
+        "defaultVariant": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "source"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
+              "label": { "type": "string", "maxLength": 128 },
+              "source": { "$ref": "#/$defs/variantSource" }
             }
-          ]
+          }
         },
         "mount": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]*$" },
         "validation": { "type": "string", "enum": ["snapshot", "directory", "file"] }
       },
       "allOf": [
+        {
+          "oneOf": [
+            { "required": ["source"] },
+            { "required": ["variants"] }
+          ]
+        },
         {
           "if": { "properties": { "kind": { "enum": ["model", "dataset", "adapter", "checkpoint"] } } },
           "then": { "properties": { "validation": { "enum": ["snapshot", "directory"] } } }

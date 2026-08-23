@@ -224,6 +224,11 @@ components:
                 format: uuid
               rank:
                 type: integer
+        variants:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Optional artifact name -> selected model variant. Omit for the recipe default."
 
     TransferPreview:
       type: object
@@ -253,6 +258,18 @@ components:
       type: object
       required: [recipe_digest, profile, placements, ready]
       properties:
+        plan_digest:
+          type: string
+          description: Opaque digest for this previewed plan; pass to create to pin it
+        variants:
+          type: object
+          additionalProperties:
+            type: string
+          description: Resolved per-artifact model variants
+        workload_index:
+          type: integer
+          nullable: true
+          description: Workload identity for accelerator tuning
         recipe_digest:
           type: string
         recipe_name:
@@ -359,6 +376,11 @@ components:
         plan_digest:
           type: string
           description: Distinguishes an unchanged plan from the one previewed
+        variants:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Optional artifact name -> selected model variant. Must match the previewed plan."
 
     Deployment:
       type: object

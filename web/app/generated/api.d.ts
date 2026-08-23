@@ -930,6 +930,10 @@ export interface components {
             plan_digest?: string;
             profile: string;
             recipe_digest: string;
+            /** @description Optional artifact name -> selected model variant. Must match the previewed plan. */
+            variants?: {
+                [key: string]: string;
+            };
         };
         DeploymentPlan: {
             conflicts?: {
@@ -954,6 +958,8 @@ export interface components {
                 node_name?: string;
                 rank: number;
             }[];
+            /** @description Opaque digest for this previewed plan; pass to create to pin it */
+            plan_digest?: string;
             ports?: {
                 container_port: number;
                 host_port: number;
@@ -970,6 +976,12 @@ export interface components {
             recipe_version?: string;
             risks?: string[];
             transfers?: components["schemas"]["TransferPreview"][];
+            /** @description Resolved per-artifact model variants */
+            variants?: {
+                [key: string]: string;
+            };
+            /** @description Workload identity for accelerator tuning */
+            workload_index?: number | null;
         };
         DeploymentPlanRequest: {
             /** @description Optional explicit node per rank; omit for automatic selection */
@@ -980,6 +992,10 @@ export interface components {
             }[];
             profile: string;
             recipe_digest: string;
+            /** @description Optional artifact name -> selected model variant. Omit for the recipe default. */
+            variants?: {
+                [key: string]: string;
+            };
         };
         Diagnostic: {
             code: string;

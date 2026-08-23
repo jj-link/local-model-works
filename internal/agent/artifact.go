@@ -20,6 +20,9 @@ import (
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
+// hfBaseURL is the Hugging Face API/download origin. Overridden in tests.
+var hfBaseURL = &url.URL{Scheme: "https", Host: "huggingface.co"}
+
 type hfModelInfo struct {
 	Siblings []struct {
 		Name string `json:"rfilename"`
@@ -117,7 +120,13 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 		return fmt.Errorf("invalid HF repository")
 	}
 	client := &http.Client{Timeout: 30 * time.Minute}
-	apiURL := "https://huggingface.co/api/models/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/revision/" + revision
+	baseURL := &url.URL{Scheme: hfBaseURL.Scheme, Host: hfBaseURL.Host, Path: "/api/models/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/revision/" + revision}
+	// ?blobs=true is required so Hugging Face populates `size` and `lfs` on
+	// each sibling. Without it siblings carry only `rfilename`, which decode
+	// to size 0 / nil LFS and make resumeHTTPFile read 1 byte against a
+	// "want 0" expectation.
+	baseURL.RawQuery = url.Values{"blobs": {"true"}}.Encode()
+	apiURL := baseURL.String()
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	request.Header.Set("Accept", "application/json")
 	if token != "" {
@@ -139,6 +148,20 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 	blobRoot := filepath.Join(modelRoot, "blobs")
 	snapshotRoot := filepath.Join(modelRoot, "snapshots", revision)
 	partialRoot := filepath.Join(modelRoot, ".downloads", revision)
+	// The model tree (blobs + snapshot symlinks) is bind-mounted into the
+	// workload container, which runs as root with all capabilities dropped
+	// (no CAP_DAC_OVERRIDE). Directories must be 0755 (world-traversable),
+	// not the 0750/0700 defaults, or the container cannot reach the files.
+	for _, dir := range []string{modelRoot, blobRoot, snapshotRoot, partialRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	// Normalize a model tree fetched by an older agent build (0750 dirs /
+	// 0640 blobs) so a cache hit is also container-readable.
+	if err := makeModelTreeReadable(modelRoot); err != nil {
+		return err
+	}
 	for _, sibling := range info.Siblings {
 		rel, err := safeRelativePath(sibling.Name)
 		if err != nil {
@@ -152,10 +175,10 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 			return fmt.Errorf("HF file %s has invalid size", sibling.Name)
 		}
 		partial := filepath.Join(partialRoot, rel+".part")
-		if err := os.MkdirAll(filepath.Dir(partial), 0o750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(partial), 0o755); err != nil {
 			return err
 		}
-		downloadURL := "https://huggingface.co/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/resolve/" + revision + "/" + strings.ReplaceAll(url.PathEscape(filepath.ToSlash(rel)), "%2F", "/")
+		downloadURL := fmt.Sprintf("%s://%s/%s/%s/resolve/%s/%s", hfBaseURL.Scheme, hfBaseURL.Host, url.PathEscape(owner), url.PathEscape(repo), revision, strings.ReplaceAll(url.PathEscape(filepath.ToSlash(rel)), "%2F", "/"))
 		if err := resumeHTTPFile(ctx, client, downloadURL, token, partial, expectedSize); err != nil {
 			return err
 		}
@@ -164,7 +187,7 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 			return fmt.Errorf("HF file %s digest or size mismatch", sibling.Name)
 		}
 		blob := filepath.Join(blobRoot, strings.TrimPrefix(digest, "sha256:"))
-		if err := os.MkdirAll(blobRoot, 0o750); err != nil {
+		if err := os.MkdirAll(blobRoot, 0o755); err != nil {
 			return err
 		}
 		if _, err := os.Stat(blob); os.IsNotExist(err) {
@@ -175,7 +198,7 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 			_ = os.Remove(partial)
 		}
 		link := filepath.Join(snapshotRoot, rel)
-		if err := os.MkdirAll(filepath.Dir(link), 0o750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 			return err
 		}
 		target, _ := filepath.Rel(filepath.Dir(link), blob)
@@ -219,7 +242,11 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 	} else {
 		return fmt.Errorf("download HTTP %d", response.StatusCode)
 	}
-	file, err := os.OpenFile(destination, flags, 0o640)
+	// The blob is bind-mounted into the workload container, which runs as
+	// root with all capabilities dropped (no CAP_DAC_OVERRIDE). It must be
+	// world-readable (0644), not the OS default 0640, or the container gets
+	// "Permission denied" on config.json / weight files.
+	file, err := os.OpenFile(destination, flags, 0o644)
 	if err != nil {
 		return err
 	}
@@ -233,6 +260,11 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 	}
 	if offset+written != expectedSize {
 		return fmt.Errorf("download size %d, want %d", offset+written, expectedSize)
+	}
+	// A pre-existing .part/.resume target may already exist at 0640;
+	// re-chmod so a cache hit also ends up world-readable.
+	if err := os.Chmod(destination, 0o644); err != nil {
+		return err
 	}
 	return nil
 }
@@ -281,11 +313,24 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 		return fmt.Errorf("package layer digest mismatch")
 	}
 	root := filepath.Join(a.cfg.StateRoot, "recipes")
-	if err := os.MkdirAll(root, 0o750); err != nil {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	// MkdirAll only sets the mode when creating; a recipes directory already
+	// present as 0750 from an older agent build must be re-chmodded here so
+	// the upgraded agent fixes live installs, and so the bind-source chain
+	// stays traversable by the container's non-agent UID.
+	if err := os.Chmod(root, 0o755); err != nil {
 		return err
 	}
 	final := filepath.Join(root, strings.TrimPrefix(manifestDigest, "sha256:"))
 	if _, err := os.Stat(final); err == nil {
+		// A package from an older agent build is cached here with the
+		// 0700/0750 directory modes that block the container's non-agent UID;
+		// normalize it so a retried deploy of the same digest works.
+		if err := makePackageTraversable(final); err != nil {
+			return err
+		}
 		a.sendPlacement(placementCandidate{Identity: identity, Path: final, State: "valid", Size: int64(len(layer))})
 		return nil
 	}
@@ -294,11 +339,14 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 		return err
 	}
 	defer os.RemoveAll(staging)
+	// Unpack assets into the staging tree, then normalize the whole package
+	// directory chain to 0755 so the bind-mounted assets are traversable by
+	// the container's non-agent UID.
 	assets := filepath.Join(staging, "assets")
-	if err := os.MkdirAll(assets, 0o750); err != nil {
+	if err := recipe.UnpackLayer(layer, assets); err != nil {
 		return err
 	}
-	if err := recipe.UnpackLayer(layer, assets); err != nil {
+	if err := makePackageTraversable(staging); err != nil {
 		return err
 	}
 	if err := os.Rename(staging, final); err != nil {
@@ -306,4 +354,53 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 	}
 	a.sendPlacement(placementCandidate{Identity: identity, Path: final, State: "valid", Size: int64(len(layer))})
 	return nil
+}
+
+// makePackageTraversable walks a recipe package directory and sets every
+// directory to 0755 (world-traversable). The package and its assets subtree
+// are bind-mounted into the workload container, which runs as a non-agent
+// UID; the 0700/0750 modes the OS defaults leave on the staging/recipes
+// directories block that UID from reaching /lmw/assets/serve.sh, which the
+// container reports as "Permission denied". Files keep their packed modes
+// (0555), so only directory modes are normalized here.
+func makePackageTraversable(pkgDir string) error {
+	return filepath.WalkDir(pkgDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		return os.Chmod(p, 0o755)
+	})
+}
+
+// makeModelTreeReadable normalizes a Hugging Face cache model tree so the
+// workload container (root, no CAP_DAC_OVERRIDE) can read it: every directory
+// to 0755 (world-traversable) and every regular file to 0644 (world-readable).
+// Symlinks are left untouched — they are the HF snapshot -> blobs links. This
+// fixes model trees fetched by an older agent build that created 0750
+// directories and 0640 blobs, which a cache hit would otherwise serve up
+// still unreadable.
+func makeModelTreeReadable(modelRoot string) error {
+	if _, err := os.Stat(modelRoot); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(modelRoot, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.Chmod(p, 0o755)
+		case info.Mode().IsRegular():
+			return os.Chmod(p, 0o644)
+		default:
+			return nil // symlinks and other special files: leave as-is
+		}
+	})
 }

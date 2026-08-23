@@ -64,7 +64,7 @@ func TestRecipeInstallRequestsConnectedAgentCacheRescan(t *testing.T) {
 		Name: "late-cache", Version: "1.0.0", NodeCount: 1,
 		Artifacts: []recipe.Artifact{{
 			Name: "model", Kind: "model", Mount: "/models/model",
-			Source: recipe.ArtSource{Type: "huggingface", Identity: "hf://Acme/LateModel", Revision: revision},
+			Source: &recipe.ArtSource{Type: "huggingface", Identity: "hf://Acme/LateModel", Revision: revision},
 		}},
 	}
 	document, err := json.Marshal(fixture.Manifest())

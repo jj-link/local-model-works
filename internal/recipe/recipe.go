@@ -84,11 +84,48 @@ type FabricCompat struct {
 }
 
 type Artifact struct {
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind"`
-	Source     ArtSource `json:"source"`
-	Mount      string    `json:"mount"`
-	Validation string    `json:"validation,omitempty"`
+	Name           string       `json:"name"`
+	Kind           string       `json:"kind"`
+	Source         *ArtSource   `json:"source,omitempty"`
+	DefaultVariant string       `json:"defaultVariant,omitempty"`
+	Variants       []ArtVariant `json:"variants,omitempty"`
+	Mount          string       `json:"mount"`
+	Validation     string       `json:"validation,omitempty"`
+}
+
+// ArtVariant is one selectable model variant of an artifact. Exactly one of
+// Artifact.Source or Artifact.Variants is present (schema oneOf).
+type ArtVariant struct {
+	Name   string    `json:"name"`
+	Label  string    `json:"label,omitempty"`
+	Source ArtSource `json:"source"`
+}
+
+// EffectiveSource resolves the artifact's source for a deployment: the
+// static source when the artifact has no variants, otherwise the named
+// variant's source (defaultVariant when variant is empty). Returns an error
+// for a missing source or an unknown variant so the wrong model is never
+// silently deployed.
+func (a *Artifact) EffectiveSource(variant string) (*ArtSource, error) {
+	if len(a.Variants) == 0 {
+		if a.Source == nil {
+			return nil, fmt.Errorf("artifact %q has no source or variants", a.Name)
+		}
+		return a.Source, nil
+	}
+	name := variant
+	if name == "" {
+		name = a.DefaultVariant
+	}
+	if name == "" {
+		return nil, fmt.Errorf("artifact %q declares variants but no defaultVariant", a.Name)
+	}
+	for _, v := range a.Variants {
+		if v.Name == name {
+			return &v.Source, nil
+		}
+	}
+	return nil, fmt.Errorf("artifact %q has no variant %q", a.Name, name)
 }
 
 type ArtSource struct {

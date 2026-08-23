@@ -144,11 +144,31 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 			add("recipe.mount-duplicate", "two artifacts mount the same in-container path", p+".mount")
 		}
 		seenMounts[a.Mount] = true
-		if a.Source.Type == "huggingface" && !sha40.MatchString(a.Source.Revision) {
-			add("recipe.hf-unpinned", "huggingface artifact requires a 40-hex revision", p+".source.revision")
+		checkSrc := func(src ArtSource, path string) {
+			if src.Type == "huggingface" && !sha40.MatchString(src.Revision) {
+				add("recipe.hf-unpinned", "huggingface artifact requires a 40-hex revision", path+".revision")
+			}
+			if src.Type == "file" && src.Digest == "" {
+				add("recipe.file-unpinned", "file artifact requires a sha256 digest", path+".digest")
+			}
 		}
-		if a.Source.Type == "file" && a.Source.Digest == "" {
-			add("recipe.file-unpinned", "file artifact requires a sha256 digest", p+".source.digest")
+		if len(a.Variants) > 0 {
+			if a.DefaultVariant == "" {
+				add("recipe.variant-default", "artifact declares variants but no defaultVariant", p+".defaultVariant")
+			}
+			seenVariants := map[string]bool{}
+			for vi, v := range a.Variants {
+				if seenVariants[v.Name] {
+					add("recipe.variant-duplicate", "duplicate variant name", fmt.Sprintf("%s.variants[%d].name", p, vi))
+				}
+				seenVariants[v.Name] = true
+				checkSrc(v.Source, fmt.Sprintf("%s.variants[%d].source", p, vi))
+			}
+			if a.DefaultVariant != "" && !seenVariants[a.DefaultVariant] {
+				add("recipe.variant-default-unknown", "defaultVariant does not match any variant name", p+".defaultVariant")
+			}
+		} else if a.Source != nil {
+			checkSrc(*a.Source, p+".source")
 		}
 	}
 

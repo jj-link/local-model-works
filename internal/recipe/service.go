@@ -247,23 +247,47 @@ func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeS
 		return Recipe{}, err
 	}
 	for _, artifact := range manifest.Artifacts {
-		canonical, err := artifactidentity.Canonical(
-			artifact.Source.Type, artifact.Source.Identity, artifact.Source.Revision, artifact.Source.Digest,
-		)
-		if err != nil {
-			return Recipe{}, fmt.Errorf("artifact %s: %w", artifact.Name, err)
+		// Register the static source (no variants) or every variant's source
+		// (variant artifacts), deduplicated by canonical identity so planning
+		// a non-default selection finds its artifact in the library.
+		sources := map[string]*ArtSource{}
+		order := []string{}
+		if len(artifact.Variants) == 0 {
+			if artifact.Source != nil {
+				s, sErr := artifact.EffectiveSource("")
+				if sErr != nil {
+					return Recipe{}, fmt.Errorf("artifact %s: %w", artifact.Name, sErr)
+				}
+				sources[fmt.Sprintf("%s/%s", s.Identity, s.Revision)] = s
+				order = append(order, s.Identity+"/"+s.Revision)
+			}
+		} else {
+			for _, v := range artifact.Variants {
+				key := fmt.Sprintf("%s/%s", v.Source.Identity, v.Source.Revision)
+				if _, ok := sources[key]; !ok {
+					sources[key] = &v.Source
+					order = append(order, key)
+				}
+			}
 		}
-		sum := sha256.Sum256([]byte(canonical))
-		metadata, _ := json.Marshal(map[string]any{"name": artifact.Name, "mount": artifact.Mount})
-		if err := qtx.CreateArtifact(ctx, db.CreateArtifactParams{
-			ID:       "artifact-" + hex.EncodeToString(sum[:8]),
-			Kind:     artifact.Kind,
-			Identity: canonical,
-			Revision: nullStr(artifact.Source.Revision),
-			Digest:   nullStr(artifact.Source.Digest),
-			Metadata: string(metadata),
-		}); err != nil {
-			return Recipe{}, err
+		for _, key := range order {
+			src := sources[key]
+			canonical, err := artifactidentity.Canonical(src.Type, src.Identity, src.Revision, src.Digest)
+			if err != nil {
+				return Recipe{}, fmt.Errorf("artifact %s: %w", artifact.Name, err)
+			}
+			sum := sha256.Sum256([]byte(canonical))
+			metadata, _ := json.Marshal(map[string]any{"name": artifact.Name, "mount": artifact.Mount, "variant": key})
+			if err := qtx.CreateArtifact(ctx, db.CreateArtifactParams{
+				ID:       "artifact-" + hex.EncodeToString(sum[:8]),
+				Kind:     artifact.Kind,
+				Identity: canonical,
+				Revision: nullStr(src.Revision),
+				Digest:   nullStr(src.Digest),
+				Metadata: string(metadata),
+			}); err != nil {
+				return Recipe{}, err
+			}
 		}
 	}
 	if err := qtx.CreateRecipe(ctx, db.CreateRecipeParams{

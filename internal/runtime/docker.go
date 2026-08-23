@@ -134,6 +134,13 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 		lim := int64(spec.PidsLimit)
 		hostCfg.PidsLimit = &lim
 	}
+	for _, u := range spec.Ulimits {
+		hostCfg.Ulimits = append(hostCfg.Ulimits, &container.Ulimit{
+			Name: u.Name,
+			Hard: u.Hard,
+			Soft: u.Soft,
+		})
+	}
 	for _, m := range spec.Mounts {
 		hostCfg.Mounts = append(hostCfg.Mounts, mount.Mount{
 			Type:     mount.TypeBind,

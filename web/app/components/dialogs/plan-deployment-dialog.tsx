@@ -39,6 +39,20 @@ export function PlanDeploymentDialog({
   const [nodeOverrides, setNodeOverrides] = useState<Record<number, string>>({});
   const { data: recipeDetail, isFetching: detailFetching } = useRecipe(recipeDigest || undefined);
 
+  // Dedupe by name@version, keeping the newest (list arrives newest-first
+  // from the API) so re-importing a renamed recipe shows one entry.
+  const distinctRecipes = useMemo(() => {
+    const seen = new Set<string>();
+    const out = [] as (typeof recipes extends (infer T)[] | undefined ? T : unknown)[];
+    for (const r of recipes ?? []) {
+      const key = `${r.name}@${r.version}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+    return out;
+  }, [recipes]);
+
   const profiles = useMemo(() => {
     const m = recipeDetail?.manifest;
     if (!m || typeof m !== "object") return [];
@@ -46,6 +60,30 @@ export function PlanDeploymentDialog({
     if (!p || typeof p !== "object") return [];
     return Object.keys(p as Record<string, unknown>);
   }, [recipeDetail]);
+
+  // Artifacts that declare selectable model variants.
+  const variantArtifacts = useMemo(() => {
+    const m = recipeDetail?.manifest as Record<string, unknown> | undefined;
+    if (!m) return [];
+    const arts = m.artifacts;
+    if (!Array.isArray(arts)) return [];
+    const out: { name: string; defaultVariant: string; variants: { name: string; label: string }[] }[] = [];
+    for (const a of arts as Record<string, unknown>[]) {
+      const v = a.variants;
+      if (!Array.isArray(v)) continue;
+      out.push({
+        name: String(a.name),
+        defaultVariant: String(a.defaultVariant ?? ""),
+        variants: (v as Record<string, unknown>[]).map((x) => ({
+          name: String(x.name),
+          label: String(x.label ?? x.name),
+        })),
+      });
+    }
+    return out;
+  }, [recipeDetail]);
+
+  const [variantChoices, setVariantChoices] = useState<Record<string, string>>({});
   const nodeCount =
     ((recipeDetail?.compatibility as { nodeCount?: number } | undefined)?.nodeCount ?? 1) || 1;
 
@@ -54,6 +92,7 @@ export function PlanDeploymentDialog({
       setRecipeDigest("");
       setProfile("");
       setNodeOverrides({});
+      setVariantChoices({});
       resetPlan();
       resetCreate();
     }
@@ -71,9 +110,13 @@ export function PlanDeploymentDialog({
       .filter(([, nodeId]) => nodeId)
       .map(([rank, node_id]) => ({ rank: Number(rank), node_id: node_id as string }));
     try {
+      const variants = Object.fromEntries(
+        Object.entries(variantChoices).filter(([, v]) => v),
+      );
       await planMutation.mutateAsync({
         recipe_digest: recipeDigest,
         profile,
+        ...(Object.keys(variants).length > 0 ? { variants } : {}),
         ...(placements.length > 0 ? { placements } : {}),
       });
     } catch (e) {
@@ -84,10 +127,14 @@ export function PlanDeploymentDialog({
   const create = async () => {
     if (!plan) return;
     try {
+      const variants = Object.fromEntries(
+        Object.entries(variantChoices).filter(([, v]) => v),
+      );
       const dep = await createMutation.mutateAsync({
         recipe_digest: recipeDigest,
         profile,
-        plan_digest: undefined,
+        plan_digest: plan.plan_digest,
+        ...(Object.keys(variants).length > 0 ? { variants } : {}),
         ...(plan.placements.length > 0
           ? {
               placements: plan.placements.map((p) => ({ node_id: p.node_id, rank: p.rank })),
@@ -125,13 +172,14 @@ export function PlanDeploymentDialog({
                 onChange={(e) => {
                   setRecipeDigest(e.target.value);
                   setNodeOverrides({});
+                  setVariantChoices({});
                   planMutation.reset();
                 }}
               >
                 <option value="">select recipe</option>
-                {(recipes ?? []).map((r) => (
+                {distinctRecipes.map((r) => (
                   <option key={r.digest} value={r.digest}>
-                    {r.name}@{r.version} ({r.trust_state})
+                    {(r.display_name || r.name)}@{r.version} ({r.trust_state})
                   </option>
                 ))}
               </select>
@@ -153,6 +201,30 @@ export function PlanDeploymentDialog({
                 ))}
               </select>
             </div>
+
+            {variantArtifacts.length > 0 ? (
+              variantArtifacts.map((va) => (
+                <div key={va.name} className="grid gap-2">
+                  <Label>{va.name}</Label>
+                  <select
+                    aria-label={va.name}
+                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 [color-scheme:dark]"
+                    value={variantChoices[va.name] ?? va.defaultVariant}
+                    onChange={(e) => {
+                      setVariantChoices((prev) => ({ ...prev, [va.name]: e.target.value }));
+                      planMutation.reset();
+                    }}
+                    disabled={detailFetching}
+                  >
+                    {va.variants.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))
+            ) : null}
 
           {recipeDigest ? (
             <div className="grid gap-2">

@@ -136,6 +136,9 @@ type DeploymentCreateRequest struct {
 	PlanDigest   *string `json:"plan_digest,omitempty"`
 	Profile      string  `json:"profile"`
 	RecipeDigest string  `json:"recipe_digest"`
+
+	// Variants Optional artifact name -> selected model variant. Must match the previewed plan.
+	Variants *map[string]string `json:"variants,omitempty"`
 }
 
 // DeploymentPlan defines model for DeploymentPlan.
@@ -160,7 +163,10 @@ type DeploymentPlan struct {
 		NodeName         *string            `json:"node_name,omitempty"`
 		Rank             int                `json:"rank"`
 	} `json:"placements"`
-	Ports *[]struct {
+
+	// PlanDigest Opaque digest for this previewed plan; pass to create to pin it
+	PlanDigest *string `json:"plan_digest,omitempty"`
+	Ports      *[]struct {
 		ContainerPort int                `json:"container_port"`
 		HostPort      int                `json:"host_port"`
 		NodeId        openapi_types.UUID `json:"node_id"`
@@ -176,6 +182,12 @@ type DeploymentPlan struct {
 	RecipeVersion *string            `json:"recipe_version,omitempty"`
 	Risks         *[]string          `json:"risks,omitempty"`
 	Transfers     *[]TransferPreview `json:"transfers,omitempty"`
+
+	// Variants Resolved per-artifact model variants
+	Variants *map[string]string `json:"variants,omitempty"`
+
+	// WorkloadIndex Workload identity for accelerator tuning
+	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
 
 // DeploymentPlanRequest defines model for DeploymentPlanRequest.
@@ -187,6 +199,9 @@ type DeploymentPlanRequest struct {
 	} `json:"placements,omitempty"`
 	Profile      string `json:"profile"`
 	RecipeDigest string `json:"recipe_digest"`
+
+	// Variants Optional artifact name -> selected model variant. Omit for the recipe default.
+	Variants *map[string]string `json:"variants,omitempty"`
 }
 
 // Diagnostic defines model for Diagnostic.

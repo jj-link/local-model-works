@@ -95,6 +95,7 @@ type Plan struct {
 	RecipeName    string            `json:"recipe_name,omitempty"`
 	RecipeVersion string            `json:"recipe_version,omitempty"`
 	Profile       string            `json:"profile"`
+	Variants      map[string]string `json:"variants,omitempty"`
 	WorkloadIndex int               `json:"workload_index"`
 	Placements    []Placement       `json:"placements"`
 	Fabric        *string           `json:"fabric,omitempty"`
@@ -113,6 +114,10 @@ type PlanRequest struct {
 	RecipeDigest string              `json:"recipe_digest"`
 	Profile      string              `json:"profile"`
 	Placements   []PlacementOverride `json:"placements,omitempty"`
+	// Variants maps artifact name -> selected variant name. When an artifact
+	// declares variants, the chosen variant's source identity is used for
+	// placement planning. Empty selects the artifact's defaultVariant.
+	Variants map[string]string `json:"variants,omitempty"`
 }
 
 // CreateRequest creates from a validated plan (openapi).
@@ -121,7 +126,9 @@ type CreateRequest struct {
 	Profile      string              `json:"profile"`
 	Placements   []PlacementOverride `json:"placements,omitempty"`
 	PlanDigest   string              `json:"plan_digest,omitempty"`
+	Variants     map[string]string   `json:"variants,omitempty"`
 }
+
 
 // dispatchPhase is one rank's completed dispatch step.
 type dispatchPhases map[int32]string

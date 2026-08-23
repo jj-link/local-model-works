@@ -1708,6 +1708,11 @@ components:
           type: string
         recipe_digest:
           type: string
+        variants:
+          additionalProperties:
+            type: string
+          description: Optional artifact name -> selected model variant. Must match the previewed plan.
+          type: object
       required:
         - recipe_digest
         - profile
@@ -1764,6 +1769,9 @@ components:
               - accelerator_index
             type: object
           type: array
+        plan_digest:
+          description: Opaque digest for this previewed plan; pass to create to pin it
+          type: string
         ports:
           items:
             properties:
@@ -1803,6 +1811,15 @@ components:
           items:
             $ref: '#/components/schemas/TransferPreview'
           type: array
+        variants:
+          additionalProperties:
+            type: string
+          description: Resolved per-artifact model variants
+          type: object
+        workload_index:
+          description: Workload identity for accelerator tuning
+          nullable: true
+          type: integer
       required:
         - recipe_digest
         - profile
@@ -1829,6 +1846,11 @@ components:
           type: string
         recipe_digest:
           type: string
+        variants:
+          additionalProperties:
+            type: string
+          description: Optional artifact name -> selected model variant. Omit for the recipe default.
+          type: object
       required:
         - recipe_digest
         - profile

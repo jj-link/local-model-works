@@ -25,6 +25,13 @@ type PortSpec struct {
 	Protocol  string `json:"protocol"`
 }
 
+// Ulimit is one rlimit. Soft/Hard are rlimit values; -1 means unlimited.
+type Ulimit struct {
+	Name string `json:"name"`
+	Hard int64  `json:"hard"`
+	Soft int64  `json:"soft"`
+}
+
 // ContainerSpec is the typed, JSON-stable workload description sent to an
 // agent inside a WorkloadCommand.
 type ContainerSpec struct {
@@ -50,6 +57,10 @@ type ContainerSpec struct {
 	GPUDeviceIDs    []string          `json:"gpuDeviceIDs,omitempty"`
 	GPUsAll         bool              `json:"gpusAll,omitempty"`
 	RDMAPaths       []string          `json:"rdmaPaths,omitempty"`
+	// Ulimits carries per-resource rlimits (e.g. memlock, stack). Required for
+	// RoCE/NCCL workloads: the container drops all capabilities, so the default
+	// RLIMIT_MEMLOCK (8 KiB) makes ibv_reg_mr_iova2 fail with ENOMEM.
+	Ulimits         []Ulimit          `json:"ulimits,omitempty"`
 }
 
 // ContainerInfo is the observed container state.

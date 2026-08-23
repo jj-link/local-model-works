@@ -1,0 +1,110 @@
+{
+  "remote": "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark.git",
+  "revision": "c172405482871566033d4d8f5ac519e7a3ce1f79",
+  "tree": "e209dd0dfb1d2bf79d2364121f201ba44abdf0ad",
+  "path": "",
+  "candidates": [
+    {
+      "path": ".gitignore",
+      "size": 52,
+      "sha256": "ac6330cc8048f67d82cbe942fde6ffa27cdd457272aa9909ac67c1928f2cbf65"
+    },
+    {
+      "path": "README.md",
+      "size": 14282,
+      "sha256": "5ef5150c5aea479a014ce137d2e705d34040fa0567024178220a1c8c1dad47ca"
+    },
+    {
+      "path": "patch/sglang/README.md",
+      "size": 3010,
+      "sha256": "2db347beb052ccbee44797bf00b83cc63aec25e32948d133a86ff5df80e1a7ce"
+    },
+    {
+      "path": "patch/sglang/kernels/ops/speculative/dflash.py",
+      "size": 10272,
+      "sha256": "21f11619531f493bbe9f71d465912ca707f2d722991832e446ff65aecb40528c"
+    },
+    {
+      "path": "patch/sglang/srt/layers/logprob_processor.py",
+      "size": 31440,
+      "sha256": "a23420ed4a879a6bbff321b31046c1b89958b31d9cdc4e318a6a19f4a028a6e7"
+    },
+    {
+      "path": "patch/sglang/srt/layers/moe/utils.py",
+      "size": 26314,
+      "sha256": "482d5217e420917f18bc3ffca22fdf383cf5ed90a6764c5b32b188fe2decf66d"
+    },
+    {
+      "path": "patch/sglang/srt/mem_cache/allocation_sizing.py",
+      "size": 3417,
+      "sha256": "d4e274499dd13a7688a61b4a896719b9ff8b29c3c93c1e886dbb75e34819c201"
+    },
+    {
+      "path": "patch/sglang/srt/models/dflash.py",
+      "size": 41320,
+      "sha256": "ad1e7957ce59751266c9359bfe65f51668fd81716744e34f55f7efd42e08d0f6"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/dflash_info.py",
+      "size": 7584,
+      "sha256": "217bbbc1c402848979e63898c3823f7b0e0678dd7a9f5f447d3fb3fce5542ba7"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/dflash_info_v2.py",
+      "size": 11707,
+      "sha256": "7cc9fe9ebbbdf416a183acbbcf9c229e4495cb738b369dd2d68f70a7aee98bb6"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/dflash_utils.py",
+      "size": 40163,
+      "sha256": "61feff7656e2e4c157e472a1140ea9525200f5003f9bf0de639b50424e776018"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/dflash_worker_v2.py",
+      "size": 93476,
+      "sha256": "5fd1e3f16c5725e4d56ac327515b56cfd06de52f94b069332d43faad7d771482"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/draft_worker_common.py",
+      "size": 5803,
+      "sha256": "5287ef2254b5be13268eb70fd332304d781d1330158f850d5284f61c328eede5"
+    },
+    {
+      "path": "patch/sglang/srt/speculative/spec_utils.py",
+      "size": 42634,
+      "sha256": "88028c26e7e76c1313b9f5bda75ec76f543fa934cc2f1d27cae3fba086caac7b"
+    },
+    {
+      "path": "start.sh",
+      "size": 11902,
+      "sha256": "9dcc27636debf3a25945426ee9491aa97a58ab8ce268603f882b778c6e12d022"
+    },
+    {
+      "path": "stop.sh",
+      "size": 1034,
+      "sha256": "de0e170c31b09c6d9cde59f4f6ed9c9ae860179be543a5072d1c56c7cc5afca2"
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "recipe.draft_incomplete",
+      "path": "/metadata",
+      "message": "confirm name, version, display name, description, and SPDX license"
+    },
+    {
+      "code": "recipe.draft_incomplete",
+      "path": "/compatibility",
+      "message": "declare hardware and fabric requirements"
+    },
+    {
+      "code": "recipe.draft_incomplete",
+      "path": "/artifacts",
+      "message": "declare immutable artifact identities"
+    },
+    {
+      "code": "recipe.draft_incomplete",
+      "path": "/workloads",
+      "message": "author at least one digest-pinned declarative workload"
+    }
+  ]
+}

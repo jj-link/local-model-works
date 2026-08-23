@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -301,6 +302,66 @@ func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
 	if len(spec.Cmd) < 4 || spec.Cmd[1] != "node-exact" {
 		t.Fatalf("rendered node arguments = %v", spec.Cmd)
 	}
+}
+
+// TestRenderedSpecSetsMemlockUlimitForRDMA reproduces the spark2 RoCE failure
+// where ibv_reg_mr_iova2 returned ENOMEM: the workload drops all capabilities
+// (no CAP_IPC_LOCK) and the default RLIMIT_MEMLOCK is too small for NCCL to
+// register IB buffers. An RDMA workload must get memlock unlimited + 64 MiB
+// stack, matching the prior Spark launcher; a non-RDMA workload must not.
+func TestRenderedSpecSetsMemlockUlimitForRDMA(t *testing.T) {
+	base := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"%s","version":"1"},
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}%s%s
+	  }]
+	}`
+
+	run := func(name, extra, perm string, wantRDMA bool) {
+		t.Run(name, func(t *testing.T) {
+			manifest := fmt.Sprintf(base, name, extra, perm)
+			h := newHarness(t)
+			h.seedNode(t, "node-"+name, nil, "")
+			h.seedRecipe(t, "recipe-"+name, manifest)
+			h.createDeployment(t, "recipe-"+name, PlacementOverride{NodeID: "node-" + name, Rank: 0})
+			commands := h.nodes.workloadCommands()
+			if len(commands) != 1 {
+				t.Fatalf("workload commands = %d", len(commands))
+			}
+			var spec runtime.ContainerSpec
+			if err := json.Unmarshal(commands[0].msg.GetWorkloadCommand().GetContainerSpec(), &spec); err != nil {
+				t.Fatal(err)
+			}
+			if wantRDMA {
+				if len(spec.Ulimits) != 2 {
+					t.Fatalf("RDMA spec ulimits = %+v, want 2 (memlock, stack)", spec.Ulimits)
+				}
+				var memlock, stack *runtime.Ulimit
+				for i := range spec.Ulimits {
+					switch spec.Ulimits[i].Name {
+					case "memlock":
+						memlock = &spec.Ulimits[i]
+					case "stack":
+						stack = &spec.Ulimits[i]
+					}
+				}
+				if memlock == nil || memlock.Hard != -1 || memlock.Soft != -1 {
+					t.Fatalf("memlock = %+v, want unlimited (-1)", memlock)
+				}
+				if stack == nil || stack.Hard != 67108864 || stack.Soft != 67108864 {
+					t.Fatalf("stack = %+v, want 64MiB", stack)
+				}
+			} else {
+				if len(spec.Ulimits) != 0 {
+					t.Fatalf("non-RDMA spec ulimits = %+v, want none", spec.Ulimits)
+				}
+			}
+		})
+	}
+
+	run("rdma-all", `,"devices":{"rdma":{"all":true}}`, `,"permissions":["devices.rdma"]`, true)
+	run("plain", "", "", false)
 }
 
 func TestExtensionCommandsBracketWorkload(t *testing.T) {

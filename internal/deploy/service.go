@@ -100,6 +100,7 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 		RecipeName:    row.Name,
 		RecipeVersion: row.Version,
 		Profile:       req.Profile,
+		Variants:      req.Variants,
 	}
 
 	nodes, err := s.q.ListNodes(ctx)
@@ -577,8 +578,12 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 
 	// Artifacts.
 	for _, a := range m.Artifacts {
+		src, srcErr := a.EffectiveSource(req.Variants[a.Name])
+		if srcErr != nil {
+			return nil, fmt.Errorf("artifact %s: %w", a.Name, srcErr)
+		}
 		identity, identityErr := artifactidentity.Canonical(
-			a.Source.Type, a.Source.Identity, a.Source.Revision, a.Source.Digest,
+			src.Type, src.Identity, src.Revision, src.Digest,
 		)
 		if identityErr != nil {
 			return nil, fmt.Errorf("artifact %s: %w", a.Name, identityErr)
@@ -833,6 +838,9 @@ type placementSet struct {
 	// render/verify execute exactly this variant. Nil for rows created
 	// before the field existed (fleet-based reselection).
 	Workload *int `json:"workload,omitempty"`
+	// Variants maps artifact name -> selected model variant, captured at plan
+	// time so render re-resolves the exact artifact identity the plan used.
+	Variants map[string]string `json:"variants,omitempty"`
 }
 
 // ParsePlacementSet decodes a stored placement document; it tolerates the
@@ -896,6 +904,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 		RecipeDigest: req.RecipeDigest,
 		Profile:      req.Profile,
 		Placements:   req.Placements,
+		Variants:     req.Variants,
 	})
 	if err != nil {
 		return nil, err
@@ -916,7 +925,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 	depID, _ := id.New()
 	runIDStr, _ := id.New()
 	wi := plan.WorkloadIndex
-	ps := placementSet{Ranks: map[string]int{}, Entries: plan.Placements, Workload: &wi}
+	ps := placementSet{Ranks: map[string]int{}, Entries: plan.Placements, Workload: &wi, Variants: plan.Variants}
 	for _, pl := range plan.Placements {
 		ps.Ranks[pl.NodeID] = int(pl.Rank)
 	}
@@ -1138,7 +1147,7 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 		if dest == "" {
 			dest = "/var/lib/lmw/artifacts/" + artifact.Name
 		}
-		identity, err := canonicalArtifactIdentity(artifact)
+		identity, err := canonicalArtifactIdentity(artifact, variantsFor(row)[artifact.Name])
 		if err != nil {
 			return nil, err
 		}
@@ -1548,9 +1557,29 @@ func (s *Service) validPlacement(ctx context.Context, artifactID, nodeID string)
 	return "", false
 }
 
-func canonicalArtifactIdentity(artifact recipe.Artifact) (string, error) {
+// variantsFor parses the deployment's placement JSON and returns the
+// artifact->variant map captured at plan time (empty map when none).
+func variantsFor(row db.GetDeploymentRow) map[string]string {
+	out := map[string]string{}
+	if row.Placement == "" {
+		return out
+	}
+	var ps placementSet
+	if json.Unmarshal([]byte(row.Placement), &ps) != nil {
+		return out
+	}
+	if ps.Variants != nil {
+		return ps.Variants
+	}
+	return out
+}
+func canonicalArtifactIdentity(artifact recipe.Artifact, variant string) (string, error) {
+	src, err := artifact.EffectiveSource(variant)
+	if err != nil {
+		return "", err
+	}
 	return artifactidentity.Canonical(
-		artifact.Source.Type, artifact.Source.Identity, artifact.Source.Revision, artifact.Source.Digest,
+		src.Type, src.Identity, src.Revision, src.Digest,
 	)
 }
 
@@ -1608,7 +1637,7 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 	}
 	runID := s.runIDFor(ctx, row.ID)
 	for _, a := range m.Artifacts {
-		identity, err := canonicalArtifactIdentity(a)
+		identity, err := canonicalArtifactIdentity(a, variantsFor(row)[a.Name])
 		if err != nil {
 			s.failDispatch(ctx, row.ID, rank, runID, "artifact.identity", err.Error())
 			return false
@@ -2744,7 +2773,7 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 			dest = "/var/lib/lmw/artifacts/" + artifact.Name
 		}
 		renderedPath := dest
-		identity, identityErr := canonicalArtifactIdentity(artifact)
+		identity, identityErr := canonicalArtifactIdentity(artifact, variantsFor(row)[artifact.Name])
 		if identityErr != nil {
 			return nil, identityErr
 		}
@@ -2808,6 +2837,17 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 			spec.RDMAPaths = []string{"/dev/infiniband"}
 		}
 	}
+	// The workload drops all capabilities (CapDrop ALL), so it has no
+	// CAP_IPC_LOCK. RoCE/NCCL registers GPU/IB buffers via ibv_reg_mr, which
+	// needs RLIMIT_MEMLOCK; the default 8 KiB hard limit makes
+	// ibv_reg_mr_iova2 fail with ENOMEM and aborts NCCL connect. Match the
+	// prior Spark launcher: memlock unlimited + 64 MiB stack.
+	if len(spec.RDMAPaths) > 0 {
+		spec.Ulimits = []runtime.Ulimit{
+			{Name: "memlock", Hard: -1, Soft: -1},
+			{Name: "stack", Hard: 67108864, Soft: 67108864},
+		}
+	}
 	for _, p := range w.Ports {
 		base := p.Host
 		if base == 0 {
@@ -2835,7 +2875,7 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		Source: filepath.Join(packagePath, "assets"), Dest: "/lmw/assets", ReadOnly: true,
 	})
 	for _, a := range m.Artifacts {
-		identity, err := canonicalArtifactIdentity(a)
+		identity, err := canonicalArtifactIdentity(a, variantsFor(row)[a.Name])
 		if err != nil {
 			return nil, fmt.Errorf("artifact %s: %w", a.Name, err)
 		}
