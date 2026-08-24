@@ -78,6 +78,9 @@ type Env struct {
 	Commands *commands.Broker
 	// RunRoot is the controller run-state root (logs, job workspaces).
 	RunRoot string
+	// AutoResearchRoot is the controller-owned project artifact root shared
+	// only with a co-located AutoResearch runner agent.
+	AutoResearchRoot string
 }
 
 // Module is the first-party module contract.

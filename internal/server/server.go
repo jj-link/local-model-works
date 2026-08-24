@@ -129,7 +129,7 @@ func New(d Deps) *Server {
 		Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
 		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder, Runs: runsSvc,
 		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc,
-		Nodes: nodes, Commands: broker, RunRoot: runRoot,
+		Nodes: nodes, Commands: broker, RunRoot: runRoot, AutoResearchRoot: d.Cfg.AutoResearchRoot(),
 	}
 	s := &Server{
 		cfg:              d.Cfg,

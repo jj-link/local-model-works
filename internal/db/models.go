@@ -30,6 +30,83 @@ type ArtifactPlacement struct {
 	SizeBytes   int64          `json:"size_bytes"`
 }
 
+type AutoresearchIdea struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Ordinal   int64  `json:"ordinal"`
+	Source    string `json:"source"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Selected  int64  `json:"selected"`
+	Version   int64  `json:"version"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type AutoresearchInvocation struct {
+	ID           string         `json:"id"`
+	RunID        string         `json:"run_id"`
+	ParentID     sql.NullString `json:"parent_id"`
+	NodeID       sql.NullString `json:"node_id"`
+	Role         string         `json:"role"`
+	Backend      string         `json:"backend"`
+	Model        string         `json:"model"`
+	Advisor      int64          `json:"advisor"`
+	SessionID    sql.NullString `json:"session_id"`
+	State        string         `json:"state"`
+	InputTokens  int64          `json:"input_tokens"`
+	OutputTokens int64          `json:"output_tokens"`
+	CostUsd      float64        `json:"cost_usd"`
+	StartedAt    sql.NullString `json:"started_at"`
+	FinishedAt   sql.NullString `json:"finished_at"`
+	Error        sql.NullString `json:"error"`
+}
+
+type AutoresearchMessage struct {
+	ID               string `json:"id"`
+	ProjectID        string `json:"project_id"`
+	Role             string `json:"role"`
+	Body             string `json:"body"`
+	ChangedPathsJson string `json:"changed_paths_json"`
+	CreatedAt        string `json:"created_at"`
+}
+
+type AutoresearchProject struct {
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Status       string         `json:"status"`
+	RunnerNodeID sql.NullString `json:"runner_node_id"`
+	IdeaPrompt   string         `json:"idea_prompt"`
+	ConfigJson   string         `json:"config_json"`
+	Version      int64          `json:"version"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+}
+
+type AutoresearchRun struct {
+	RunID               string         `json:"run_id"`
+	ProjectID           string         `json:"project_id"`
+	Factory             string         `json:"factory"`
+	ParentRunID         sql.NullString `json:"parent_run_id"`
+	DispatcherSessionID sql.NullString `json:"dispatcher_session_id"`
+	WorkerNodeID        sql.NullString `json:"worker_node_id"`
+	ConfigSnapshot      string         `json:"config_snapshot"`
+}
+
+type AutoresearchSource struct {
+	ID           string         `json:"id"`
+	ProjectID    string         `json:"project_id"`
+	Kind         string         `json:"kind"`
+	Locator      string         `json:"locator"`
+	Title        sql.NullString `json:"title"`
+	MetadataJson string         `json:"metadata_json"`
+	LocalPath    sql.NullString `json:"local_path"`
+	Sha256       sql.NullString `json:"sha256"`
+	Status       string         `json:"status"`
+	Error        sql.NullString `json:"error"`
+	CreatedAt    string         `json:"created_at"`
+}
+
 type BenchmarkResult struct {
 	ID               int64          `json:"id"`
 	RunID            string         `json:"run_id"`

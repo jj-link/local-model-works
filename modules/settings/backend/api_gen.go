@@ -15,9 +15,11 @@ import (
 
 // Defines values for SecretPurpose.
 const (
-	SecretPurposeGithub      SecretPurpose = "github"
-	SecretPurposeHuggingface SecretPurpose = "huggingface"
-	SecretPurposeRegistry    SecretPurpose = "registry"
+	SecretPurposeGithub        SecretPurpose = "github"
+	SecretPurposeHuggingface   SecretPurpose = "huggingface"
+	SecretPurposeModelProvider SecretPurpose = "model_provider"
+	SecretPurposeRegistry      SecretPurpose = "registry"
+	SecretPurposeSsh           SecretPurpose = "ssh"
 )
 
 // Valid indicates whether the value is a known member of the SecretPurpose enum.
@@ -27,7 +29,11 @@ func (e SecretPurpose) Valid() bool {
 		return true
 	case SecretPurposeHuggingface:
 		return true
+	case SecretPurposeModelProvider:
+		return true
 	case SecretPurposeRegistry:
+		return true
+	case SecretPurposeSsh:
 		return true
 	default:
 		return false
@@ -36,9 +42,11 @@ func (e SecretPurpose) Valid() bool {
 
 // Defines values for SecretWritePurpose.
 const (
-	SecretWritePurposeGithub      SecretWritePurpose = "github"
-	SecretWritePurposeHuggingface SecretWritePurpose = "huggingface"
-	SecretWritePurposeRegistry    SecretWritePurpose = "registry"
+	SecretWritePurposeGithub        SecretWritePurpose = "github"
+	SecretWritePurposeHuggingface   SecretWritePurpose = "huggingface"
+	SecretWritePurposeModelProvider SecretWritePurpose = "model_provider"
+	SecretWritePurposeRegistry      SecretWritePurpose = "registry"
+	SecretWritePurposeSsh           SecretWritePurpose = "ssh"
 )
 
 // Valid indicates whether the value is a known member of the SecretWritePurpose enum.
@@ -48,7 +56,11 @@ func (e SecretWritePurpose) Valid() bool {
 		return true
 	case SecretWritePurposeHuggingface:
 		return true
+	case SecretWritePurposeModelProvider:
+		return true
 	case SecretWritePurposeRegistry:
+		return true
+	case SecretWritePurposeSsh:
 		return true
 	default:
 		return false

@@ -54,7 +54,7 @@ const secretVersion = 1
 
 // purposes mirrors the secrets table CHECK constraint and the fragment's
 // SecretWrite.purpose enum.
-var purposes = map[string]bool{"huggingface": true, "github": true, "registry": true}
+var purposes = map[string]bool{"huggingface": true, "github": true, "registry": true, "model_provider": true, "ssh": true}
 
 // uuidRe matches the lowercase UUIDv7 ids produced by internal/id (the
 // fragment types Secret.id as format: uuid).
@@ -207,7 +207,7 @@ func (m *Module) putSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if !purposes[body.Purpose] {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable",
-			"purpose must be one of huggingface, github, registry")
+			"purpose must be one of huggingface, github, registry, model_provider, ssh")
 		return
 	}
 	out, err := m.setSecret(r.Context(), body)
