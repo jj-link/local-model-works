@@ -3,8 +3,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const moduleRows = [
   ["fleet", "Fleet", "/fleet", 10], ["library", "Library", "/library", 20],
   ["serving", "Serving", "/serving", 30], ["benchmarks", "Benchmarks", "/benchmarks", 40],
-  ["workshop", "Workshop", "/workshop", 45], ["runs", "Runs", "/runs", 50],
-  ["chat", "Chat", "/chat", 55], ["settings", "Settings", "/settings", 60],
+  ["autoresearch", "AutoResearch Factory", "/autoresearch", 45], ["workshop", "Workshop", "/workshop", 46],
+  ["runs", "Runs", "/runs", 50], ["chat", "Chat", "/chat", 55], ["settings", "Settings", "/settings", 60],
 ] as const;
 
 const nowMs = Date.now();
@@ -97,7 +97,7 @@ test("unauthenticated navigation lands on the operator login", async ({ page }) 
 
 test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
   await installAPI(page);
-  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/profiles", "/knowledge", "/serving", "/serving/deployments", "/benchmarks", "/benchmarks/leaderboard", "/research/autoresearch", "/research/experiments", "/research/workflows", "/scheduled", "/usage", "/fine-tuning", "/projects", "/workshop", "/runs", "/chat"];
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/profiles", "/knowledge", "/serving", "/serving/deployments", "/benchmarks", "/benchmarks/leaderboard", "/autoresearch", "/research/autoresearch", "/research/experiments", "/research/workflows", "/scheduled", "/usage", "/fine-tuning", "/projects", "/workshop", "/runs", "/chat"];
   for (const path of routes) {
     await page.goto(path);
     await expect(page.getByRole("navigation")).toBeVisible();
@@ -154,6 +154,25 @@ test("Sample A navigation exposes real and skeleton destinations on desktop and 
   await mobileNav.getByRole("link", { name: "Overview", exact: true }).first().click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("AutoResearch Factory mounts its empty and project-composer states without overflow", async ({ page }) => {
+  await installAPI(page);
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 1024, height: 768 },
+    { width: 768, height: 1024 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/autoresearch");
+    await expect(page.getByText("No research project selected")).toBeVisible();
+    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", viewport.width);
+  }
+  await page.getByRole("button", { name: "project" }).click();
+  await expect(page.getByLabel("project name")).toBeVisible();
+  await expect(page.getByLabel("direct idea (optional)")).toBeVisible();
+  await expect(page.getByLabel("runner node")).toBeVisible();
 });
 
 test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {

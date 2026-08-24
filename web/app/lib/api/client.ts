@@ -72,6 +72,7 @@ export function notifyUnauthorized(): void {
 export interface RequestInit {
   method?: string;
   json?: unknown;
+  body?: BodyInit;
   headers?: Record<string, string>;
   signal?: AbortSignal;
   /** When false, a 401 does not trigger the global login redirect. */
@@ -79,13 +80,13 @@ export interface RequestInit {
 }
 
 /**
- * Thin typed fetch wrapper. JSON in/out, structured error envelope,
- * session-bound CSRF header on mutations, global 401 handling.
+ * Authenticated fetch primitive for text, binary, multipart, and
+ * response-header-sensitive operations.
  */
-export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
-  let body: string | undefined;
+  let body = init.body;
   if (init.json !== undefined) {
     headers.set("content-type", "application/json");
     body = JSON.stringify(init.json);
@@ -113,17 +114,10 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
       message: "Session expired; sign in again.",
     });
   }
-  if (res.status === 204) return undefined as T;
-  const ct = res.headers.get("content-type") ?? "";
-  let parsed: unknown = null;
-  if (ct.includes("application/json")) {
-    parsed = await res.json().catch(() => null);
-  }
   if (!res.ok) {
+    const parsed = await res.clone().json().catch(() => null);
     const errBody = (parsed && typeof parsed === "object" ? parsed : {}) as Partial<ApiErrorBody>;
     const code = errBody.code ?? `http.${res.status}`;
-    // A CSRF rejection means the session token the server issued can no
-    // longer be recovered (it is only sent at login): force re-login.
     if (res.status === 403 && code === "auth.csrf") {
       setSession(null);
       onUnauthorized();
@@ -134,7 +128,18 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
       details: errBody.details,
     });
   }
-  return parsed as T;
+  return res;
+}
+
+/**
+ * Thin typed JSON wrapper over requestRaw.
+ */
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await requestRaw(path, init);
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) return null as T;
+  return (await res.json().catch(() => null)) as T;
 }
 
 /** Query-string builder: omits null/undefined/empty values. */

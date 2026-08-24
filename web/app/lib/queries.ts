@@ -47,6 +47,14 @@ export const qk = {
   nodeTelemetry: (id: string, range: string) => ["node-telemetry", id, range] as const,
   servingTelemetryLatest: ["serving-telemetry", "latest"] as const,
   servingTelemetry: (id: string, range: string) => ["serving-telemetry", id, range] as const,
+  autoResearchProjects: ["autoresearch", "projects"] as const,
+  autoResearchProject: (id: string) => ["autoresearch", "projects", id] as const,
+  autoResearchIdeas: (id: string) => ["autoresearch", "projects", id, "ideas"] as const,
+  autoResearchSources: (id: string) => ["autoresearch", "projects", id, "sources"] as const,
+  autoResearchRuns: (id: string) => ["autoresearch", "projects", id, "runs"] as const,
+  autoResearchPaperFiles: (id: string) => ["autoresearch", "projects", id, "paper", "files"] as const,
+  autoResearchPaperFile: (id: string, path: string) =>
+    ["autoresearch", "projects", id, "paper", "files", path] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -239,6 +247,69 @@ export function useRecipeDrafts() {
 
 export function useRecipeDraft(id: string) {
   return useQuery({ queryKey: qk.recipeDraft(id), queryFn: ({ signal }) => api.getRecipeDraft(id, { signal }), enabled: Boolean(id) });
+}
+
+export function useAutoResearchProjects() {
+  return useQuery({
+    queryKey: qk.autoResearchProjects,
+    queryFn: ({ signal }) => api.listAutoResearchProjects({ signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useAutoResearchProject(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchProject(id ?? ""),
+    enabled: Boolean(id),
+    queryFn: ({ signal }) => api.getAutoResearchProject(id as string, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useAutoResearchIdeas(projectId: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchIdeas(projectId ?? ""),
+    enabled: Boolean(projectId),
+    queryFn: ({ signal }) => api.listAutoResearchIdeas(projectId as string, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useAutoResearchSources(projectId: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchSources(projectId ?? ""),
+    enabled: Boolean(projectId),
+    queryFn: ({ signal }) => api.listAutoResearchSources(projectId as string, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useAutoResearchRuns(projectId: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchRuns(projectId ?? ""),
+    enabled: Boolean(projectId),
+    queryFn: ({ signal }) => api.listAutoResearchRuns(projectId as string, { signal }),
+    staleTime: LIVE,
+    refetchInterval: LIVE,
+  });
+}
+
+export function useAutoResearchPaperFiles(projectId: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchPaperFiles(projectId ?? ""),
+    enabled: Boolean(projectId),
+    queryFn: ({ signal }) => api.listAutoResearchPaperFiles(projectId as string, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useAutoResearchPaperFile(projectId: string | undefined, path: string | undefined) {
+  return useQuery({
+    queryKey: qk.autoResearchPaperFile(projectId ?? "", path ?? ""),
+    enabled: Boolean(projectId && path),
+    queryFn: ({ signal }) => api.getAutoResearchPaperFile(projectId as string, path as string, { signal }),
+    staleTime: Infinity,
+  });
 }
 /* ------------------------------------------------------------------ */
 /* mutations                                                           */
@@ -487,5 +558,136 @@ export function useDeleteEnrollmentToken() {
   return useMutation({
     mutationFn: (id: string) => api.deleteEnrollmentToken(id),
     onSuccess: () => invalidates(qk.enrollmentTokens)(qc),
+  });
+}
+
+export function useCreateAutoResearchProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.AutoResearchProjectCreate) => api.createAutoResearchProject(body),
+    onSuccess: (project) => {
+      invalidates(qk.autoResearchProjects)(qc);
+      qc.setQueryData(qk.autoResearchProject(project.id), project);
+    },
+  });
+}
+
+export function useUpdateAutoResearchIdea(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ideaId, version, body }: { ideaId: string; version: number; body: api.AutoResearchIdeaUpdate }) =>
+      api.updateAutoResearchIdea(projectId, ideaId, version, body),
+    onSuccess: () => invalidates(qk.autoResearchIdeas(projectId))(qc),
+  });
+}
+
+export function useUpdateAutoResearchProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, version, body }: { id: string; version: number; body: api.AutoResearchProjectPatch }) =>
+      api.updateAutoResearchProject(id, version, body),
+    onSuccess: (project) => {
+      invalidates(qk.autoResearchProjects)(qc);
+      qc.setQueryData(qk.autoResearchProject(project.id), project);
+    },
+  });
+}
+
+export function useSelectAutoResearchIdea(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ideaId: string) => api.selectAutoResearchIdea(projectId, ideaId),
+    onSuccess: () => invalidates(qk.autoResearchIdeas(projectId), qk.autoResearchProject(projectId))(qc),
+  });
+}
+
+export function useGenerateAutoResearchIdeas(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.AutoResearchIdeaGenerate) => api.generateAutoResearchIdeas(projectId, body),
+    onSuccess: () => invalidates(qk.autoResearchRuns(projectId), qk.autoResearchProject(projectId))(qc),
+  });
+}
+
+export function useCreateAutoResearchSource(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.AutoResearchSourceCreate) => api.createAutoResearchSource(projectId, body),
+    onSuccess: () => invalidates(qk.autoResearchSources(projectId))(qc),
+  });
+}
+
+export function useUploadAutoResearchSource(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => api.uploadAutoResearchSource(projectId, file),
+    onSuccess: () => invalidates(qk.autoResearchSources(projectId))(qc),
+  });
+}
+
+export function useCreateAutoResearchRun(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.AutoResearchRunCreate) => api.createAutoResearchRun(projectId, body),
+    onSuccess: () => invalidates(qk.autoResearchRuns(projectId), qk.autoResearchProject(projectId))(qc),
+  });
+}
+
+export function useControlAutoResearchRun(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, action }: { runId: string; action: "pause" | "resume" | "stop" }) => {
+      if (action === "pause") return api.pauseAutoResearchRun(runId);
+      if (action === "resume") return api.resumeAutoResearchRun(runId);
+      return api.stopAutoResearchRun(runId);
+    },
+    onSuccess: (run) => {
+      invalidates(qk.autoResearchRuns(projectId))(qc);
+      qc.setQueryData(qk.run(run.id), run);
+    },
+  });
+}
+
+export function useSaveAutoResearchPaperFile(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ path, contents, etag }: { path: string; contents: string; etag: string }) =>
+      api.updateAutoResearchPaperFile(projectId, path, contents, etag),
+    onSuccess: (file, input) => {
+      qc.setQueryData<api.AutoResearchPaperContents>(
+        qk.autoResearchPaperFile(projectId, input.path),
+        { path: input.path, contents: input.contents, etag: `"${file.sha256}"` },
+      );
+      invalidates(qk.autoResearchPaperFiles(projectId))(qc);
+    },
+  });
+}
+
+export function useCompileAutoResearchPaper(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.compileAutoResearchPaper(projectId),
+    onSuccess: () => invalidates(qk.autoResearchRuns(projectId))(qc),
+  });
+}
+
+export function useChatEditAutoResearchPaper(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.AutoResearchPaperChatRequest) => api.chatEditAutoResearchPaper(projectId, body),
+    onSuccess: (response) => {
+      for (const path of response.changed_paths) {
+        void qc.invalidateQueries({ queryKey: qk.autoResearchPaperFile(projectId, path) });
+      }
+      invalidates(qk.autoResearchPaperFiles(projectId), qk.autoResearchRuns(projectId))(qc);
+    },
+  });
+}
+
+export function useReleaseAutoResearchPaper(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.releaseAutoResearchPaper(projectId),
+    onSuccess: () => invalidates(qk.autoResearchProject(projectId), qk.autoResearchRuns(projectId))(qc),
   });
 }
