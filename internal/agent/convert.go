@@ -64,7 +64,8 @@ func toProtoInventory(inv hardware.Inventory) *agentv1.Inventory {
 // toProtoTelemetry renders one telemetry sample for the wire.
 func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 	out := &agentv1.Telemetry{
-		At: timestamppb.Now(),
+		At:            timestamppb.Now(),
+		UptimeSeconds: t.UptimeSeconds,
 		Cpu: &agentv1.CpuTelemetry{
 			UsagePercent: t.CPUUsagePercent,
 			Cores:        t.CPUCores,
@@ -76,19 +77,45 @@ func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 			SwapUsedBytes: t.SwapUsedBytes,
 		},
 		Network: &agentv1.NetworkTelemetry{
-			RxBytes: t.NetRxBytes,
-			TxBytes: t.NetTxBytes,
+			RxBytes:           t.NetRxBytes,
+			TxBytes:           t.NetTxBytes,
+			RxBytesPerSecond:  t.NetRxBytesPerSec,
+			TxBytesPerSecond:  t.NetTxBytesPerSec,
 		},
 	}
+	for _, fs := range t.Filesystems {
+		out.Filesystems = append(out.Filesystems, &agentv1.FilesystemTelemetry{
+			MountPath:  fs.MountPath,
+			UsedBytes:  fs.UsedBytes,
+			TotalBytes: fs.TotalBytes,
+		})
+	}
+	for _, ni := range t.NetworkInterfaces {
+		out.Network.Interfaces = append(out.Network.Interfaces, &agentv1.NetworkInterfaceTelemetry{
+			Name:          ni.Name,
+			RxBytesPerSecond: ni.RxBytesPerSec,
+			TxBytesPerSecond: ni.TxBytesPerSec,
+		})
+	}
 	for _, a := range t.Accelerators {
-		out.Accelerators = append(out.Accelerators, &agentv1.AcceleratorTelemetry{
+		at := &agentv1.AcceleratorTelemetry{
 			Index:              int32(a.Index),
 			UtilizationPercent: a.UtilizationPct,
 			MemoryUsedBytes:    a.MemUsedBytes,
 			MemoryTotalBytes:   a.MemTotalBytes,
 			TemperatureC:       a.TemperatureC,
 			PowerMw:            a.PowerMW,
-		})
+			PowerLimitMw:       a.PowerLimitMW,
+			ThrottleReasons:    a.ThrottleReasons,
+		}
+		for _, p := range a.Processes {
+			at.Processes = append(at.Processes, &agentv1.AcceleratorProcess{
+				Pid:               p.PID,
+				Name:              p.Name,
+				UsedGpuMemoryBytes: p.UsedGpuMem,
+			})
+		}
+		out.Accelerators = append(out.Accelerators, at)
 	}
 	return out
 }
