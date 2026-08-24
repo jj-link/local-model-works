@@ -10,9 +10,10 @@ function onlineNode(over: Partial<Node> = {}): Node {
   return {
     id: "n1",
     display_name: "online-node",
+    created_at: new Date(NOW).toISOString(),
     status: "online",
     last_heartbeat: new Date(NOW).toISOString(),
-    inventory: { accelerators: [{ index: 0, vendor: "NVIDIA", name: "RTX", memory_bytes: 1048576, features: [] }] },
+    inventory: { hostname: "h", os: "linux", arch: "x86_64", docker: { ok: true, version: "v" }, accelerators: [{ index: 0, uuid: "gpu-1", vendor: "NVIDIA", name: "RTX", memory_bytes: 1048576, features: [] }] },
     ...over,
   };
 }

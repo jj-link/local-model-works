@@ -17,8 +17,9 @@ function node(over: Partial<Node> = {}): Node {
     id: "n1",
     status: "online",
     display_name: "n1",
+    created_at: new Date(NOW).toISOString(),
     last_heartbeat: new Date(NOW).toISOString(),
-    inventory: { accelerators: [] },
+    inventory: { hostname: "h", os: "linux", arch: "x86_64", docker: { ok: true, version: "v" }, accelerators: [] },
     ...over,
   };
 }
