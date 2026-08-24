@@ -32,6 +32,10 @@ export type Deployment = Schemas["Deployment"];
 export type DeploymentPlan = Schemas["DeploymentPlan"];
 export type DeploymentPlanRequest = Schemas["DeploymentPlanRequest"];
 export type DeploymentCreateRequest = Schemas["DeploymentCreateRequest"];
+export type NodeTelemetrySample = Schemas["NodeTelemetrySample"];
+export type ServingTelemetrySample = Schemas["ServingTelemetrySample"];
+export type NodePayload = Schemas["NodePayload"];
+export type ServingPayload = Schemas["ServingPayload"];
 export type Run = Schemas["Run"];
 export type RunState = Schemas["RunState"];
 export type RunsPage = Schemas["RunsPage"];
@@ -87,6 +91,23 @@ export const approveNode = (id: string) => http.post<Node>(`/nodes/${id}/approve
 
 export const rotateNodeCertificate = (id: string) =>
   http.post<CertificateInfo>(`/nodes/${id}/rotate-certificate`);
+
+export const listNodeTelemetry = ({ signal }: Sig = {}) =>
+  http.get<NodeTelemetrySample[]>("/nodes/telemetry", { signal });
+
+export interface NodeTelemetryQuery {
+  resolution?: "5s" | "1m";
+  from?: number;
+  to?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export const getNodeTelemetry = (id: string, q: NodeTelemetryQuery) =>
+  http.get<NodeTelemetrySample[]>(
+    `/nodes/${id}/telemetry${qs({ resolution: q.resolution, from: q.from, to: q.to, limit: q.limit })}`,
+    { signal: q.signal },
+  );
 
 /* ------------------------------------------------------------------ */
 /* fabrics                                                             */
@@ -194,6 +215,23 @@ export const startDeployment = (id: string) =>
 
 export const deleteDeployment = (id: string) =>
   http.del<void>(`/deployments/${id}`);
+
+export const listDeploymentTelemetry = ({ signal }: Sig = {}) =>
+  http.get<ServingTelemetrySample[]>("/deployments/telemetry", { signal });
+
+export interface ServingTelemetryQuery {
+  resolution?: "5s" | "1m";
+  from?: number;
+  to?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export const getDeploymentTelemetry = (id: string, q: ServingTelemetryQuery) =>
+  http.get<ServingTelemetrySample[]>(
+    `/deployments/${id}/telemetry${qs({ resolution: q.resolution, from: q.from, to: q.to, limit: q.limit })}`,
+    { signal: q.signal },
+  );
 
 /* ------------------------------------------------------------------ */
 /* runs                                                                */

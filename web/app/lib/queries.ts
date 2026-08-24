@@ -1,5 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "~/lib/api";
+import { rangePolicy, type TelemetryRange } from "~/lib/telemetry";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +43,10 @@ export const qk = {
   secrets: ["secrets"] as const,
   moduleSettings: (id: string) => ["modules", id, "settings"] as const,
   enrollmentTokens: ["enrollment-tokens"] as const,
+  nodeTelemetryLatest: ["node-telemetry", "latest"] as const,
+  nodeTelemetry: (id: string, range: string) => ["node-telemetry", id, range] as const,
+  servingTelemetryLatest: ["serving-telemetry", "latest"] as const,
+  servingTelemetry: (id: string, range: string) => ["serving-telemetry", id, range] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -105,6 +110,66 @@ export function useArtifacts(params: { kind?: api.ArtifactKind; node?: string } 
 
 export function useTransfers() {
   return useQuery({ queryKey: qk.transfers, queryFn: ({ signal }) => api.listTransfers({ signal }), staleTime: LIVE });
+}
+
+export function useLatestNodeTelemetry() {
+  return useQuery({
+    queryKey: qk.nodeTelemetryLatest,
+    queryFn: ({ signal }) => api.listNodeTelemetry({ signal }),
+    staleTime: LIVE,
+    refetchInterval: LIVE,
+  });
+}
+
+export function useNodeTelemetry(nodeId: string | undefined, range: string) {
+  const policy = rangePolicy(range as TelemetryRange);
+  return useQuery({
+    queryKey: qk.nodeTelemetry(nodeId ?? "", range),
+    enabled: !!nodeId,
+    queryFn: ({ signal }) => {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - Math.ceil(policy.windowMs / 1000);
+      return api.getNodeTelemetry(nodeId as string, {
+        resolution: policy.resolution,
+        from,
+        to,
+        limit: policy.limit,
+        signal,
+      });
+    },
+    staleTime: LIVE,
+    refetchInterval: LIVE,
+  });
+}
+
+export function useLatestServingTelemetry() {
+  return useQuery({
+    queryKey: qk.servingTelemetryLatest,
+    queryFn: ({ signal }) => api.listDeploymentTelemetry({ signal }),
+    staleTime: LIVE,
+    refetchInterval: LIVE,
+  });
+}
+
+export function useServingTelemetry(deploymentId: string | undefined, range: string) {
+  const policy = rangePolicy(range as TelemetryRange);
+  return useQuery({
+    queryKey: qk.servingTelemetry(deploymentId ?? "", range),
+    enabled: !!deploymentId,
+    queryFn: ({ signal }) => {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - Math.ceil(policy.windowMs / 1000);
+      return api.getDeploymentTelemetry(deploymentId as string, {
+        resolution: policy.resolution,
+        from,
+        to,
+        limit: policy.limit,
+        signal,
+      });
+    },
+    staleTime: LIVE,
+    refetchInterval: LIVE,
+  });
 }
 
 export function useDeployments() {

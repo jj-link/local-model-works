@@ -9,47 +9,59 @@ export interface TrendSeries {
   points: [number, number][];
 }
 
+function align(series: TrendSeries[]): uPlot.AlignedData {
+  const xs = [
+    ...new Set(series.flatMap((s) => s.points.map((p) => p[0]))),
+  ].sort((a, b) => a - b);
+  return [
+    xs,
+    ...series.map((s) => {
+      const byX = new Map(s.points);
+      return xs.map((x) => (byX.has(x) ? (byX.get(x) as number) : null));
+    }),
+  ];
+}
+
 /**
- * Minimal uPlot panel for benchmark trends. Static data, no drag;
- * destroyed and recreated when the series identity changes.
+ * Minimal uPlot panel for trends. The plot is created once per series
+ * definition (labels/colors) and polling updates are pushed through setData
+ * rather than destroying/recreating the chart every five seconds; it is
+ * destroyed only on unmount or when the series definition changes.
  */
 export function TrendChart({
   series,
   height = 180,
   yLabel,
   valueFormat,
+  yFixed,
+  ariaLabel,
 }: {
   series: TrendSeries[];
   height?: number;
   yLabel?: string;
   valueFormat?: (v: number) => string;
+  /** Optional fixed y-range [min, max]; omit for auto-scale. */
+  yFixed?: [number, number];
+  ariaLabel?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const dataKey = useMemo(
-    () => series.map((s) => `${s.label}:${s.points.length}:${s.points.at(-1)?.[1] ?? ""}`).join("|"),
-    [series],
-  );
-  const heightClass = height === 220 ? "h-[220px]" : "h-[180px]";
+  const chartRef = useRef<uPlot | null>(null);
 
+  // Stable identity: recreate only when the series shape changes.
+  const defKey = useMemo(() => series.map((s) => `${s.label}:${s.color}`).join("|"), [series]);
+  const heightClass = height === 220 ? "h-[220px]" : "h-[180px]";
+  const data = useMemo(() => align(series), [series]);
 
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
-    if (series.length === 0 || series.every((s) => s.points.length === 0)) return;
-    const xs = series.flatMap((s) => s.points.map((p) => p[0])).sort((a, b) => a - b);
-    const xMin = xs[0];
-    const xMax = xs[xs.length - 1];
-    const data = [
-      xs,
-      ...series.map((s) => {
-        const byX = new Map(s.points);
-        return xs.map((x) => byX.get(x) ?? null);
-      }),
-    ] as uPlot.AlignedData;
     const fmt = valueFormat ?? ((v: number) => String(v));
+    const scales: uPlot.Scales = yFixed
+      ? { time: { time: true }, y: { min: yFixed[0], max: yFixed[1] } }
+      : { time: { time: true } };
     const chart = new uPlot(
       {
-        id: `trend-${dataKey.slice(0, 8)}`,
+        id: `trend-${defKey.slice(0, 8)}`,
         data,
         height,
         width: el.clientWidth || 480,
@@ -63,21 +75,14 @@ export function TrendChart({
             points: { size: 2.5, stroke: s.color, width: 1 },
           })),
         ],
-        scales: {
-          time: {
-            time: true,
-            min: xMin,
-            max: xMax,
-            range: (_u: uPlot, min: number, max: number) => [min, max],
-          },
-        },
+        scales,
         axes: [
           {
             stroke: "#919a9d",
             font: "10px 'Commit Mono', monospace",
             grid: { stroke: "#313a3e", width: 0.5 },
             ticks: { width: 0 },
-            values: (_self: uPlot, vals: (number | null)[]) =>
+            values: (_u: uPlot, vals: (number | null)[]) =>
               vals.map((v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(11, 16))),
           },
           {
@@ -86,8 +91,7 @@ export function TrendChart({
             grid: { stroke: "#313a3e", width: 0.5 },
             ticks: { width: 0 },
             label: yLabel ?? "",
-            values: (_self: uPlot, vals: (number | null)[]) =>
-              vals.map((v) => (v == null ? "" : fmt(v))),
+            values: (_u: uPlot, vals: (number | null)[]) => vals.map((v) => (v == null ? "" : fmt(v))),
           },
         ],
         legend: { show: true },
@@ -95,6 +99,7 @@ export function TrendChart({
       data,
       el,
     );
+    chartRef.current = chart;
     const ro = new ResizeObserver(() => {
       chart.setSize({ width: el.clientWidth || 480, height });
     });
@@ -102,8 +107,15 @@ export function TrendChart({
     return () => {
       ro.disconnect();
       chart.destroy();
+      chartRef.current = null;
     };
-  }, [dataKey, series, height, yLabel, valueFormat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defKey, height, yLabel, valueFormat, yFixed?.[0], yFixed?.[1]]);
+
+  // Push polling updates without recreating the plot.
+  useEffect(() => {
+    chartRef.current?.setData(data);
+  }, [data]);
 
   if (series.length === 0 || series.every((s) => s.points.length === 0)) {
     return (
@@ -112,5 +124,12 @@ export function TrendChart({
       </div>
     );
   }
-  return <div ref={hostRef} className={`w-full ${heightClass}`} aria-label={yLabel ?? "trend chart"} role="img" />;
+  return (
+    <div
+      ref={hostRef}
+      className={`w-full ${heightClass}`}
+      aria-label={ariaLabel ?? yLabel ?? "trend chart"}
+      role="img"
+    />
+  );
 }
