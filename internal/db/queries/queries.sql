@@ -204,19 +204,22 @@ VALUES (?, ?, ?, ?, ?, 'running', 'unknown', ?);
 
 -- name: GetDeployment :one
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE id = ?;
 
 -- name: ListDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments ORDER BY created_at DESC;
 
 -- name: ListActiveDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE desired_state = 'running';
 
@@ -445,3 +448,33 @@ WHERE id = ?;
 
 -- name: ActiveLeases :many
 SELECT resource FROM leases WHERE state = 'active';
+
+
+-- name: UpdateDeploymentEndpointMetadata :exec
+UPDATE deployments SET endpoint_model = ?, endpoint_path = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: LatestTelemetryAll :many
+SELECT t.node_id, t.ts, t.payload FROM telemetry_5s t
+JOIN (SELECT node_id, MAX(ts) ts FROM telemetry_5s GROUP BY node_id) latest
+  ON latest.node_id = t.node_id AND latest.ts = t.ts
+ORDER BY t.node_id;
+
+-- name: InsertServingTelemetry5s :exec
+INSERT OR REPLACE INTO serving_telemetry_5s (deployment_id, ts, payload) VALUES (?, ?, ?);
+
+-- name: InsertServingTelemetry1m :exec
+INSERT OR REPLACE INTO serving_telemetry_1m (deployment_id, ts, payload) VALUES (?, ?, ?);
+
+-- name: DeleteServingTelemetry5sOlder :exec
+DELETE FROM serving_telemetry_5s WHERE ts < ?;
+
+-- name: DeleteServingTelemetry1mOlder :exec
+DELETE FROM serving_telemetry_1m WHERE ts < ?;
+
+-- name: LatestServingTelemetryAll :many
+SELECT s.deployment_id, s.ts, s.payload FROM serving_telemetry_5s s
+JOIN (SELECT deployment_id, MAX(ts) ts FROM serving_telemetry_5s GROUP BY deployment_id) latest
+  ON latest.deployment_id = s.deployment_id AND latest.ts = s.ts
+ORDER BY s.deployment_id;

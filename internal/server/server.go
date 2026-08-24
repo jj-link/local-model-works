@@ -31,6 +31,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/internal/servingtelemetry"
 	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
@@ -101,6 +102,9 @@ func New(d Deps) *Server {
 	settingsReg := settings.New(d.Q)
 	telemetrySvc := telemetry.New(d.DB, d.Q)
 	go telemetrySvc.RunRetention(d.Ctx)
+	servingPoll := servingtelemetry.New(deploys, telemetrySvc)
+	go servingPoll.Run(d.Ctx)
+
 
 	v, err := recipe.NewValidator()
 	if err != nil {

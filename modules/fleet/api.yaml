@@ -82,7 +82,7 @@ paths:
           schema: { type: integer, format: int64 }
         - name: limit
           in: query
-          schema: { type: integer, minimum: 1, maximum: 10000, default: 2000 }
+          schema: { type: integer, minimum: 1, maximum: 100000, default: 2000 }
       responses:
         '200':
           description: Ordered telemetry samples
@@ -91,7 +91,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/TelemetrySample'
+                  $ref: '#/components/schemas/NodeTelemetrySample'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -134,6 +134,23 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /nodes/telemetry:
+    get:
+      tags: [nodes]
+      operationId: listNodeTelemetry
+      summary: Latest typed telemetry sample per node
+      responses:
+        '200':
+          description: Latest node samples sorted by node_id
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NodeTelemetrySample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /fabrics:
     get:
@@ -477,3 +494,74 @@ components:
         payload:
           type: object
           additionalProperties: true
+
+    NodeTelemetrySample:
+      type: object
+      required: [node_id, ts, payload]
+      properties:
+        node_id: { type: string, format: uuid }
+        ts: { type: integer, format: int64 }
+        payload:
+          $ref: '#/components/schemas/NodePayload'
+    NodePayload:
+      type: object
+      properties:
+        cpu:
+          type: object
+          properties:
+            usage_percent: { type: integer, format: int64 }
+            cores: { type: integer, format: int64 }
+            load1: { type: integer, format: int64 }
+        memory:
+          type: object
+          properties:
+            used_bytes: { type: integer, format: int64 }
+            total_bytes: { type: integer, format: int64 }
+            swap_used_bytes: { type: integer, format: int64 }
+        uptime_seconds: { type: integer, format: int64 }
+        network:
+          type: object
+          properties:
+            rx_bytes: { type: integer, format: int64 }
+            tx_bytes: { type: integer, format: int64 }
+            rx_bytes_per_second: { type: integer, format: int64 }
+            tx_bytes_per_second: { type: integer, format: int64 }
+            interfaces:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  rx_bytes_per_second: { type: integer, format: int64 }
+                  tx_bytes_per_second: { type: integer, format: int64 }
+        filesystems:
+          type: array
+          items:
+            type: object
+            properties:
+              mount_path: { type: string }
+              used_bytes: { type: integer, format: int64 }
+              total_bytes: { type: integer, format: int64 }
+        accelerators:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              utilization_percent: { type: integer, format: int64 }
+              memory_used_bytes: { type: integer, format: int64 }
+              memory_total_bytes: { type: integer, format: int64 }
+              temperature_c: { type: integer, format: int64 }
+              power_mw: { type: integer, format: int64 }
+              power_limit_mw: { type: integer, format: int64 }
+              throttle_reasons:
+                type: array
+                items: { type: string }
+              processes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    pid: { type: integer, format: int64 }
+                    name: { type: string }
+                    used_gpu_memory_bytes: { type: integer, format: int64 }

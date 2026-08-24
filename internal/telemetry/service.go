@@ -1,5 +1,5 @@
-// Package telemetry persists node samples at operational and historical
-// resolutions and enforces bounded retention.
+// Package telemetry persists node and serving samples at operational (5s) and
+// historical (1m) resolutions and enforces bounded retention.
 package telemetry
 
 import (
@@ -15,39 +15,37 @@ import (
 )
 
 const (
-	RawRetention      = 24 * time.Hour
-	MinuteRetention   = 30 * 24 * time.Hour
+	RawRetention    = 24 * time.Hour
+	MinuteRetention = 30 * 24 * time.Hour
 	retentionInterval = time.Minute
 )
-
-type Sample struct {
-	NodeID  string          `json:"node_id"`
-	TS      int64           `json:"ts"`
-	Payload json.RawMessage `json:"payload"`
-}
 
 type Service struct {
 	db *sql.DB
 	q  *db.Queries
 }
 
-func New(database *sql.DB, queries *db.Queries) *Service { return &Service{db: database, q: queries} }
+func New(database *sql.DB, queries *db.Queries) *Service {
+	return &Service{db: database, q: queries}
+}
 
-// Ingest stores the five-second sample and recomputes its minute aggregate
-// transactionally. Replays and out-of-order samples therefore cannot skew the
-// retained value.
-func (s *Service) Ingest(ctx context.Context, nodeID string, at time.Time, payload []byte) error {
+// IngestNode stores the five-second sample and recomputes its minute aggregate
+// transactionally. Raw timestamps are floored to a real five-second bucket so
+// resolution=5s stays bounded even when agents sample faster. Replays and
+// out-of-order samples cannot skew the retained minute value.
+func (s *Service) IngestNode(ctx context.Context, nodeID string, at time.Time, payload NodePayload) error {
 	ts := at.Unix()
 	ts -= ts % 5
-	if !json.Valid(payload) {
-		return fmt.Errorf("telemetry payload is not JSON")
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	qtx := s.q.WithTx(tx)
-	if err := qtx.InsertTelemetry5s(ctx, db.InsertTelemetry5sParams{NodeID: nodeID, Ts: ts, Payload: string(payload)}); err != nil {
+	if err := qtx.InsertTelemetry5s(ctx, db.InsertTelemetry5sParams{NodeID: nodeID, Ts: ts, Payload: string(data)}); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -57,7 +55,7 @@ func (s *Service) Ingest(ctx context.Context, nodeID string, at time.Time, paylo
 		tx.Rollback()
 		return err
 	}
-	var payloads []json.RawMessage
+	var payloads []NodePayload
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -65,74 +63,239 @@ func (s *Service) Ingest(ctx context.Context, nodeID string, at time.Time, paylo
 			tx.Rollback()
 			return err
 		}
-		payloads = append(payloads, json.RawMessage(raw))
+		var p NodePayload
+		if json.Unmarshal([]byte(raw), &p) == nil {
+			payloads = append(payloads, p)
+		}
 	}
 	rows.Close()
-	aggregate, err := aggregateMinute(payloads)
+	aggregate := aggregateNodeMinute(payloads)
+	aggr, err := json.Marshal(aggregate)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err := qtx.InsertTelemetry1m(ctx, db.InsertTelemetry1mParams{NodeID: nodeID, Ts: minute, Payload: string(aggregate)}); err != nil {
+	if err := qtx.InsertTelemetry1m(ctx, db.InsertTelemetry1mParams{NodeID: nodeID, Ts: minute, Payload: string(aggr)}); err != nil {
 		tx.Rollback()
 		return err
 	}
 	return tx.Commit()
 }
 
-func aggregateMinute(payloads []json.RawMessage) ([]byte, error) {
-	var sum any
-	for index, payload := range payloads {
-		var document any
-		if err := json.Unmarshal(payload, &document); err != nil {
-			return nil, err
-		}
-		sum = averageNumeric(sum, document, float64(index))
+// aggregateNodeMinute averages interval gauges (CPU, memory, network rates,
+// accelerator gauges keyed by index) and retains the latest cumulative
+// counters and uptime. Current-only arrays (filesystems, interfaces, GPU
+// processes, throttle reasons) are omitted.
+func aggregateNodeMinute(payloads []NodePayload) NodePayload {
+	var out NodePayload
+	var cpuSum int64
+	var cpuCount int
+	var memUsedSum int64
+	var rxRateSum, txRateSum uint64
+	type accAgg struct {
+		idx    int
+		utilSum int64
+		utilCnt int
+		memUsedSum int64
+		tempSum int64
+		tempCnt int
+		powerSum int64
+		powCnt  int
+		limitSum int64
+		limitCnt int
 	}
-	last := any(map[string]any{})
-	if len(payloads) > 0 {
-		if err := json.Unmarshal(payloads[len(payloads)-1], &last); err != nil {
-			return nil, err
+	accMap := map[int]*accAgg{}
+
+	for _, p := range payloads {
+		if c := p.CPU; c != nil {
+			cpuSum += int64(c.UsagePercent)
+			cpuCount++
+			out.CPU = &CPUPayload{Cores: c.Cores, Load1: c.Load1}
+			out.CPU.UsagePercent = c.UsagePercent // provisional; overwritten below
+		}
+		if m := p.Memory; m != nil {
+			memUsedSum += int64(m.UsedBytes)
+			out.Memory = &MemoryPayload{TotalBytes: m.TotalBytes, SwapUsedBytes: m.SwapUsedBytes}
+			out.Memory.UsedBytes = m.UsedBytes
+		}
+		if p.UptimeSeconds > 0 {
+			out.UptimeSeconds = p.UptimeSeconds
+		}
+		if n := p.Network; n != nil {
+			out.Network = &NetworkPayload{RxBytes: n.RxBytes, TxBytes: n.TxBytes}
+			rxRateSum += n.RxBytesPerSecond
+			txRateSum += n.TxBytesPerSecond
+		}
+		for _, a := range p.Accelerators {
+			ag := accMap[a.Index]
+			if ag == nil {
+				ag = &accAgg{idx: a.Index}
+				accMap[a.Index] = ag
+			}
+			ag.utilSum += int64(a.UtilizationPercent)
+			ag.memUsedSum += int64(a.MemoryUsedBytes)
+			ag.tempSum += int64(a.TemperatureC)
+			ag.powerSum += int64(a.PowerMW)
+			ag.limitSum += int64(a.PowerLimitMW)
+			ag.utilCnt++
+			if a.TemperatureC > 0 {
+				ag.tempCnt++
+			}
+			if a.PowerMW > 0 {
+				ag.powCnt++
+			}
+			if a.PowerLimitMW > 0 {
+				ag.limitCnt++
+			}
+			// retain latest capacity
+			outAcc := ensureAcc(&out, a.Index)
+			outAcc.MemoryTotalBytes = a.MemoryTotalBytes
 		}
 	}
-	return json.Marshal(map[string]any{"samples": len(payloads), "average": sum, "last": last})
+
+	if cpuCount > 0 {
+		out.CPU.UsagePercent = uint32(cpuSum / int64(cpuCount))
+	}
+	if out.Memory != nil {
+		out.Memory.UsedBytes = uint64(memUsedSum / int64(len(payloads)))
+	}
+	if out.Network != nil {
+		out.Network.RxBytesPerSecond = rxRateSum / uint64(len(payloads))
+		out.Network.TxBytesPerSecond = txRateSum / uint64(len(payloads))
+	}
+	idxKeys := make([]int, 0, len(accMap))
+	for k := range accMap {
+		idxKeys = append(idxKeys, k)
+	}
+	sort.Ints(idxKeys)
+	var accs []AcceleratorPayload
+	for _, k := range idxKeys {
+		ag := accMap[k]
+		outA := AcceleratorPayload{
+			Index:            ag.idx,
+			UtilizationPercent: uint32(ag.utilSum / int64(ag.utilCnt)),
+			MemoryUsedBytes:    uint64(ag.memUsedSum / int64(ag.utilCnt)),
+		}
+		if ag.tempCnt > 0 {
+			outA.TemperatureC = uint32(ag.tempSum / int64(ag.tempCnt))
+		}
+		if ag.powCnt > 0 {
+			outA.PowerMW = uint32(ag.powerSum / int64(ag.powCnt))
+		}
+		if ag.limitCnt > 0 {
+			outA.PowerLimitMW = uint32(ag.limitSum / int64(ag.limitCnt))
+		}
+		accs = append(accs, outA)
+	}
+	out.Accelerators = accs
+	return out
 }
 
-func averageNumeric(current, incoming any, priorCount float64) any {
-	switch value := incoming.(type) {
-	case float64:
-		if previous, ok := current.(float64); ok {
-			return (previous*priorCount + value) / (priorCount + 1)
+func ensureAcc(p *NodePayload, index int) *AcceleratorPayload {
+	for i := range p.Accelerators {
+		if p.Accelerators[i].Index == index {
+			return &p.Accelerators[i]
 		}
-		return value
-	case map[string]any:
-		out, _ := current.(map[string]any)
-		if out == nil {
-			out = map[string]any{}
-		}
-		for key, child := range value {
-			out[key] = averageNumeric(out[key], child, priorCount)
-		}
-		return out
-	case []any:
-		out, _ := current.([]any)
-		for len(out) < len(value) {
-			out = append(out, nil)
-		}
-		for index, child := range value {
-			out[index] = averageNumeric(out[index], child, priorCount)
-		}
-		return out
-	default:
-		return current
 	}
+	p.Accelerators = append(p.Accelerators, AcceleratorPayload{Index: index})
+	return &p.Accelerators[len(p.Accelerators)-1]
+}
+
+// normalizeMinutePayload re-shapes a legacy minute row shaped as
+// {"samples":…, "average":…, "last":…} into the nested typed payload so
+// pre-upgrade retained telemetry remains readable.
+func normalizeMinutePayload(raw []byte) (NodePayload, bool) {
+	var candidate struct {
+		Average json.RawMessage `json:"average"`
+		Last    json.RawMessage `json:"last"`
+	}
+	if err := json.Unmarshal(raw, &candidate); err != nil {
+		return NodePayload{}, false
+	}
+	if len(candidate.Average) == 0 {
+		return NodePayload{}, false
+	}
+	var p NodePayload
+	if json.Unmarshal(candidate.Average, &p) != nil {
+		return NodePayload{}, false
+	}
+	return p, true
+}
+
+// NodeHistory returns ordered samples for a node. Filesystem/process/throttle
+// current-state arrays are stripped because the chart surface never consumes
+// them; current state comes from LatestNodes.
+func (s *Service) NodeHistory(ctx context.Context, nodeID, resolution string, from, to int64, limit int) ([]NodeSample, error) {
+	table := "telemetry_5s"
+	if resolution == "1m" {
+		table = "telemetry_1m"
+	} else if resolution != "5s" {
+		return nil, fmt.Errorf("resolution must be 5s or 1m")
+	}
+	if limit < 1 || limit > 10000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT ts, payload FROM "+table+" WHERE node_id = ? AND ts >= ? AND ts <= ? ORDER BY ts LIMIT ?", nodeID, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]NodeSample, 0)
+	for rows.Next() {
+		var ts int64
+		var raw string
+		if err := rows.Scan(&ts, &raw); err != nil {
+			return nil, err
+		}
+		var p NodePayload
+		if resolution == "1m" {
+			// Pre-upgrade rows may be legacy-shaped; normalize before direct read.
+			if legacy, ok := normalizeMinutePayload([]byte(raw)); ok {
+				p = legacy
+			} else if json.Unmarshal([]byte(raw), &p) != nil {
+				continue
+			}
+		} else {
+			if json.Unmarshal([]byte(raw), &p) != nil {
+				continue
+			}
+		}
+		p.stripCurrentOnly()
+		out = append(out, NodeSample{NodeID: nodeID, TS: ts, Payload: p})
+	}
+	return out, rows.Err()
+}
+
+// LatestNodes returns the newest full raw sample per node in one query.
+func (s *Service) LatestNodes(ctx context.Context) (map[string]NodeSample, error) {
+	rows, err := s.q.LatestTelemetryAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]NodeSample, len(rows))
+	for _, r := range rows {
+		var p NodePayload
+		if json.Unmarshal([]byte(r.Payload), &p) != nil {
+			continue
+		}
+		out[r.NodeID] = NodeSample{NodeID: r.NodeID, TS: r.Ts, Payload: p}
+	}
+	return out, nil
 }
 
 func (s *Service) Prune(ctx context.Context, now time.Time) error {
-	if err := s.q.DeleteTelemetry5sOlder(ctx, now.Add(-RawRetention).Unix()); err != nil {
+	cutRaw := now.Add(-RawRetention).Unix()
+	cutMin := now.Add(-MinuteRetention).Unix()
+	if err := s.q.DeleteTelemetry5sOlder(ctx, cutRaw); err != nil {
 		return err
 	}
-	return s.q.DeleteTelemetry1mOlder(ctx, now.Add(-MinuteRetention).Unix())
+	if err := s.q.DeleteTelemetry1mOlder(ctx, cutMin); err != nil {
+		return err
+	}
+	if err := s.q.DeleteServingTelemetry5sOlder(ctx, cutRaw); err != nil {
+		return err
+	}
+	return s.q.DeleteServingTelemetry1mOlder(ctx, cutMin)
 }
 
 func (s *Service) RunRetention(ctx context.Context) {
@@ -149,68 +312,58 @@ func (s *Service) RunRetention(ctx context.Context) {
 	}
 }
 
-func (s *Service) History(ctx context.Context, nodeID, resolution string, from, to int64, limit int) ([]Sample, error) {
-	table := "telemetry_5s"
-	if resolution == "1m" {
-		table = "telemetry_1m"
-	} else if resolution != "5s" {
-		return nil, fmt.Errorf("resolution must be 5s or 1m")
-	}
-	if limit < 1 || limit > 10000 {
-		limit = 2000
-	}
-	rows, err := s.db.QueryContext(ctx, "SELECT node_id, ts, payload FROM "+table+" WHERE node_id = ? AND ts >= ? AND ts <= ? ORDER BY ts LIMIT ?", nodeID, from, to, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]Sample, 0)
-	for rows.Next() {
-		var sample Sample
-		var payload string
-		if err := rows.Scan(&sample.NodeID, &sample.TS, &payload); err != nil {
-			return nil, err
-		}
-		sample.Payload = json.RawMessage(payload)
-		out = append(out, sample)
-	}
-	return out, rows.Err()
-}
-
-// Prometheus renders current node telemetry without retaining unbounded label
-// sets. Only known scalar paths are emitted; node_id is the sole label.
+// Prometheus renders current node and serving telemetry with bounded labels:
+// aggregate node gauges carry only node_id; serving gauges only deployment_id.
+// Unbounded label sets (process names, mount paths, model IDs) are never
+// emitted.
 func (s *Service) Prometheus(ctx context.Context) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.node_id, t.ts, t.payload FROM telemetry_5s t JOIN (SELECT node_id, MAX(ts) ts FROM telemetry_5s GROUP BY node_id) latest ON latest.node_id=t.node_id AND latest.ts=t.ts`)
+	var lines []string
+	latest, err := s.LatestNodes(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var nodeID, payload string
-		var ts int64
-		if err := rows.Scan(&nodeID, &ts, &payload); err != nil {
-			return "", err
-		}
-		var document map[string]any
-		if json.Unmarshal([]byte(payload), &document) != nil {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("lmw_node_telemetry_timestamp_seconds{node_id=%q} %d", nodeID, ts))
-		flattenMetrics(&lines, "", nodeID, document)
+	nodeIDs := make([]string, 0, len(latest))
+	for id := range latest {
+		nodeIDs = append(nodeIDs, id)
 	}
+	sort.Strings(nodeIDs)
+	for _, id := range nodeIDs {
+		p := latest[id].Payload
+		lines = append(lines, fmt.Sprintf("lmw_node_telemetry_timestamp_seconds{node_id=%q} %d", id, latest[id].TS))
+		if p.CPU != nil {
+			lines = append(lines, fmt.Sprintf("lmw_node_cpu_usage_percent{node_id=%q} %d", id, p.CPU.UsagePercent))
+		}
+		if p.Memory != nil {
+			lines = append(lines, fmt.Sprintf("lmw_node_memory_used_bytes{node_id=%q} %d", id, p.Memory.UsedBytes))
+			lines = append(lines, fmt.Sprintf("lmw_node_memory_total_bytes{node_id=%q} %d", id, p.Memory.TotalBytes))
+		}
+		if p.Network != nil {
+			lines = append(lines, fmt.Sprintf("lmw_node_network_rx_bytes_per_second{node_id=%q} %d", id, p.Network.RxBytesPerSecond))
+			lines = append(lines, fmt.Sprintf("lmw_node_network_tx_bytes_per_second{node_id=%q} %d", id, p.Network.TxBytesPerSecond))
+		}
+		lines = append(lines, fmt.Sprintf("lmw_node_uptime_seconds{node_id=%q} %d", id, p.UptimeSeconds))
+		var maxUtil, maxTemp uint32
+		var sumMemUsed, sumMemTotal, sumPower, sumLimit uint64
+		for _, a := range p.Accelerators {
+			if a.UtilizationPercent > maxUtil {
+				maxUtil = a.UtilizationPercent
+			}
+			if a.TemperatureC > maxTemp {
+				maxTemp = a.TemperatureC
+			}
+			sumMemUsed += a.MemoryUsedBytes
+			sumMemTotal += a.MemoryTotalBytes
+			sumPower += uint64(a.PowerMW)
+			sumLimit += uint64(a.PowerLimitMW)
+		}
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_max_utilization_percent{node_id=%q} %d", id, maxUtil))
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_max_temperature_c{node_id=%q} %d", id, maxTemp))
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_memory_used_bytes{node_id=%q} %d", id, sumMemUsed))
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_memory_total_bytes{node_id=%q} %d", id, sumMemTotal))
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_power_mw{node_id=%q} %d", id, sumPower))
+		lines = append(lines, fmt.Sprintf("lmw_node_gpu_power_limit_mw{node_id=%q} %d", id, sumLimit))
+	}
+	lines = append(lines, s.servingPrometheusLines(ctx)...)
 	sort.Strings(lines)
-	return "# TYPE lmw_node_telemetry_timestamp_seconds gauge\n" + strings.Join(lines, "\n") + "\n", rows.Err()
-}
-
-func flattenMetrics(lines *[]string, prefix, nodeID string, value map[string]any) {
-	for key, raw := range value {
-		name := strings.Trim(strings.ReplaceAll(prefix+"_"+key, "-", "_"), "_")
-		switch typed := raw.(type) {
-		case float64:
-			*lines = append(*lines, fmt.Sprintf("lmw_node_%s{node_id=%q} %v", name, nodeID, typed))
-		case map[string]any:
-			flattenMetrics(lines, name, nodeID, typed)
-		}
-	}
+	return "# TYPE lmw_node_telemetry_timestamp_seconds gauge\n" + strings.Join(lines, "\n") + "\n", nil
 }

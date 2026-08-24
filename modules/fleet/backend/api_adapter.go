@@ -15,6 +15,7 @@ func (m *Module) GetFabric(w http.ResponseWriter, r *http.Request, id ID) { m.ge
 func (m *Module) UpdateFabric(w http.ResponseWriter, r *http.Request, id ID, params UpdateFabricParams) {
 	m.updateFabric(w, r)
 }
+func (m *Module) ListNodeTelemetry(w http.ResponseWriter, r *http.Request) { m.listNodeTelemetry(w, r) }
 func (m *Module) ListNodes(w http.ResponseWriter, r *http.Request)         { m.listNodes(w, r) }
 func (m *Module) GetNode(w http.ResponseWriter, r *http.Request, id ID)    { m.getNode(w, r) }
 func (m *Module) UpdateNode(w http.ResponseWriter, r *http.Request, id ID) { m.updateNode(w, r) }

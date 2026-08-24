@@ -89,6 +89,24 @@ func (e DiagnosticSeverity) Valid() bool {
 	}
 }
 
+// Defines values for GetDeploymentTelemetryParamsResolution.
+const (
+	N1m GetDeploymentTelemetryParamsResolution = "1m"
+	N5s GetDeploymentTelemetryParamsResolution = "5s"
+)
+
+// Valid indicates whether the value is a known member of the GetDeploymentTelemetryParamsResolution enum.
+func (e GetDeploymentTelemetryParamsResolution) Valid() bool {
+	switch e {
+	case N1m:
+		return true
+	case N5s:
+		return true
+	default:
+		return false
+	}
+}
+
 // Deployment defines model for Deployment.
 type Deployment struct {
 	CreatedAt    *time.Time             `json:"created_at,omitempty"`
@@ -223,6 +241,36 @@ type Error struct {
 	Message string                  `json:"message"`
 }
 
+// ServingPayload defines model for ServingPayload.
+type ServingPayload struct {
+	Available           *bool    `json:"available,omitempty"`
+	Backend             *string  `json:"backend,omitempty"`
+	ContextLength       *int64   `json:"context_length,omitempty"`
+	E2eP95Seconds       *float64 `json:"e2e_p95_seconds,omitempty"`
+	Error               *string  `json:"error,omitempty"`
+	ErrorCode           *string  `json:"error_code,omitempty"`
+	GenerationTps       *float64 `json:"generation_tps,omitempty"`
+	ItlP95Seconds       *float64 `json:"itl_p95_seconds,omitempty"`
+	KvCacheUsageRatio   *float64 `json:"kv_cache_usage_ratio,omitempty"`
+	ModelId             *string  `json:"model_id,omitempty"`
+	PreemptionsTotal    *int64   `json:"preemptions_total,omitempty"`
+	PrefillTps          *float64 `json:"prefill_tps,omitempty"`
+	PrefixCacheHitRatio *float64 `json:"prefix_cache_hit_ratio,omitempty"`
+	RequestsRunning     *int64   `json:"requests_running,omitempty"`
+	RequestsWaiting     *int64   `json:"requests_waiting,omitempty"`
+	SlotsActive         *int64   `json:"slots_active,omitempty"`
+	SlotsTotal          *int64   `json:"slots_total,omitempty"`
+	SpecAcceptanceRatio *float64 `json:"spec_acceptance_ratio,omitempty"`
+	TtftP95Seconds      *float64 `json:"ttft_p95_seconds,omitempty"`
+}
+
+// ServingTelemetrySample defines model for ServingTelemetrySample.
+type ServingTelemetrySample struct {
+	DeploymentId openapi_types.UUID `json:"deployment_id"`
+	Payload      ServingPayload     `json:"payload"`
+	Ts           int64              `json:"ts"`
+}
+
 // TransferPreview defines model for TransferPreview.
 type TransferPreview struct {
 	ArtifactId openapi_types.UUID `json:"artifact_id"`
@@ -260,6 +308,17 @@ type DeploymentLogsParams struct {
 	Rank *int `form:"rank,omitempty" json:"rank,omitempty"`
 }
 
+// GetDeploymentTelemetryParams defines parameters for GetDeploymentTelemetry.
+type GetDeploymentTelemetryParams struct {
+	Resolution *GetDeploymentTelemetryParamsResolution `form:"resolution,omitempty" json:"resolution,omitempty"`
+	From       *int64                                  `form:"from,omitempty" json:"from,omitempty"`
+	To         *int64                                  `form:"to,omitempty" json:"to,omitempty"`
+	Limit      *int                                    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetDeploymentTelemetryParamsResolution defines parameters for GetDeploymentTelemetry.
+type GetDeploymentTelemetryParamsResolution string
+
 // CreateDeploymentJSONRequestBody defines body for CreateDeployment for application/json ContentType.
 type CreateDeploymentJSONRequestBody = DeploymentCreateRequest
 
@@ -277,6 +336,9 @@ type ServerInterface interface {
 	// PlanDeployment Preview a deployment: placement, artifact preparation, ports, risks, conflicts
 	// (POST /deployments/plan)
 	PlanDeployment(w http.ResponseWriter, r *http.Request)
+	// ListDeploymentTelemetry Latest typed serving telemetry sample per deployment
+	// (GET /deployments/telemetry)
+	ListDeploymentTelemetry(w http.ResponseWriter, r *http.Request)
 	// DeleteDeployment Delete a fully-stopped deployment and its runs, freeing the slot
 	// (DELETE /deployments/{id})
 	DeleteDeployment(w http.ResponseWriter, r *http.Request, id ID)
@@ -292,6 +354,9 @@ type ServerInterface interface {
 	// StopDeployment Stop exactly this deployment's workload (label-scoped)
 	// (POST /deployments/{id}/stop)
 	StopDeployment(w http.ResponseWriter, r *http.Request, id ID)
+	// GetDeploymentTelemetry Ranged serving telemetry history for one deployment
+	// (GET /deployments/{id}/telemetry)
+	GetDeploymentTelemetry(w http.ResponseWriter, r *http.Request, id ID, params GetDeploymentTelemetryParams)
 	// VerifyDeployment Run the recipe's verification probes against the live workload
 	// (POST /deployments/{id}/verify)
 	VerifyDeployment(w http.ResponseWriter, r *http.Request, id ID)
@@ -315,6 +380,12 @@ func (_ Unimplemented) CreateDeployment(w http.ResponseWriter, r *http.Request) 
 // PlanDeployment Preview a deployment: placement, artifact preparation, ports, risks, conflicts
 // (POST /deployments/plan)
 func (_ Unimplemented) PlanDeployment(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListDeploymentTelemetry Latest typed serving telemetry sample per deployment
+// (GET /deployments/telemetry)
+func (_ Unimplemented) ListDeploymentTelemetry(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -344,6 +415,12 @@ func (_ Unimplemented) StartDeployment(w http.ResponseWriter, r *http.Request, i
 // StopDeployment Stop exactly this deployment's workload (label-scoped)
 // (POST /deployments/{id}/stop)
 func (_ Unimplemented) StopDeployment(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetDeploymentTelemetry Ranged serving telemetry history for one deployment
+// (GET /deployments/{id}/telemetry)
+func (_ Unimplemented) GetDeploymentTelemetry(w http.ResponseWriter, r *http.Request, id ID, params GetDeploymentTelemetryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -395,6 +472,20 @@ func (siw *ServerInterfaceWrapper) PlanDeployment(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PlanDeployment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeploymentTelemetry operation middleware
+func (siw *ServerInterfaceWrapper) ListDeploymentTelemetry(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeploymentTelemetry(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -541,6 +632,87 @@ func (siw *ServerInterfaceWrapper) StopDeployment(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StopDeployment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeploymentTelemetry operation middleware
+func (siw *ServerInterfaceWrapper) GetDeploymentTelemetry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDeploymentTelemetryParams
+
+	// ------------- Optional query parameter "resolution" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "resolution", r.URL.Query(), &params.Resolution, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "resolution"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resolution", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeploymentTelemetry(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -711,10 +883,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/deployments/{id}/stop", wrapper.StopDeployment)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/deployments/{id}/telemetry", wrapper.GetDeploymentTelemetry)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/deployments/{id}/verify", wrapper.VerifyDeployment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/deployments/plan", wrapper.PlanDeployment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/deployments/telemetry", wrapper.ListDeploymentTelemetry)
 	})
 
 	return r
