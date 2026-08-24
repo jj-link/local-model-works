@@ -299,14 +299,15 @@ UPDATE runs SET output = ? WHERE id = ?;
 -- name: GetModuleSettings :one
 SELECT module, settings, version, updated_at FROM module_settings WHERE module = ?;
 
--- name: PutModuleSettings :exec
+-- name: InsertModuleSettings :execrows
 INSERT INTO module_settings (module, settings, version)
 VALUES (?, ?, ?)
-ON CONFLICT (module)
-DO UPDATE SET settings = excluded.settings,
-              version = excluded.version,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE module_settings.version = ?;
+ON CONFLICT (module) DO NOTHING;
+
+-- name: UpdateModuleSettingsCAS :execrows
+UPDATE module_settings
+SET settings = @settings, version = @new_version, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE module = @module AND version = @expected_version;
 
 -- name: CreateSecret :exec
 INSERT INTO secrets (id, name, purpose, nonce, ciphertext)
