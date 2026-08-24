@@ -1,0 +1,281 @@
+package backend
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jj-link/local-model-works/internal/jobs"
+	"github.com/jj-link/local-model-works/internal/runtime"
+	"github.com/jj-link/local-model-works/internal/workload"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
+)
+
+const (
+	workerPullTimeout  = 30 * time.Minute
+	workerOpTimeout    = 2 * time.Minute
+	workerPollInterval = 2 * time.Second
+	workerRunLimit     = 24 * time.Hour
+)
+
+var secretFilename = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+type workerSettings struct {
+	RunnerNodeID string
+	WorkerImage  string
+}
+
+func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error) {
+	values, _, err := m.env.Settings.Get(ctx, descriptor.ID)
+	if err != nil {
+		return workerSettings{}, err
+	}
+	settings := workerSettings{}
+	if value, ok := values["runner_node_id"].(string); ok {
+		settings.RunnerNodeID = value
+	}
+	if value, ok := values["worker_image"].(string); ok {
+		settings.WorkerImage = value
+	}
+	if settings.RunnerNodeID == "" || settings.WorkerImage == "" {
+		return workerSettings{}, errors.New("autoresearch.runner_not_configured")
+	}
+	if !strings.Contains(settings.WorkerImage, "@sha256:") {
+		return workerSettings{}, errors.New("autoresearch.worker_image_unpinned")
+	}
+	return settings, nil
+}
+
+func imageParts(reference string) (string, string, error) {
+	index := strings.LastIndex(reference, "@sha256:")
+	if index <= 0 || len(reference[index+1:]) != len("sha256:")+64 {
+		return "", "", errors.New("autoresearch.worker_image_unpinned")
+	}
+	return reference[:index], reference[index+1:], nil
+}
+
+func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials string, command []string) *runtime.ContainerSpec {
+	mounts := []runtime.MountSpec{
+		{Source: projectRoot, Dest: "/project", ReadOnly: false},
+		{Source: scratch, Dest: "/scratch", ReadOnly: false},
+	}
+	if credentials != "" {
+		mounts = append(mounts, runtime.MountSpec{Source: credentials, Dest: "/run/lmw-credentials", ReadOnly: true})
+	}
+	return &runtime.ContainerSpec{
+		Image: imageRef, ImageDigest: imageDigest,
+		Cmd: command, WorkingDir: "/project/artifacts", NetworkMode: "bridge",
+		ReadonlyRootfs: true, NoNewPrivileges: true, CapDrop: []string{"ALL"},
+		TmpfsBytes: 1 << 30, ShmBytes: 1 << 30, PidsLimit: 512, MemoryBytes: 16 << 30, CPU: 8,
+		Mounts: mounts,
+		Labels: runtime.ManagedLabels("", runID, imageDigest, "1", 0, descriptor.ID),
+		Env: []string{
+			"HOME=/home/agon", "CLAUDE_PLUGIN_ROOT=/opt/agon", "AGON_RUNNER=/usr/local/bin/lmw-agon-runner",
+			"LMW_CREDENTIAL_DIR=/run/lmw-credentials", "TMPDIR=/scratch/tmp",
+		},
+	}
+}
+
+func writeCredentialFiles(root string, secrets map[string]string) (string, error) {
+	if len(secrets) == 0 {
+		return "", nil
+	}
+	credentials := filepath.Join(root, "credentials")
+	if err := os.MkdirAll(credentials, 0o700); err != nil {
+		return "", err
+	}
+	for name, value := range secrets {
+		filename := secretFilename.ReplaceAllString(name, "_")
+		if filename == "" {
+			return "", errors.New("autoresearch.secret_name_invalid")
+		}
+		if err := os.WriteFile(filepath.Join(credentials, filename), []byte(value), 0o600); err != nil {
+			return "", err
+		}
+	}
+	return credentials, nil
+}
+
+func runOperation(ctx context.Context, client *workload.Client, op agentv1.WorkloadOp, spec []byte, timeout time.Duration) (*agentv1.CommandResult, error) {
+	result, err := client.Do(ctx, op, spec, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := acknowledge(result, op.String()); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func waitContainer(ctx context.Context, client *workload.Client, limit time.Duration) (*agentv1.CommandResult, error) {
+	deadline := time.NewTimer(limit)
+	defer deadline.Stop()
+	ticker := time.NewTicker(workerPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, errors.New("autoresearch.worker_timeout")
+		case <-ticker.C:
+			result, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, workerOpTimeout)
+			if err != nil {
+				return nil, err
+			}
+			switch result.GetContainerState() {
+			case "exited", "dead":
+				return result, nil
+			case "running", "created", "paused":
+			default:
+				return nil, fmt.Errorf("autoresearch.worker_state_invalid: %s", result.GetContainerState())
+			}
+		}
+	}
+}
+
+func (m *Module) preflightSharedRoot(ctx context.Context, settings workerSettings, projectRoot, scratch, imageRef, imageDigest, runID string) error {
+	token := runID + "-shared-root"
+	name := ".shared-root-" + strings.ReplaceAll(runID, "-", "")
+	sentinel := filepath.Join(projectRoot, ".lmw", name)
+	if err := os.WriteFile(sentinel, []byte(token), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(sentinel)
+	preflightRunID := runID + "-preflight"
+	client := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", preflightRunID, 0)
+	spec := workerSpec(preflightRunID, imageRef, imageDigest, projectRoot, scratch, "", []string{
+		"preflight", "--sentinel", "/project/.lmw/" + name, "--expect", token,
+	})
+	specJSON, _ := json.Marshal(spec)
+	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, specJSON, workerOpTimeout); err != nil {
+		return fmt.Errorf("autoresearch.runner_not_colocated: %w", err)
+	}
+	defer func() {
+		_, _ = client.Do(context.Background(), agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, workerOpTimeout)
+	}()
+	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_START, nil, workerOpTimeout); err != nil {
+		return fmt.Errorf("autoresearch.runner_not_colocated: %w", err)
+	}
+	result, err := waitContainer(ctx, client, time.Minute)
+	if err != nil || result.GetExitCode() != 0 {
+		return errors.New("autoresearch.runner_not_colocated")
+	}
+	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, workerOpTimeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+func factoryCommand(job *jobs.Context, factory string) []string {
+	return []string{
+		"supervise", "--run-id", job.RunID, "--project-root", "/project", "--scratch", "/scratch",
+		"--factory", factory, "--config", "/project/.lmw/config.json",
+	}
+}
+
+func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory string) (map[string]any, error) {
+	projectID, _ := job.Input["project_id"].(string)
+	project, err := m.env.Q.GetAutoResearchProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := m.loadWorkerSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !project.RunnerNodeID.Valid || project.RunnerNodeID.String != settings.RunnerNodeID || !m.env.Nodes.Online(settings.RunnerNodeID) {
+		return nil, errors.New("autoresearch.runner_not_colocated")
+	}
+	projectRoot := m.projectRoot(projectID)
+	if err := initializeProjectRoot(projectRoot); err != nil {
+		return nil, err
+	}
+	scratch := filepath.Join(projectRoot, "scratch", job.RunID)
+	if err := os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700); err != nil {
+		return nil, err
+	}
+	credentials, err := writeCredentialFiles(scratch, job.Secrets)
+	if err != nil {
+		return nil, err
+	}
+	if credentials != "" {
+		defer os.RemoveAll(credentials)
+	}
+	config := map[string]any{"schema": 1, "project_id": projectID, "run_id": job.RunID, "factory": factory, "project": configSnapshot(project.ConfigJson), "input": job.Input}
+	configJSON, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.WriteFile(filepath.Join(projectRoot, ".lmw", "config.json"), append(configJSON, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	imageRef, imageDigest, err := imageParts(settings.WorkerImage)
+	if err != nil {
+		return nil, err
+	}
+	pullClient := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", job.RunID+"-preflight", 0)
+	pullSpec := workerSpec(job.RunID+"-preflight", imageRef, imageDigest, projectRoot, scratch, "", []string{"preflight"})
+	pullJSON, _ := json.Marshal(pullSpec)
+	if _, err := runOperation(ctx, pullClient, agentv1.WorkloadOp_WORKLOAD_OP_PULL, pullJSON, workerPullTimeout); err != nil {
+		return nil, err
+	}
+	if err := m.preflightSharedRoot(ctx, settings, projectRoot, scratch, imageRef, imageDigest, job.RunID); err != nil {
+		return nil, err
+	}
+	client := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", job.RunID, 0)
+	spec := workerSpec(job.RunID, imageRef, imageDigest, projectRoot, scratch, credentials, factoryCommand(job, factory))
+	specJSON, _ := json.Marshal(spec)
+	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, specJSON, workerOpTimeout); err != nil {
+		return nil, err
+	}
+	removed := false
+	defer func() {
+		if removed {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = client.Do(cleanup, agentv1.WorkloadOp_WORKLOAD_OP_STOP, nil, 30*time.Second)
+		_, _ = client.Do(cleanup, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, 30*time.Second)
+	}()
+	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_START, nil, workerOpTimeout); err != nil {
+		return nil, err
+	}
+	result, err := waitContainer(ctx, client, workerRunLimit)
+	if err != nil {
+		return nil, err
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	_, _ = m.env.Runs.WaitLogEnd(drainCtx, job.RunID, "", 0, "stdout")
+	cancel()
+	if result.GetExitCode() != 0 {
+		return nil, fmt.Errorf("autoresearch.worker_failed: exit %d: %s", result.GetExitCode(), result.GetError())
+	}
+	if _, err := runOperation(context.Background(), client, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, workerOpTimeout); err != nil {
+		return nil, err
+	}
+	removed = true
+	output := map[string]any{"project_id": projectID, "changed_paths": []string{}}
+	paper := filepath.Join(m.paperRoot(projectID), "build", "manuscript.pdf")
+	if _, err := os.Stat(paper); err == nil {
+		output["paper_path"] = paper
+	}
+	return output, nil
+}
+
+func (m *Module) runFactory(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	factory, _ := job.Input["factory"].(string)
+	return m.executeWorker(ctx, job, factory)
+}
+
+func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	return m.executeWorker(ctx, job, "paper-edit")
+}
+
+func (m *Module) runPaperCompile(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	return m.executeWorker(ctx, job, "paper-compile")
+}

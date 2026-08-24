@@ -579,6 +579,45 @@ func (q *Queries) ListAutoResearchSources(ctx context.Context, projectID string)
 	return items, nil
 }
 
+const listInterruptedAutoResearchRunsByNode = `-- name: ListInterruptedAutoResearchRunsByNode :many
+SELECT ar.run_id, ar.project_id, ar.factory, ar.parent_run_id, ar.dispatcher_session_id, ar.worker_node_id, ar.config_snapshot
+FROM autoresearch_runs ar
+JOIN runs r ON r.id = ar.run_id
+WHERE ar.worker_node_id = ? AND r.state = 'interrupted'
+ORDER BY ar.run_id
+`
+
+func (q *Queries) ListInterruptedAutoResearchRunsByNode(ctx context.Context, workerNodeID sql.NullString) ([]AutoresearchRun, error) {
+	rows, err := q.db.QueryContext(ctx, listInterruptedAutoResearchRunsByNode, workerNodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutoresearchRun
+	for rows.Next() {
+		var i AutoresearchRun
+		if err := rows.Scan(
+			&i.RunID,
+			&i.ProjectID,
+			&i.Factory,
+			&i.ParentRunID,
+			&i.DispatcherSessionID,
+			&i.WorkerNodeID,
+			&i.ConfigSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectAutoResearchIdea = `-- name: SelectAutoResearchIdea :execrows
 UPDATE autoresearch_ideas
 SET selected = 1, version = version + 1,

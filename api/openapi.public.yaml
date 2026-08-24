@@ -3445,6 +3445,7 @@ components:
         - planning
         - waiting
         - running
+        - paused
         - verifying
         - succeeded
         - failed

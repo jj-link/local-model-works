@@ -195,6 +195,7 @@ const (
 	RunStateCancelling  RunState = "cancelling"
 	RunStateFailed      RunState = "failed"
 	RunStateInterrupted RunState = "interrupted"
+	RunStatePaused      RunState = "paused"
 	RunStatePlanning    RunState = "planning"
 	RunStateQueued      RunState = "queued"
 	RunStateRunning     RunState = "running"
@@ -213,6 +214,8 @@ func (e RunState) Valid() bool {
 	case RunStateFailed:
 		return true
 	case RunStateInterrupted:
+		return true
+	case RunStatePaused:
 		return true
 	case RunStatePlanning:
 		return true

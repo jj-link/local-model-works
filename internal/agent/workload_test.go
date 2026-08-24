@@ -33,6 +33,20 @@ func (r *ownershipRuntime) Start(context.Context, string) error {
 	r.calls = append(r.calls, "start")
 	return nil
 }
+func (r *ownershipRuntime) Pause(context.Context, string) error {
+	r.calls = append(r.calls, "pause")
+	if r.info != nil {
+		r.info.State = "paused"
+	}
+	return nil
+}
+func (r *ownershipRuntime) Unpause(context.Context, string) error {
+	r.calls = append(r.calls, "unpause")
+	if r.info != nil {
+		r.info.State = "running"
+	}
+	return nil
+}
 func (r *ownershipRuntime) Stop(context.Context, string, int) error {
 	r.calls = append(r.calls, "stop")
 	return nil
@@ -92,6 +106,8 @@ func TestUnmanagedSameNameRejectedAcrossLifecycle(t *testing.T) {
 		agentv1.WorkloadOp_WORKLOAD_OP_CREATE,
 		agentv1.WorkloadOp_WORKLOAD_OP_START,
 		agentv1.WorkloadOp_WORKLOAD_OP_STOP,
+		agentv1.WorkloadOp_WORKLOAD_OP_PAUSE,
+		agentv1.WorkloadOp_WORKLOAD_OP_UNPAUSE,
 		agentv1.WorkloadOp_WORKLOAD_OP_REMOVE,
 		agentv1.WorkloadOp_WORKLOAD_OP_INSPECT,
 		agentv1.WorkloadOp_WORKLOAD_OP_LOGS,
@@ -178,6 +194,27 @@ func TestDirectLogRequestRejectsTraversalBeforeRuntimeOrFilesystem(t *testing.T)
 	case message := <-a.sendQ:
 		t.Fatalf("invalid direct log request emitted message: %T", message.GetBody())
 	default:
+	}
+}
+
+func TestPauseAndUnpauseAcknowledgeManagedState(t *testing.T) {
+	fake := &ownershipRuntime{info: &runtime.ContainerInfo{
+		ID: "managed", State: "running",
+		Labels: runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "autoresearch"),
+	}}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", fake, nil)
+	a.handleWorkload(context.Background(), testWorkloadCommand(agentv1.WorkloadOp_WORKLOAD_OP_PAUSE, nil))
+	paused := commandResult(t, a)
+	if !paused.GetOk() || paused.GetContainerState() != "paused" {
+		t.Fatalf("pause result = %+v", paused)
+	}
+	a.handleWorkload(context.Background(), testWorkloadCommand(agentv1.WorkloadOp_WORKLOAD_OP_UNPAUSE, nil))
+	resumed := commandResult(t, a)
+	if !resumed.GetOk() || resumed.GetContainerState() != "running" {
+		t.Fatalf("unpause result = %+v", resumed)
+	}
+	if strings.Join(fake.calls, ",") != "inspect,pause,inspect,unpause" {
+		t.Fatalf("calls = %v", fake.calls)
 	}
 }
 

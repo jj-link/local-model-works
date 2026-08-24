@@ -12,10 +12,9 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
-	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/jobs"
-	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/runtime"
+	"github.com/jj-link/local-model-works/internal/workload"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -135,46 +134,6 @@ type graderResult struct {
 	FirstTokenMS     map[string]float64 `json:"first_token_ms"`
 }
 
-// dispatch is the per-run, per-node workload command channel.
-type dispatch struct {
-	env    *moduleapi.Env
-	nodeID string
-	runID  string
-}
-
-// op sends one workload command to the node and waits for its ack,
-// bounded by timeout. A false Send (node offline) and a ctx cancel fail
-// immediately; the broker waiter is released on every path.
-func (d *dispatch) op(ctx context.Context, op agentv1.WorkloadOp, specJSON []byte, timeout time.Duration) (*agentv1.CommandResult, error) {
-	cmdID, err := id.New()
-	if err != nil {
-		return nil, err
-	}
-	sent := d.env.Nodes.Send(d.nodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_WorkloadCommand{
-		WorkloadCommand: &agentv1.WorkloadCommand{
-			CommandId:     cmdID,
-			Op:            op,
-			DeploymentId:  "", // ad-hoc grader: not a deployment workload
-			RunId:         d.runID,
-			Rank:          0,
-			ContainerSpec: specJSON,
-		},
-	}})
-	if !sent {
-		return nil, fmt.Errorf("node %s offline", d.nodeID)
-	}
-	ch, release := d.env.Commands.Wait(cmdID)
-	defer release()
-	select {
-	case cr := <-ch:
-		return cr, nil
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("timed out after %s waiting for %s ack", timeout, op)
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
 // parseInput re-renders the (already schema-validated) input map to a
 // typed struct.
 func parseInput(raw map[string]any) (*benchmarkIn, error) {
@@ -269,11 +228,11 @@ func (m *Module) runBenchmark(ctx context.Context, c *jobs.Context) (map[string]
 		return nil, fmt.Errorf("grader node %s is offline", nodeID)
 	}
 
-	d := &dispatch{env: m.env, nodeID: nodeID, runID: c.RunID}
+	d := workload.New(m.env.Nodes, m.env.Commands, nodeID, "", c.RunID, 0)
 
 	results := make([]map[string]any, 0, len(in.Languages))
 	for _, lang := range in.Languages {
-		out, err := m.runLanguage(ctx, d, c.Logf, lang, graderParams{
+		out, err := m.runLanguage(ctx, d, c.RunID, c.Logf, lang, graderParams{
 			baseURL:      baseURL,
 			model:        model,
 			prompts:      in.PromptsPerLanguage,
@@ -333,8 +292,8 @@ func graderSpec(runID string, p graderParams, lang string) (*runtime.ContainerSp
 // row, and removes the container. Every failure and cancellation path
 // tears the container down (STOP then REMOVE, best effort) before
 // returning.
-func (m *Module) runLanguage(ctx context.Context, d *dispatch, logf func(format string, args ...any), lang string, p graderParams) (map[string]any, error) {
-	_, specJSON, err := graderSpec(d.runID, p, lang)
+func (m *Module) runLanguage(ctx context.Context, d *workload.Client, runID string, logf func(format string, args ...any), lang string, p graderParams) (map[string]any, error) {
+	_, specJSON, err := graderSpec(runID, p, lang)
 	if err != nil {
 		return nil, err
 	}
@@ -343,16 +302,16 @@ func (m *Module) runLanguage(ctx context.Context, d *dispatch, logf func(format 
 		if removed {
 			return
 		}
-		if _, err := d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_STOP, nil, cleanupTimeout); err != nil {
+		if _, err := d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_STOP, nil, cleanupTimeout); err != nil {
 			logf("[benchmark] %s: stop during teardown: %v", lang, err)
 		}
-		if _, err := d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, cleanupTimeout); err != nil {
+		if _, err := d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, cleanupTimeout); err != nil {
 			logf("[benchmark] %s: remove during teardown: %v", lang, err)
 		}
 	}()
 
 	logf("[benchmark] %s: pulling grader image %s", lang, graderImages[lang])
-	cr, err := d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_PULL, specJSON, pullTimeout)
+	cr, err := d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_PULL, specJSON, pullTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("pull: %w", err)
 	}
@@ -360,13 +319,13 @@ func (m *Module) runLanguage(ctx context.Context, d *dispatch, logf func(format 
 		return nil, fmt.Errorf("pull failed: %s", cr.Error)
 	}
 	logf("[benchmark] %s: creating and starting grader container", lang)
-	if cr, err = d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, specJSON, createTimeout); err != nil {
+	if cr, err = d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, specJSON, createTimeout); err != nil {
 		return nil, fmt.Errorf("create: %w", err)
 	}
 	if !cr.Ok && !strings.Contains(cr.Error, "exists") {
 		return nil, fmt.Errorf("create failed: %s", cr.Error)
 	}
-	if cr, err = d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_START, nil, startTimeout); err != nil {
+	if cr, err = d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_START, nil, startTimeout); err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 	if !cr.Ok && !strings.Contains(cr.Error, "already running") {
@@ -387,7 +346,7 @@ poll:
 			if time.Now().After(deadline) {
 				return nil, fmt.Errorf("grader did not exit within %s", languageCap)
 			}
-			cr, err := d.op(ctx, agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, inspectTimeout)
+			cr, err := d.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, inspectTimeout)
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
@@ -417,12 +376,12 @@ poll:
 	// only after the container output fully drained; wait for it (2-min
 	// cap) before reading the log.
 	logEndCtx, cancelLogEnd := context.WithTimeout(context.Background(), logEndTimeout)
-	_, werr := m.env.Runs.WaitLogEnd(logEndCtx, d.runID, "", 0, "stdout")
+	_, werr := m.env.Runs.WaitLogEnd(logEndCtx, runID, "", 0, "stdout")
 	cancelLogEnd()
 	if werr != nil {
 		return nil, fmt.Errorf("grader log did not drain: %w", werr)
 	}
-	log, err := m.readFullLog(d.runID)
+	log, err := m.readFullLog(runID)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +391,7 @@ poll:
 	}
 	finishCtx, cancelFinish := context.WithTimeout(context.Background(), removeTimeout+time.Minute)
 	defer cancelFinish()
-	if err := m.record(finishCtx, d.runID, lang, p, gr); err != nil {
+	if err := m.record(finishCtx, runID, lang, p, gr); err != nil {
 		return nil, err
 	}
 	logf("[benchmark] %s: %d requests, %d ok, %.1f tok/s (wall %.1fs)",
@@ -441,7 +400,7 @@ poll:
 	if ctx.Err() != nil {
 		return nil, ctx.Err() // cancelled while harvesting: let the SDK land the run cancelled
 	}
-	if _, err := d.op(finishCtx, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, removeTimeout); err != nil {
+	if _, err := d.Do(finishCtx, agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, removeTimeout); err != nil {
 		// Removal failure is logged, not run-failing: the grader is done
 		// and its result is recorded.
 		logf("[benchmark] %s: remove: %v", lang, err)

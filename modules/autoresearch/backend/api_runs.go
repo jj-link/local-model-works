@@ -1,14 +1,20 @@
 package backend
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/httpx"
 	"github.com/jj-link/local-model-works/internal/jobs"
+	runsvc "github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/workload"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 func nullString(value string) sql.NullString {
@@ -133,28 +139,109 @@ func (m *Module) ListAutoResearchRuns(w http.ResponseWriter, r *http.Request, pr
 		httpx.HandleErr(w, err)
 		return
 	}
-	runs := make([]any, 0, len(links))
+	views := make([]any, 0, len(links))
 	for _, link := range links {
 		run, err := m.env.Runs.Get(r.Context(), link.RunID)
 		if err != nil {
 			httpx.HandleErr(w, err)
 			return
 		}
-		runs = append(runs, run)
+		views = append(views, run)
 	}
-	httpx.WriteJSON(w, http.StatusOK, runs)
+	httpx.WriteJSON(w, http.StatusOK, views)
 }
 
-func (m *Module) PauseAutoResearchRun(w http.ResponseWriter, _ *http.Request, _ AutoResearchRunId) {
-	httpx.WriteErr(w, http.StatusConflict, "autoresearch.pause_unavailable", "managed runner pause is not available")
+func (m *Module) runWorkloadClient(ctx context.Context, runID string) (*workload.Client, error) {
+	link, err := m.env.Q.GetAutoResearchRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if !link.WorkerNodeID.Valid || link.WorkerNodeID.String == "" {
+		return nil, errors.New("autoresearch.runner_node_missing")
+	}
+	return workload.New(m.env.Nodes, m.env.Commands, link.WorkerNodeID.String, "", runID, 0), nil
 }
 
-func (m *Module) ResumeAutoResearchRun(w http.ResponseWriter, _ *http.Request, _ AutoResearchRunId) {
-	httpx.WriteErr(w, http.StatusConflict, "autoresearch.resume_unavailable", "managed runner resume is not available")
+func acknowledge(result *agentv1.CommandResult, operation string) error {
+	if result == nil || !result.GetOk() {
+		message := "missing acknowledgement"
+		if result != nil && result.GetError() != "" {
+			message = result.GetError()
+		}
+		return fmt.Errorf("%s failed: %s", operation, message)
+	}
+	return nil
+}
+
+func (m *Module) PauseAutoResearchRun(w http.ResponseWriter, r *http.Request, runID AutoResearchRunId) {
+	run, err := m.env.Runs.Get(r.Context(), runID.String())
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	if run.State != string(runsvc.Running) {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.run_not_running", "run must be running before pause")
+		return
+	}
+	client, err := m.runWorkloadClient(r.Context(), runID.String())
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	inspected, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, 15*time.Second)
+	if err != nil || acknowledge(inspected, "inspect") != nil || inspected.GetContainerState() != "running" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.container_not_running", "managed run container is not running")
+		return
+	}
+	paused, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_PAUSE, nil, 15*time.Second)
+	if err != nil || acknowledge(paused, "pause") != nil || paused.GetContainerState() != "paused" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.pause_failed", "agent did not acknowledge paused state")
+		return
+	}
+	if err := m.env.Runs.SetState(r.Context(), runID.String(), runsvc.Paused, "", ""); err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	run, _ = m.env.Runs.Get(r.Context(), runID.String())
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+func (m *Module) ResumeAutoResearchRun(w http.ResponseWriter, r *http.Request, runID AutoResearchRunId) {
+	run, err := m.env.Runs.Get(r.Context(), runID.String())
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	if run.State != string(runsvc.Paused) {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.run_not_paused", "run must be paused before resume")
+		return
+	}
+	client, err := m.runWorkloadClient(r.Context(), runID.String())
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	inspected, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, 15*time.Second)
+	if err != nil || acknowledge(inspected, "inspect") != nil || inspected.GetContainerState() != "paused" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.container_not_paused", "managed run container is not paused")
+		return
+	}
+	resumed, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_UNPAUSE, nil, 15*time.Second)
+	if err != nil || acknowledge(resumed, "unpause") != nil || resumed.GetContainerState() != "running" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.resume_failed", "agent did not acknowledge running state")
+		return
+	}
+	if err := m.env.Runs.SetState(r.Context(), runID.String(), runsvc.Running, "", ""); err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	run, _ = m.env.Runs.Get(r.Context(), runID.String())
+	httpx.WriteJSON(w, http.StatusOK, run)
 }
 
 func (m *Module) StopAutoResearchRun(w http.ResponseWriter, r *http.Request, runID AutoResearchRunId) {
-	if _, err := m.env.Q.GetAutoResearchRun(r.Context(), runID.String()); err != nil {
+	client, err := m.runWorkloadClient(r.Context(), runID.String())
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", "AutoResearch run not found")
 			return
@@ -162,8 +249,37 @@ func (m *Module) StopAutoResearchRun(w http.ResponseWriter, r *http.Request, run
 		httpx.HandleErr(w, err)
 		return
 	}
-	if err := m.env.Runs.Cancel(r.Context(), runID.String()); err != nil {
+	inspected, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, 15*time.Second)
+	if err != nil || acknowledge(inspected, "inspect") != nil {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.container_missing", "managed run container could not be inspected")
+		return
+	}
+	if inspected.GetContainerState() == "paused" {
+		resumed, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_UNPAUSE, nil, 15*time.Second)
+		if err != nil || acknowledge(resumed, "unpause") != nil {
+			httpx.WriteErr(w, http.StatusConflict, "autoresearch.resume_failed", "paused container could not be resumed for shutdown")
+			return
+		}
+	}
+	stopped, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_STOP, nil, 30*time.Second)
+	if err != nil || acknowledge(stopped, "stop") != nil {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.stop_failed", "agent did not acknowledge stopped state")
+		return
+	}
+	if err := m.env.Runs.Cancel(r.Context(), runID.String()); err != nil && !errors.Is(err, runsvc.ErrInvalidTransition) {
 		httpx.HandleErr(w, err)
+		return
+	}
+	drainCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	_, drainErr := m.env.Runs.WaitLogEnd(drainCtx, runID.String(), "", 0, "stdout")
+	cancel()
+	if drainErr != nil {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.log_drain_failed", drainErr.Error())
+		return
+	}
+	removed, err := client.Do(r.Context(), agentv1.WorkloadOp_WORKLOAD_OP_REMOVE, nil, 30*time.Second)
+	if err != nil || acknowledge(removed, "remove") != nil {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.remove_failed", "agent did not acknowledge container removal")
 		return
 	}
 	run, err := m.env.Runs.Get(r.Context(), runID.String())

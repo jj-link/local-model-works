@@ -8,6 +8,7 @@
 package moduleapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 
@@ -95,4 +96,10 @@ type Module interface {
 	RegisterHTTP(r chi.Router)
 	RegisterJobs(reg *jobs.Registry)
 	RegisterSettings(reg *settings.Registry)
+}
+
+// NodeReconciler is an optional module hook invoked after an enrolled agent
+// session is writable. Implementations must be idempotent.
+type NodeReconciler interface {
+	ReconcileNode(context.Context, string)
 }

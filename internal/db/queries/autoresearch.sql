@@ -104,3 +104,10 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: ListAutoResearchMessages :many
 SELECT * FROM autoresearch_messages WHERE project_id = ? ORDER BY created_at, id;
+
+-- name: ListInterruptedAutoResearchRunsByNode :many
+SELECT ar.*
+FROM autoresearch_runs ar
+JOIN runs r ON r.id = ar.run_id
+WHERE ar.worker_node_id = ? AND r.state = 'interrupted'
+ORDER BY ar.run_id;
