@@ -29,6 +29,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
+	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
@@ -306,6 +307,11 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			}
 		}
 	}()
+	for _, module := range s.modules {
+		if reconciler, ok := module.(moduleapi.NodeReconciler); ok {
+			go reconciler.ReconcileNode(s.ctx, nodeID)
+		}
+	}
 
 	// Watchdog: a silent-but-open connection goes offline after the
 	// heartbeat timeout.

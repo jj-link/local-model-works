@@ -174,6 +174,36 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 		}
 		a.result(cmdID, true, 0, "", id, "")
 		w.startTailer(ctx, wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank(), id)
+	case agentv1.WorkloadOp_WORKLOAD_OP_PAUSE:
+		info, err := a.resolveInfo(name, deploymentID, runID, wc.GetRank())
+		if err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		if info.State != "running" {
+			a.result(cmdID, false, 0, "container.not_running", info.ID, info.State)
+			return
+		}
+		if err := a.rt.Pause(ctx, info.ID); err != nil {
+			a.result(cmdID, false, 0, err.Error(), info.ID, info.State)
+			return
+		}
+		a.result(cmdID, true, 0, "", info.ID, "paused")
+	case agentv1.WorkloadOp_WORKLOAD_OP_UNPAUSE:
+		info, err := a.resolveInfo(name, deploymentID, runID, wc.GetRank())
+		if err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		if info.State != "paused" {
+			a.result(cmdID, false, 0, "container.not_paused", info.ID, info.State)
+			return
+		}
+		if err := a.rt.Unpause(ctx, info.ID); err != nil {
+			a.result(cmdID, false, 0, err.Error(), info.ID, info.State)
+			return
+		}
+		a.result(cmdID, true, 0, "", info.ID, "running")
 	case agentv1.WorkloadOp_WORKLOAD_OP_STOP:
 		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
 		if err != nil {
@@ -231,16 +261,24 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 
 // resolve finds a managed container by its deterministic name.
 func (a *Agent) resolve(name, deploymentID, runID string, rank int32) (string, error) {
+	info, err := a.resolveInfo(name, deploymentID, runID, rank)
+	if err != nil {
+		return "", err
+	}
+	return info.ID, nil
+}
+
+func (a *Agent) resolveInfo(name, deploymentID, runID string, rank int32) (*runtime.ContainerInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	info, err := a.rt.Inspect(ctx, name)
 	if err != nil {
-		return "", fmt.Errorf("container.missing: %s", name)
+		return nil, fmt.Errorf("container.missing: %s", name)
 	}
 	if err := validateContainerIdentity(info.Labels, deploymentID, runID, rank); err != nil {
-		return "", fmt.Errorf("%w: %s", err, name)
+		return nil, fmt.Errorf("%w: %s", err, name)
 	}
-	return info.ID, nil
+	return info, nil
 }
 
 func (a *Agent) result(cmdID string, ok bool, exit int32, errMsg, containerID, state string) {

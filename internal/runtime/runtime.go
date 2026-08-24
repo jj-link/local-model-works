@@ -60,7 +60,7 @@ type ContainerSpec struct {
 	// Ulimits carries per-resource rlimits (e.g. memlock, stack). Required for
 	// RoCE/NCCL workloads: the container drops all capabilities, so the default
 	// RLIMIT_MEMLOCK (8 KiB) makes ibv_reg_mr_iova2 fail with ENOMEM.
-	Ulimits         []Ulimit          `json:"ulimits,omitempty"`
+	Ulimits []Ulimit `json:"ulimits,omitempty"`
 }
 
 // ContainerInfo is the observed container state.
@@ -85,6 +85,10 @@ type Runtime interface {
 	Create(ctx context.Context, spec *ContainerSpec) (string, error)
 	// Start launches a created container.
 	Start(ctx context.Context, id string) error
+	// Pause suspends every process in a running container.
+	Pause(ctx context.Context, id string) error
+	// Unpause resumes a paused container.
+	Unpause(ctx context.Context, id string) error
 	// Stop halts a running container within the given timeout (0 = engine default).
 	Stop(ctx context.Context, id string, timeoutSeconds int) error
 	// Remove deletes a container (force removes running).

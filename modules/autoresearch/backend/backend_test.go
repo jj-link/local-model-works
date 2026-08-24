@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,5 +179,39 @@ func TestSecretPurposesIncludeAutoResearch(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("secret count = %d", count)
+	}
+}
+
+func TestWorkerSpecIsolation(t *testing.T) {
+	spec := workerSpec(
+		"run-1", "local/agon", "sha256:"+strings.Repeat("a", 64),
+		"/state/autoresearch/project", "/state/autoresearch/project/scratch/run-1", "/state/autoresearch/project/scratch/run-1/credentials",
+		[]string{"preflight"},
+	)
+	if !spec.ReadonlyRootfs || !spec.NoNewPrivileges || strings.Join(spec.CapDrop, ",") != "ALL" {
+		t.Fatalf("isolation flags = %+v", spec)
+	}
+	if spec.NetworkMode != "bridge" || spec.PidsLimit <= 0 || spec.MemoryBytes <= 0 || spec.CPU <= 0 || spec.TmpfsBytes <= 0 {
+		t.Fatalf("resource bounds = %+v", spec)
+	}
+	if len(spec.Mounts) != 3 || spec.Mounts[0].ReadOnly || spec.Mounts[1].ReadOnly || !spec.Mounts[2].ReadOnly {
+		t.Fatalf("mounts = %+v", spec.Mounts)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("docker.sock")) {
+		t.Fatalf("Docker socket leaked into spec: %s", encoded)
+	}
+}
+
+func TestWorkerImageMustBeDigestPinned(t *testing.T) {
+	image, digest, err := imageParts("local/agon@sha256:" + strings.Repeat("b", 64))
+	if err != nil || image != "local/agon" || digest != "sha256:"+strings.Repeat("b", 64) {
+		t.Fatalf("image parts = %q %q %v", image, digest, err)
+	}
+	if _, _, err := imageParts("local/agon:latest"); err == nil {
+		t.Fatal("accepted mutable worker image")
 	}
 }

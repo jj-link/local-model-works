@@ -351,6 +351,8 @@ enum WorkloadOp {
   WORKLOAD_OP_REMOVE = 5;
   WORKLOAD_OP_INSPECT = 6;
   WORKLOAD_OP_LOGS = 7;
+  WORKLOAD_OP_PAUSE = 8;
+  WORKLOAD_OP_UNPAUSE = 9;
 }
 
 message LogRequest {

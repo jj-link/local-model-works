@@ -36,6 +36,7 @@ const (
 	Planning    State = "planning"
 	Waiting     State = "waiting"
 	Running     State = "running"
+	Paused      State = "paused"
 	Verifying   State = "verifying"
 	Succeeded   State = "succeeded"
 	Failed      State = "failed"
@@ -58,7 +59,8 @@ var transitions = map[State][]State{
 	Queued:     {Planning, Waiting, Running, Cancelling, Failed},
 	Planning:   {Waiting, Running, Verifying, Cancelling, Failed},
 	Waiting:    {Running, Cancelling, Failed},
-	Running:    {Verifying, Cancelling, Failed, Interrupted},
+	Running:    {Paused, Verifying, Cancelling, Failed, Interrupted},
+	Paused:     {Running, Cancelling, Failed, Interrupted},
 	Verifying:  {Succeeded, Failed, Cancelling},
 	Cancelling: {Cancelled, Failed},
 }

@@ -90,6 +90,8 @@ const (
 	WorkloadOp_WORKLOAD_OP_REMOVE      WorkloadOp = 5
 	WorkloadOp_WORKLOAD_OP_INSPECT     WorkloadOp = 6
 	WorkloadOp_WORKLOAD_OP_LOGS        WorkloadOp = 7
+	WorkloadOp_WORKLOAD_OP_PAUSE       WorkloadOp = 8
+	WorkloadOp_WORKLOAD_OP_UNPAUSE     WorkloadOp = 9
 )
 
 // Enum value maps for WorkloadOp.
@@ -103,6 +105,8 @@ var (
 		5: "WORKLOAD_OP_REMOVE",
 		6: "WORKLOAD_OP_INSPECT",
 		7: "WORKLOAD_OP_LOGS",
+		8: "WORKLOAD_OP_PAUSE",
+		9: "WORKLOAD_OP_UNPAUSE",
 	}
 	WorkloadOp_value = map[string]int32{
 		"WORKLOAD_OP_UNSPECIFIED": 0,
@@ -113,6 +117,8 @@ var (
 		"WORKLOAD_OP_REMOVE":      5,
 		"WORKLOAD_OP_INSPECT":     6,
 		"WORKLOAD_OP_LOGS":        7,
+		"WORKLOAD_OP_PAUSE":       8,
+		"WORKLOAD_OP_UNPAUSE":     9,
 	}
 )
 
@@ -3948,7 +3954,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"ArtifactOp\x12\x1b\n" +
 	"\x17ARTIFACT_OP_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14ARTIFACT_OP_VALIDATE\x10\x01\x12\x15\n" +
-	"\x11ARTIFACT_OP_FETCH\x10\x02*\xcb\x01\n" +
+	"\x11ARTIFACT_OP_FETCH\x10\x02*\xfb\x01\n" +
 	"\n" +
 	"WorkloadOp\x12\x1b\n" +
 	"\x17WORKLOAD_OP_UNSPECIFIED\x10\x00\x12\x14\n" +
@@ -3958,7 +3964,9 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x10WORKLOAD_OP_STOP\x10\x04\x12\x16\n" +
 	"\x12WORKLOAD_OP_REMOVE\x10\x05\x12\x17\n" +
 	"\x13WORKLOAD_OP_INSPECT\x10\x06\x12\x14\n" +
-	"\x10WORKLOAD_OP_LOGS\x10\a2X\n" +
+	"\x10WORKLOAD_OP_LOGS\x10\a\x12\x15\n" +
+	"\x11WORKLOAD_OP_PAUSE\x10\b\x12\x17\n" +
+	"\x13WORKLOAD_OP_UNPAUSE\x10\t2X\n" +
 	"\x11EnrollmentService\x12C\n" +
 	"\x06Enroll\x12\x1b.lmw.agent.v1.EnrollRequest\x1a\x1c.lmw.agent.v1.EnrollResponse2V\n" +
 	"\fAgentService\x12F\n" +

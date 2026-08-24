@@ -2,9 +2,7 @@
 package backend
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 
 	"github.com/go-chi/chi/v5"
 
@@ -12,8 +10,6 @@ import (
 	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/settings"
 )
-
-var errRunnerUnavailable = errors.New("autoresearch runner is unavailable")
 
 // Module owns AutoResearch persistence, HTTP APIs, and job orchestration.
 type Module struct {
@@ -128,14 +124,4 @@ func selectedSecretScopes(input map[string]any) []string {
 	}
 	walk(input)
 	return scopes
-}
-
-func (m *Module) runFactory(context.Context, *jobs.Context) (map[string]any, error) {
-	return nil, errRunnerUnavailable
-}
-func (m *Module) runPaperEdit(context.Context, *jobs.Context) (map[string]any, error) {
-	return nil, errRunnerUnavailable
-}
-func (m *Module) runPaperCompile(context.Context, *jobs.Context) (map[string]any, error) {
-	return nil, errRunnerUnavailable
 }

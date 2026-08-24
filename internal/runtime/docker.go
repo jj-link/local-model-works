@@ -187,6 +187,13 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 func (r *dockerRuntime) Start(ctx context.Context, id string) error {
 	return r.cli.ContainerStart(ctx, id, container.StartOptions{})
 }
+func (r *dockerRuntime) Pause(ctx context.Context, id string) error {
+	return r.cli.ContainerPause(ctx, id)
+}
+
+func (r *dockerRuntime) Unpause(ctx context.Context, id string) error {
+	return r.cli.ContainerUnpause(ctx, id)
+}
 
 func (r *dockerRuntime) Stop(ctx context.Context, id string, timeoutSeconds int) error {
 	opts := container.StopOptions{}
