@@ -128,7 +128,7 @@ func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials,
 		Mounts: mounts,
 		Labels: runtime.ManagedLabels("", runID, imageDigest, "1", 0, descriptor.ID),
 		Env: []string{
-			"HOME=/home/agon", "CLAUDE_PLUGIN_ROOT=/opt/agon", "AGON_RUNNER=/usr/local/bin/lmw-agon-runner",
+			"HOME=/scratch/home", "CLAUDE_PLUGIN_ROOT=/opt/agon", "AGON_RUNNER=/usr/local/bin/lmw-agon-runner",
 			"LMW_CREDENTIAL_DIR=/run/lmw-credentials", "TMPDIR=/scratch/tmp",
 		},
 	}
@@ -281,8 +281,10 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 		return nil, err
 	}
 	scratch := filepath.Join(projectRoot, "scratch", job.RunID)
-	if err := os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700); err != nil {
-		return nil, err
+	for _, directory := range []string{"tmp", "home/.claude", "home/.codex"} {
+		if err := os.MkdirAll(filepath.Join(scratch, filepath.FromSlash(directory)), 0o700); err != nil {
+			return nil, err
+		}
 	}
 	credentials, err := writeCredentialFiles(scratch, job.Secrets)
 	if err != nil {
