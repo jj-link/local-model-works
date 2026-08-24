@@ -78,6 +78,9 @@ func TestCodexProviderCommandPinsConfiguredBaseURL(t *testing.T) {
 	if !strings.Contains(arguments, `openai_base_url="http://100.92.139.82:8888/v1"`) {
 		t.Fatalf("codex arguments = %s", arguments)
 	}
+	if !strings.Contains(arguments, "prompt\n\n## Assigned task\n\ntest") {
+		t.Fatalf("Codex did not receive its role prompt: %s", arguments)
+	}
 }
 
 func TestSSHPreflightIsExplicit(t *testing.T) {
