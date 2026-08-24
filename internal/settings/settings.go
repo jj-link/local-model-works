@@ -107,6 +107,7 @@ func (r *Registry) Set(ctx context.Context, moduleID string, value map[string]an
 		}
 	}
 	cur, err := r.q.GetModuleSettings(ctx, moduleID)
+	exists := err == nil
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return "", err
@@ -124,10 +125,21 @@ func (r *Registry) Set(ctx context.Context, moduleID string, value map[string]an
 	if err != nil {
 		return "", err
 	}
-	if err := r.q.PutModuleSettings(ctx, db.PutModuleSettingsParams{
-		Module: moduleID, Settings: string(enc), Version: version,
-	}); err != nil {
+	var updated int64
+	if exists {
+		updated, err = r.q.UpdateModuleSettingsCAS(ctx, db.UpdateModuleSettingsCASParams{
+			Settings: string(enc), NewVersion: version, Module: moduleID, ExpectedVersion: ifMatch,
+		})
+	} else {
+		updated, err = r.q.InsertModuleSettings(ctx, db.InsertModuleSettingsParams{
+			Module: moduleID, Settings: string(enc), Version: version,
+		})
+	}
+	if err != nil {
 		return "", err
+	}
+	if updated != 1 {
+		return "", fmt.Errorf("%w: concurrent update", ErrStale)
 	}
 	return version, nil
 }
