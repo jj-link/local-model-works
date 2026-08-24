@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,6 +63,9 @@ func providerCommand(ctx context.Context, options AgentOptions) (*exec.Cmd, erro
 		permissions := []string{"--dangerously-bypass-approvals-and-sandbox"}
 		if options.Advisor {
 			permissions = []string{"--sandbox", "read-only", "--ask-for-approval", "never"}
+		}
+		if options.BaseURL != "" {
+			permissions = append(permissions, "-c", "openai_base_url="+strconv.Quote(strings.TrimRight(options.BaseURL, "/")))
 		}
 		if options.ResumeSessionID != "" {
 			arguments := append([]string{"exec", "resume"}, permissions...)
