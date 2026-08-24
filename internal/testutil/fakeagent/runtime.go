@@ -17,7 +17,7 @@ type FakeContainer struct {
 	ID       string
 	Name     string
 	Spec     runtime.ContainerSpec
-	State    string // created | running | exited
+	State    string // created | running | paused | exited
 	ExitCode int
 	logs     map[string]*logBuf
 }
@@ -174,6 +174,36 @@ func (rt *FakeRuntime) Start(ctx context.Context, id string) error {
 	}
 }
 
+// Pause freezes a running fake container.
+func (rt *FakeRuntime) Pause(ctx context.Context, id string) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	c := rt.get(id)
+	if c == nil {
+		return fmt.Errorf("Error: No such container: %s", id)
+	}
+	if c.State != "running" {
+		return fmt.Errorf("Error response from daemon: container %s is not running", c.Name)
+	}
+	c.State = "paused"
+	return nil
+}
+
+// Unpause resumes a paused fake container.
+func (rt *FakeRuntime) Unpause(ctx context.Context, id string) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	c := rt.get(id)
+	if c == nil {
+		return fmt.Errorf("Error: No such container: %s", id)
+	}
+	if c.State != "paused" {
+		return fmt.Errorf("Error response from daemon: container %s is not paused", c.Name)
+	}
+	c.State = "running"
+	return nil
+}
+
 // Stop transitions running→exited (idempotent); closing log streams so the
 // tailer sees EOF and sends its final chunk.
 func (rt *FakeRuntime) Stop(ctx context.Context, id string, timeoutSeconds int) error {
@@ -183,7 +213,7 @@ func (rt *FakeRuntime) Stop(ctx context.Context, id string, timeoutSeconds int) 
 		rt.mu.Unlock()
 		return nil // idempotent
 	}
-	if c.State == "running" {
+	if c.State == "running" || c.State == "paused" {
 		c.State = "exited"
 		c.ExitCode = 0
 	}
@@ -202,7 +232,7 @@ func (rt *FakeRuntime) Remove(ctx context.Context, id string, force bool) error 
 	if c == nil {
 		return nil // idempotent
 	}
-	if c.State == "running" && !force {
+	if (c.State == "running" || c.State == "paused") && !force {
 		return errors.New("Error response from daemon: cannot remove running container")
 	}
 	delete(rt.byName, c.Name)
