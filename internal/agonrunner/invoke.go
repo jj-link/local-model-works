@@ -68,7 +68,7 @@ func providerCommand(ctx context.Context, options AgentOptions) (*exec.Cmd, erro
 		if options.BaseURL != "" {
 			permissions = append(permissions, "-c", "openai_base_url="+strconv.Quote(strings.TrimRight(options.BaseURL, "/")))
 		}
-		task := string(promptContents) + "\n\n## Assigned task\n\n" + options.Task
+		task := "## Role instructions\n\n" + string(promptContents) + "\n\n## Assigned task\n\n" + options.Task
 		if options.ResumeSessionID != "" {
 			arguments := append([]string{"exec", "resume"}, permissions...)
 			arguments = append(arguments, "--json", "-m", options.Model, "--output-last-message", options.OutputPath, options.ResumeSessionID, task)
