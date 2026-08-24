@@ -66,7 +66,7 @@ build-runner:
 worker-image:
 	@mkdir -p .build/worker
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o .build/worker/lmw-agon-runner ./cmd/lmw-agon-runner
-	$(DOCKER) build --file workers/agon/Dockerfile --tag $(WORKER_TAG) .
+	DOCKER_BUILDKIT=0 $(DOCKER) build --network host --file workers/agon/Dockerfile --tag $(WORKER_TAG) .
 
 ## release: cross-compiled Linux amd64/arm64 bundles under dist/ with SHA-256 sums.
 # lmw-agent links NVML via cgo; amd64 builds natively, arm64 needs a cross C toolchain.
@@ -89,7 +89,7 @@ release: build-web
 	tar -C $(DIST) -czf $(DIST)/lmw-linux-arm64.tar.gz lmw-linux-arm64
 	mkdir -p .build/worker
 	cp $(DIST)/lmw-linux-amd64/lmw-agon-runner .build/worker/lmw-agon-runner
-	$(DOCKER) buildx build --platform linux/amd64 --file workers/agon/Dockerfile --output type=oci,dest=$(DIST)/lmw-agon-worker-linux-amd64.oci.tar .
+	$(DOCKER) buildx build --network host --platform linux/amd64 --file workers/agon/Dockerfile --output type=oci,dest=$(DIST)/lmw-agon-worker-linux-amd64.oci.tar .
 	cd $(DIST) && sha256sum lmw-linux-*/lmw* lmw-linux-*.tar.gz lmw-agon-worker-linux-amd64.oci.tar > SHA256SUMS
 
 clean:

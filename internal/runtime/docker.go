@@ -107,6 +107,7 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 		Entrypoint: spec.Entrypoint,
 		Labels:     spec.Labels,
 		WorkingDir: spec.WorkingDir,
+		User:       spec.User,
 	}
 	hostCfg := container.HostConfig{
 		NetworkMode:    container.NetworkMode(spec.NetworkMode),

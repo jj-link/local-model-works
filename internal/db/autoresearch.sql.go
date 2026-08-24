@@ -687,6 +687,29 @@ func (q *Queries) UpdateAutoResearchIdea(ctx context.Context, arg UpdateAutoRese
 	return result.RowsAffected()
 }
 
+const updateAutoResearchInvocationUsage = `-- name: UpdateAutoResearchInvocationUsage :exec
+UPDATE autoresearch_invocations
+SET input_tokens = ?, output_tokens = ?, cost_usd = ?
+WHERE id = ?
+`
+
+type UpdateAutoResearchInvocationUsageParams struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+	ID           string  `json:"id"`
+}
+
+func (q *Queries) UpdateAutoResearchInvocationUsage(ctx context.Context, arg UpdateAutoResearchInvocationUsageParams) error {
+	_, err := q.db.ExecContext(ctx, updateAutoResearchInvocationUsage,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.CostUsd,
+		arg.ID,
+	)
+	return err
+}
+
 const updateAutoResearchProject = `-- name: UpdateAutoResearchProject :execrows
 UPDATE autoresearch_projects
 SET name = ?, status = ?, runner_node_id = ?, idea_prompt = ?, config_json = ?,

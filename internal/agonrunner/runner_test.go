@@ -1,6 +1,7 @@
 package agonrunner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,5 +32,20 @@ func TestFactoryCommandsResolveShippedPrompts(t *testing.T) {
 	}
 	if _, _, _, err := commandForFactory("unknown"); err == nil {
 		t.Fatal("accepted unknown factory")
+	}
+}
+
+func TestSSHPreflightIsExplicit(t *testing.T) {
+	if err := preflightSSH(context.Background(), projectConfig{Input: map[string]any{}}, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	credentials := t.TempDir()
+	if err := os.WriteFile(filepath.Join(credentials, "spark-key"), []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LMW_CREDENTIAL_DIR", credentials)
+	err := preflightSSH(context.Background(), projectConfig{Input: map[string]any{"ssh_secret_name": "spark-key"}}, t.TempDir())
+	if err == nil || err.Error() != "autoresearch.ssh_hosts_missing" {
+		t.Fatalf("missing host error = %v", err)
 	}
 }

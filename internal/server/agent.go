@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -492,6 +493,118 @@ func (s *Server) appendLog(nodeID string, lc *agentv1.LogChunk) {
 	}
 	defer f.Close()
 	_, _ = f.Write(lc.GetData())
+	if lc.GetStream() == "stdout" {
+		s.publishAutoResearchEvents(nodeID, runID, lc.GetData())
+	}
+}
+
+func (s *Server) publishAutoResearchEvents(nodeID, runID string, chunk []byte) {
+	coarse := map[string]bool{
+		"run.status": true, "phase.changed": true, "agent.started": true,
+		"agent.finished": true, "agent.usage": true, "advisor.started": true,
+		"advisor.note": true, "advisor.finished": true, "artifact.changed": true,
+		"decision.required": true, "error": true,
+	}
+	s.eventMu.Lock()
+	buffer := append(s.eventBufs[runID], chunk...)
+	for {
+		index := bytes.IndexByte(buffer, '\n')
+		if index < 0 {
+			break
+		}
+		line := append([]byte(nil), buffer[:index]...)
+		buffer = buffer[index+1:]
+		var event struct {
+			Version            int            `json:"version"`
+			RunID              string         `json:"run_id"`
+			InvocationID       string         `json:"invocation_id"`
+			ParentInvocationID string         `json:"parent_invocation_id"`
+			Type               string         `json:"type"`
+			Payload            map[string]any `json:"payload"`
+		}
+		if json.Unmarshal(line, &event) == nil && event.Version == 1 && event.RunID == runID && coarse[event.Type] {
+			s.recordAutoResearchEvent(nodeID, runID, event.InvocationID, event.ParentInvocationID, event.Type, event.Payload)
+			encoded := append([]byte(nil), line...)
+			_ = s.bus.Publish(context.Background(), "autoresearch."+event.Type, runID, encoded)
+		}
+	}
+	if len(buffer) > 1<<20 {
+		buffer = nil
+	}
+	s.eventBufs[runID] = buffer
+	s.eventMu.Unlock()
+}
+
+func eventInt(value any) int64 {
+	switch number := value.(type) {
+	case float64:
+		return int64(number)
+	case int64:
+		return number
+	case int:
+		return int64(number)
+	}
+	return 0
+}
+
+func eventFloat(value any) float64 {
+	switch number := value.(type) {
+	case float64:
+		return number
+	case int64:
+		return float64(number)
+	case int:
+		return float64(number)
+	}
+	return 0
+}
+
+func (s *Server) recordAutoResearchEvent(nodeID, runID, invocationID, parentID, eventType string, payload map[string]any) {
+	if invocationID == "" {
+		return
+	}
+	ctx := context.Background()
+	switch eventType {
+	case "agent.started", "advisor.started":
+		advisor := int64(0)
+		if eventType == "advisor.started" {
+			advisor = 1
+		}
+		_ = s.q.CreateAutoResearchInvocation(ctx, db.CreateAutoResearchInvocationParams{
+			ID: invocationID, RunID: runID,
+			ParentID: sql.NullString{String: parentID, Valid: parentID != ""},
+			NodeID:   sql.NullString{String: nodeID, Valid: nodeID != ""},
+			Role:     stringValue(payload["role"]), Backend: stringValue(payload["backend"]),
+			Model: stringValue(payload["model"]), Advisor: advisor, State: "running",
+		})
+	case "agent.usage":
+		_ = s.q.UpdateAutoResearchInvocationUsage(ctx, db.UpdateAutoResearchInvocationUsageParams{
+			InputTokens: eventInt(payload["input_tokens"]), OutputTokens: eventInt(payload["output_tokens"]),
+			CostUsd: eventFloat(payload["cost_usd"]), ID: invocationID,
+		})
+	case "agent.finished", "advisor.finished":
+		row, err := s.q.GetAutoResearchInvocation(ctx, invocationID)
+		if err == nil {
+			_, _ = s.q.FinishAutoResearchInvocation(ctx, db.FinishAutoResearchInvocationParams{
+				State: "completed", InputTokens: row.InputTokens, OutputTokens: row.OutputTokens,
+				CostUsd: row.CostUsd, ID: invocationID,
+			})
+		}
+	case "error":
+		row, err := s.q.GetAutoResearchInvocation(ctx, invocationID)
+		if err == nil {
+			message := stringValue(payload["message"])
+			_, _ = s.q.FinishAutoResearchInvocation(ctx, db.FinishAutoResearchInvocationParams{
+				State: "failed", InputTokens: row.InputTokens, OutputTokens: row.OutputTokens,
+				CostUsd: row.CostUsd, Error: sql.NullString{String: message, Valid: message != ""}, ID: invocationID,
+			})
+		}
+	}
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 // applyPlacementReport records one node placement report. Agents carry the

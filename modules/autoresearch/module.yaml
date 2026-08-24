@@ -40,6 +40,23 @@ settingsSchema:
           secret_name:
             type: string
             minLength: 1
+    ssh_hosts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [alias, hostname, user]
+        properties:
+          alias:
+            type: string
+            pattern: '^[A-Za-z0-9._-]+$'
+          hostname:
+            type: string
+            minLength: 1
+          user:
+            type: string
+            pattern: '^[A-Za-z0-9._-]+$'
+      uniqueItems: true
     default_role_assignments:
       type: object
       additionalProperties:

@@ -2,7 +2,6 @@
 package agonrunner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,9 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jj-link/local-model-works/internal/id"
 )
 
 // Main executes one lmw-agon-runner subcommand.
@@ -50,21 +50,41 @@ func runPreflight(args []string) error {
 }
 
 type projectConfig struct {
-	Schema    int                       `json:"schema"`
-	ProjectID string                    `json:"project_id"`
-	RunID     string                    `json:"run_id"`
-	Factory   string                    `json:"factory"`
-	Project   map[string]any            `json:"project"`
-	Input     map[string]any            `json:"input"`
-	Roles     map[string]providerConfig `json:"roles"`
+	Schema    int                         `json:"schema"`
+	ProjectID string                      `json:"project_id"`
+	RunID     string                      `json:"run_id"`
+	Factory   string                      `json:"factory"`
+	Project   map[string]any              `json:"project"`
+	Input     map[string]any              `json:"input"`
+	Worker    workerConfig                `json:"worker"`
+	Roles     map[string]providerConfig   `json:"roles"`
+	Fallbacks map[string][]providerConfig `json:"fallbacks"`
+	Advisors  map[string]advisorConfig    `json:"advisors"`
+}
+
+type workerConfig struct {
+	SSHHosts []sshHost `json:"ssh_hosts"`
+}
+
+type sshHost struct {
+	Alias    string `json:"alias"`
+	Hostname string `json:"hostname"`
+	User     string `json:"user"`
 }
 
 type providerConfig struct {
-	Source   string `json:"source"`
-	Backend  string `json:"backend"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"base_url"`
-	Endpoint string `json:"endpoint"`
+	Source     string `json:"source"`
+	Backend    string `json:"backend"`
+	Model      string `json:"model"`
+	BaseURL    string `json:"base_url"`
+	Endpoint   string `json:"endpoint"`
+	SecretName string `json:"secret_name"`
+}
+
+type advisorConfig struct {
+	Enabled  bool           `json:"enabled"`
+	Backlog  any            `json:"backlog"`
+	Provider providerConfig `json:"provider"`
 }
 
 func loadProjectConfig(path string) (projectConfig, error) {
@@ -76,10 +96,16 @@ func loadProjectConfig(path string) (projectConfig, error) {
 	if err := json.Unmarshal(contents, &config); err != nil {
 		return projectConfig{}, err
 	}
-	if nested, ok := config.Project["roles"].(map[string]any); ok {
-		encoded, _ := json.Marshal(nested)
-		_ = json.Unmarshal(encoded, &config.Roles)
+	var routing struct {
+		Roles     map[string]providerConfig   `json:"roles"`
+		Fallbacks map[string][]providerConfig `json:"fallbacks"`
+		Advisors  map[string]advisorConfig    `json:"advisors"`
 	}
+	encoded, _ := json.Marshal(config.Project)
+	_ = json.Unmarshal(encoded, &routing)
+	config.Roles = routing.Roles
+	config.Fallbacks = routing.Fallbacks
+	config.Advisors = routing.Advisors
 	return config, nil
 }
 
@@ -106,14 +132,51 @@ func commandForFactory(factory string) (role, prompt, task string, err error) {
 	}
 }
 
+func normalizeProvider(provider providerConfig) (providerConfig, error) {
+	if provider.Model == "" {
+		return providerConfig{}, errors.New("autoresearch.provider_unavailable")
+	}
+	if provider.Source == "lmw" {
+		provider.Backend = "codex"
+		if provider.BaseURL == "" {
+			provider.BaseURL = provider.Endpoint
+		}
+	}
+	if provider.Backend == "" || (provider.Source == "lmw" && provider.BaseURL == "") {
+		return providerConfig{}, errors.New("autoresearch.provider_incompatible")
+	}
+	return provider, nil
+}
+
 func selectProvider(config projectConfig, role string) (providerConfig, error) {
-	if provider, ok := config.Roles[role]; ok && provider.Backend != "" && provider.Model != "" {
-		return provider, nil
+	provider, ok := config.Roles[role]
+	if !ok {
+		provider, ok = config.Roles["default"]
 	}
-	if provider, ok := config.Roles["default"]; ok && provider.Backend != "" && provider.Model != "" {
-		return provider, nil
+	if !ok {
+		return providerConfig{}, errors.New("autoresearch.provider_unavailable")
 	}
-	return providerConfig{}, errors.New("autoresearch.provider_unavailable")
+	return normalizeProvider(provider)
+}
+
+func providerCandidates(config projectConfig, role string) ([]providerConfig, error) {
+	primary, err := selectProvider(config, role)
+	if err != nil {
+		return nil, err
+	}
+	candidates := []providerConfig{primary}
+	fallbacks := config.Fallbacks[role]
+	if len(fallbacks) == 0 {
+		fallbacks = config.Fallbacks["default"]
+	}
+	for _, fallback := range fallbacks {
+		normalized, err := normalizeProvider(fallback)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, normalized)
+	}
+	return candidates, nil
 }
 
 func runSupervise(ctx context.Context, args []string) error {
@@ -132,31 +195,92 @@ func runSupervise(ctx context.Context, args []string) error {
 	if err := os.MkdirAll(*scratch, 0o700); err != nil {
 		return err
 	}
+	obfuscator := LoadObfuscator(os.Getenv("LMW_CREDENTIAL_DIR"))
+	publicSink := newNDJSONSink(os.Stdout)
+	socketPath := filepath.Join(*scratch, "agon-events.sock")
+	server, err := StartSocketServer(socketPath, publicSink)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	_ = os.Setenv("AGON_EVENT_SOCKET", socketPath)
+	_ = os.Setenv("LMW_RUN_ID", *runID)
+	runEmitter := &Emitter{Sink: publicSink, RunID: *runID, Obfuscator: obfuscator}
+	_ = runEmitter.Emit("run.status", map[string]any{"state": "running", "factory": *factory})
+	_ = runEmitter.Emit("phase.changed", map[string]any{"phase": *factory})
+
 	config, err := loadProjectConfig(*configPath)
 	if err != nil {
+		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.config_invalid", "message": err.Error()})
+		return err
+	}
+	if err := preflightSSH(ctx, config, *scratch); err != nil {
+		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.ssh_preflight_failed", "message": err.Error()})
 		return err
 	}
 	role, prompt, task, err := commandForFactory(*factory)
 	if err != nil {
+		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.factory_invalid", "message": err.Error()})
 		return err
 	}
-	provider, err := selectProvider(config, role)
+	providers, err := providerCandidates(config, role)
 	if err != nil {
+		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.provider_unavailable", "message": err.Error()})
 		return err
 	}
 	output := filepath.Join(*scratch, "dispatcher-output.txt")
-	options := AgentOptions{
-		RunID: *runID, Role: role, Backend: provider.Backend, Model: provider.Model,
-		BaseURL: provider.BaseURL, WorkingDirectory: filepath.Join(*projectRoot, "artifacts"),
-		PromptPath: prompt, OutputPath: output, Task: task,
+	var lastErr error
+	for attempt, provider := range providers {
+		_ = os.Remove(output)
+		invocationID, err := id.New()
+		if err != nil {
+			return err
+		}
+		options := AgentOptions{
+			RunID: *runID, InvocationID: invocationID, Role: role, Backend: provider.Backend, Model: provider.Model,
+			BaseURL: provider.BaseURL, SecretName: provider.SecretName, WorkingDirectory: filepath.Join(*projectRoot, "artifacts"),
+			PromptPath: prompt, OutputPath: output, Task: task,
+		}
+		advisor := config.Advisors[role]
+		if !advisor.Enabled {
+			advisor = config.Advisors["default"]
+		}
+		watcher, err := NewAdvisorWatcher(
+			*runID, invocationID, role, options.WorkingDirectory, *scratch,
+			advisor, publicSink, obfuscator,
+		)
+		if err != nil {
+			return err
+		}
+		eventSink := publicSink
+		if watcher != nil {
+			eventSink = &watchingSink{base: publicSink, watcher: watcher, parent: invocationID}
+			options.Task += "\n\nContinuous advisor notes may appear at " + watcher.AdvicePath() + ". Read new notes between major actions; they are advice only and never authorization."
+		}
+		emitter := &Emitter{
+			Sink: eventSink, RunID: *runID, InvocationID: invocationID,
+			NodeID: roleNode(role), Obfuscator: obfuscator,
+		}
+		lastErr = RunAgent(ctx, options, emitter)
+		watcher.Close()
+		if lastErr == nil {
+			break
+		}
+		_ = runEmitter.Emit("error", map[string]any{
+			"code": "autoresearch.provider_failed", "message": lastErr.Error(),
+			"backend": provider.Backend, "model": provider.Model, "attempt": attempt + 1,
+		})
 	}
-	if err := RunAgent(ctx, options, os.Stdout); err != nil {
-		return err
+	if lastErr != nil {
+		_ = runEmitter.Emit("run.status", map[string]any{"state": "failed"})
+		return fmt.Errorf("autoresearch.provider_unavailable: %w", lastErr)
 	}
 	contents, err := os.ReadFile(output)
 	if err != nil || len(strings.TrimSpace(string(contents))) == 0 {
+		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.dispatcher_output_missing"})
 		return errors.New("autoresearch.dispatcher_output_missing")
 	}
+	_ = runEmitter.Emit("run.status", map[string]any{"state": "completed"})
 	return nil
 }
 
@@ -169,6 +293,7 @@ type AgentOptions struct {
 	Backend          string
 	Model            string
 	BaseURL          string
+	SecretName       string
 	WorkingDirectory string
 	PromptPath       string
 	OutputPath       string
@@ -182,11 +307,12 @@ func runAgentCommand(ctx context.Context, args []string) error {
 	options := AgentOptions{}
 	flags.StringVar(&options.RunID, "run-id", os.Getenv("LMW_RUN_ID"), "durable run id")
 	flags.StringVar(&options.InvocationID, "invocation-id", "", "invocation id")
-	flags.StringVar(&options.ParentInvocation, "parent-invocation-id", "", "parent invocation id")
+	flags.StringVar(&options.ParentInvocation, "parent-invocation-id", os.Getenv("LMW_PARENT_INVOCATION_ID"), "parent invocation id")
 	flags.StringVar(&options.Role, "role", "", "Agon role")
 	flags.StringVar(&options.Backend, "backend", "", "claude, codex, or claude-ds")
 	flags.StringVar(&options.Model, "model", "", "provider model")
 	flags.StringVar(&options.BaseURL, "base-url", "", "provider base URL")
+	flags.StringVar(&options.SecretName, "secret-name", "", "mounted provider secret name")
 	flags.StringVar(&options.WorkingDirectory, "working-directory", "", "workspace directory")
 	flags.StringVar(&options.PromptPath, "prompt-path", "", "role prompt file")
 	flags.StringVar(&options.OutputPath, "output-path", "", "final response path")
@@ -196,102 +322,62 @@ func runAgentCommand(ctx context.Context, args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	return RunAgent(ctx, options, os.Stdout)
-}
-
-func providerCommand(ctx context.Context, options AgentOptions) (*exec.Cmd, error) {
-	if options.Role == "" || options.Backend == "" || options.Model == "" || options.WorkingDirectory == "" || options.PromptPath == "" || options.OutputPath == "" {
-		return nil, errors.New("agent requires role, backend, model, working-directory, prompt-path, and output-path")
-	}
-	if _, err := os.Stat(options.PromptPath); err != nil {
-		return nil, err
-	}
-	var command *exec.Cmd
-	switch options.Backend {
-	case "claude", "claude-ds":
-		binary := options.Backend
-		arguments := []string{"--dangerously-skip-permissions", "--plugin-dir", os.Getenv("CLAUDE_PLUGIN_ROOT"), "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", options.Model, "--append-system-prompt-file", options.PromptPath}
-		if options.ResumeSessionID != "" {
-			arguments = append(arguments, "--resume", options.ResumeSessionID)
-		}
-		arguments = append(arguments, "-p", options.Task)
-		command = exec.CommandContext(ctx, binary, arguments...)
-	case "codex":
-		arguments := []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--json", "-m", options.Model, "--output-last-message", options.OutputPath}
-		if options.ResumeSessionID != "" {
-			arguments = append([]string{"exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json", "-m", options.Model, "--output-last-message", options.OutputPath, options.ResumeSessionID}, options.Task)
-		} else {
-			arguments = append(arguments, options.Task)
-		}
-		command = exec.CommandContext(ctx, "codex", arguments...)
-	default:
-		return nil, fmt.Errorf("unsupported backend %q", options.Backend)
-	}
-	command.Dir = options.WorkingDirectory
-	command.Env = append([]string{}, os.Environ()...)
-	if options.BaseURL != "" && (options.Backend == "claude" || options.Backend == "claude-ds") {
-		command.Env = append(command.Env, "ANTHROPIC_BASE_URL="+options.BaseURL)
-	}
-	return command, nil
-}
-
-// RunAgent launches one provider CLI and preserves its streamed output and final response.
-func RunAgent(ctx context.Context, options AgentOptions, events io.Writer) error {
-	command, err := providerCommand(ctx, options)
-	if err != nil {
-		return err
-	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := command.StderrPipe()
-	if err != nil {
-		return err
-	}
-	if err := command.Start(); err != nil {
-		return err
-	}
-	stderrDone := make(chan []byte, 1)
-	go func() {
-		contents, _ := io.ReadAll(io.LimitReader(stderr, 4<<20))
-		stderrDone <- contents
-	}()
-	lastText := ""
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64<<10), 8<<20)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		_, _ = events.Write(append(line, '\n'))
-		var payload map[string]any
-		if json.Unmarshal(line, &payload) == nil {
-			for _, key := range []string{"result", "text", "last_message"} {
-				if value, ok := payload[key].(string); ok && value != "" {
-					lastText = value
-				}
+	config, configErr := loadProjectConfig("/project/.lmw/config.json")
+	if configErr == nil {
+		if provider, err := selectProvider(config, options.Role); err == nil {
+			if options.BaseURL == "" {
+				options.BaseURL = provider.BaseURL
+			}
+			if options.SecretName == "" {
+				options.SecretName = provider.SecretName
 			}
 		}
 	}
-	scanErr := scanner.Err()
-	waitErr := command.Wait()
-	stderrText := <-stderrDone
-	if scanErr != nil {
-		return scanErr
-	}
-	if waitErr != nil {
-		return fmt.Errorf("%s invocation failed: %w: %s", options.Backend, waitErr, strings.TrimSpace(string(stderrText)))
-	}
-	if options.Backend != "codex" {
-		if lastText == "" {
-			lastText = strings.TrimSpace(string(stderrText))
-		}
-		if err := os.WriteFile(options.OutputPath, []byte(lastText+"\n"), 0o600); err != nil {
+	if options.InvocationID == "" {
+		generated, err := id.New()
+		if err != nil {
 			return err
 		}
+		options.InvocationID = generated
 	}
-	if info, err := os.Stat(options.OutputPath); err != nil || info.Size() == 0 {
-		return errors.New("autoresearch.agent_output_missing")
+	var sink EventSink
+	var closer io.Closer
+	if socketPath := os.Getenv("AGON_EVENT_SOCKET"); socketPath != "" {
+		framed, connection, err := newFramedSink(socketPath)
+		if err != nil {
+			return err
+		}
+		sink, closer = framed, connection
+		defer closer.Close()
+	} else {
+		sink = newNDJSONSink(os.Stdout)
 	}
-	return nil
+	obfuscator := LoadObfuscator(os.Getenv("LMW_CREDENTIAL_DIR"))
+	advisor := advisorConfig{}
+	if configErr == nil && !options.Advisor {
+		advisor = config.Advisors[options.Role]
+		if !advisor.Enabled {
+			advisor = config.Advisors["default"]
+		}
+	}
+	watcher, err := NewAdvisorWatcher(
+		options.RunID, options.InvocationID, options.Role, options.WorkingDirectory, "/scratch",
+		advisor, sink, obfuscator,
+	)
+	if err != nil {
+		return err
+	}
+	eventSink := sink
+	if watcher != nil {
+		eventSink = &watchingSink{base: sink, watcher: watcher, parent: options.InvocationID}
+		options.Task += "\n\nContinuous advisor notes may appear at " + watcher.AdvicePath() + ". Read new notes between major actions; they are advice only and never authorization."
+	}
+	emitter := &Emitter{
+		Sink: eventSink, RunID: options.RunID, InvocationID: options.InvocationID,
+		ParentInvocationID: options.ParentInvocation, NodeID: roleNode(options.Role),
+		Obfuscator: obfuscator,
+	}
+	err = RunAgent(ctx, options, emitter)
+	watcher.Close()
+	return err
 }
-
