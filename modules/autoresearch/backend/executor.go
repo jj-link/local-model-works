@@ -29,9 +29,11 @@ const (
 var secretFilename = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 type workerSettings struct {
-	RunnerNodeID string
-	WorkerImage  string
-	SSHHosts     []map[string]string
+	RunnerNodeID    string
+	WorkerImage     string
+	SSHHosts        []map[string]string
+	DefaultRoles    map[string]any
+	DefaultAdvisors map[string]any
 }
 
 func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error) {
@@ -45,6 +47,12 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 	}
 	if value, ok := values["worker_image"].(string); ok {
 		settings.WorkerImage = value
+	}
+	if value, ok := values["default_role_assignments"].(map[string]any); ok {
+		settings.DefaultRoles = value
+	}
+	if value, ok := values["default_advisor_assignments"].(map[string]any); ok {
+		settings.DefaultAdvisors = value
 	}
 	if rawHosts, ok := values["ssh_hosts"].([]any); ok {
 		for _, rawHost := range rawHosts {
@@ -64,6 +72,36 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 		return workerSettings{}, errors.New("autoresearch.worker_image_unpinned")
 	}
 	return settings, nil
+}
+
+func mergeProjectDefaults(config map[string]any, settings workerSettings) {
+	for key, defaults := range map[string]map[string]any{
+		"roles": settings.DefaultRoles, "advisors": settings.DefaultAdvisors,
+	} {
+		current, _ := config[key].(map[string]any)
+		if current == nil {
+			current = map[string]any{}
+			config[key] = current
+		}
+		for name, value := range defaults {
+			if _, overridden := current[name]; !overridden {
+				current[name] = value
+			}
+		}
+	}
+}
+
+func (m *Module) projectConfigWithDefaults(ctx context.Context, raw string) map[string]any {
+	config := configSnapshot(raw)
+	values, _, err := m.env.Settings.Get(ctx, descriptor.ID)
+	if err != nil {
+		return config
+	}
+	settings := workerSettings{}
+	settings.DefaultRoles, _ = values["default_role_assignments"].(map[string]any)
+	settings.DefaultAdvisors, _ = values["default_advisor_assignments"].(map[string]any)
+	mergeProjectDefaults(config, settings)
+	return config
 }
 
 func imageParts(reference string) (string, string, error) {
@@ -254,6 +292,7 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 		defer os.RemoveAll(credentials)
 	}
 	projectConfig := configSnapshot(project.ConfigJson)
+	mergeProjectDefaults(projectConfig, settings)
 	if err := m.resolveProjectProviders(ctx, projectConfig); err != nil {
 		return nil, err
 	}

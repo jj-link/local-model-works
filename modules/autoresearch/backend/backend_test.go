@@ -136,6 +136,31 @@ func TestProjectHumanGateDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestMergeProjectDefaultsPreservesOverrides(t *testing.T) {
+	config := map[string]any{
+		"roles": map[string]any{"paper-writer": map[string]any{"model": "project"}},
+	}
+	settings := workerSettings{
+		DefaultRoles: map[string]any{
+			"default":      map[string]any{"model": "module"},
+			"paper-writer": map[string]any{"model": "module-writer"},
+		},
+		DefaultAdvisors: map[string]any{"default": map[string]any{"enabled": false, "backlog": 1}},
+	}
+	mergeProjectDefaults(config, settings)
+	roles := config["roles"].(map[string]any)
+	if roles["paper-writer"].(map[string]any)["model"] != "project" {
+		t.Fatal("project role override was replaced")
+	}
+	if roles["default"].(map[string]any)["model"] != "module" {
+		t.Fatal("module default role was not applied")
+	}
+	advisors := config["advisors"].(map[string]any)
+	if advisors["default"].(map[string]any)["enabled"] != false {
+		t.Fatal("module advisor defaults were not applied")
+	}
+}
+
 func TestPaperStatePhaseAndChangedDigests(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "PAPER_STATE.md")

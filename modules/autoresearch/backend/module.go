@@ -49,8 +49,9 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 		{
 			Kind: "autoresearch-paper-compile", Title: "AutoResearch paper compile",
 			InputSchema: paperCompileInputSchema, OutputSchema: runOutputSchema,
-			ArtifactKinds: []string{"research-paper"},
-			Executor:      m.runPaperCompile,
+			SecretScopesFor: selectedSecretScopes,
+			ArtifactKinds:   []string{"research-paper"},
+			Executor:        m.runPaperCompile,
 		},
 	} {
 		if err := reg.Register(descriptor.ID, spec); err != nil {
