@@ -21,28 +21,32 @@ func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
 
-func (m *Module) submitFactoryRun(r *http.Request, project db.AutoresearchProject, factory string, input map[string]any, parentRunID string) (string, error) {
+func (m *Module) submitFactoryRunContext(ctx context.Context, project db.AutoresearchProject, factory string, input map[string]any, parentRunID string) (string, error) {
 	input["project_id"] = project.ID
 	input["factory"] = factory
 	input["provider_config"] = configSnapshot(project.ConfigJson)
-	runID, err := m.env.Jobs.Submit(r.Context(), "autoresearch-factory", input)
+	runID, err := m.env.Jobs.Submit(ctx, "autoresearch-factory", input)
 	if err != nil {
 		return "", err
 	}
-	if err := m.env.Q.CreateAutoResearchRun(r.Context(), db.CreateAutoResearchRunParams{
+	if err := m.env.Q.CreateAutoResearchRun(ctx, db.CreateAutoResearchRunParams{
 		RunID: runID, ProjectID: project.ID, Factory: factory, ParentRunID: nullString(parentRunID),
 		WorkerNodeID: project.RunnerNodeID, ConfigSnapshot: project.ConfigJson,
 	}); err != nil {
-		_ = m.env.Runs.Cancel(r.Context(), runID)
+		_ = m.env.Runs.Cancel(ctx, runID)
 		return "", err
 	}
-	_, err = m.env.DB.ExecContext(r.Context(), `UPDATE autoresearch_projects
+	_, err = m.env.DB.ExecContext(ctx, `UPDATE autoresearch_projects
 		SET status='running', version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, project.ID)
 	if err != nil {
-		_ = m.env.Runs.Cancel(r.Context(), runID)
+		_ = m.env.Runs.Cancel(ctx, runID)
 		return "", err
 	}
 	return runID, nil
+}
+
+func (m *Module) submitFactoryRun(r *http.Request, project db.AutoresearchProject, factory string, input map[string]any, parentRunID string) (string, error) {
+	return m.submitFactoryRunContext(r.Context(), project, factory, input, parentRunID)
 }
 
 func (m *Module) GenerateAutoResearchIdeas(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId) {
@@ -67,6 +71,17 @@ func (m *Module) GenerateAutoResearchIdeas(w http.ResponseWriter, r *http.Reques
 	if count < 1 || count > 10 {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "candidate_count must be from 1 through 10")
 		return
+	}
+	sources, err := m.env.Q.ListAutoResearchSources(r.Context(), project.ID)
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	for _, source := range sources {
+		if source.Status != "ready" {
+			httpx.WriteErr(w, http.StatusConflict, "autoresearch.source_decision_required", "all attached sources must be ready before candidate generation")
+			return
+		}
 	}
 	prompt := project.IdeaPrompt
 	if req.Prompt != nil {
@@ -104,6 +119,17 @@ func (m *Module) CreateAutoResearchRun(w http.ResponseWriter, r *http.Request, p
 	if err := httpx.DecodeBody(r, &req); err != nil {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
+	}
+	if req.Factory == Idea {
+		selected, err := m.env.Q.CountSelectedAutoResearchIdeas(r.Context(), project.ID)
+		if err != nil {
+			httpx.HandleErr(w, err)
+			return
+		}
+		if selected == 0 {
+			httpx.WriteErr(w, http.StatusConflict, "autoresearch.idea_selection_required", "select at least one idea before continuing")
+			return
+		}
 	}
 	input := map[string]any{}
 	if req.ProviderOverrides != nil {

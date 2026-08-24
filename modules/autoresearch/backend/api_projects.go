@@ -174,11 +174,15 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	ideaPrompt := ""
+	status := "idea_intake"
 	if req.IdeaPrompt != nil {
-		ideaPrompt = *req.IdeaPrompt
+		ideaPrompt = strings.TrimSpace(*req.IdeaPrompt)
+		if ideaPrompt != "" {
+			status = "awaiting_idea_selection"
+		}
 	}
 	if err := m.env.Q.CreateAutoResearchProject(r.Context(), db.CreateAutoResearchProjectParams{
-		ID: projectID, Name: req.Name, Status: "idea_intake", RunnerNodeID: nullableUUID(req.RunnerNodeId),
+		ID: projectID, Name: req.Name, Status: status, RunnerNodeID: nullableUUID(req.RunnerNodeId),
 		IdeaPrompt: ideaPrompt, ConfigJson: string(configJSON),
 	}); err != nil {
 		httpx.HandleErr(w, err)
@@ -188,6 +192,20 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		_, _ = m.env.DB.ExecContext(r.Context(), "DELETE FROM autoresearch_projects WHERE id = ?", projectID)
 		httpx.HandleErr(w, err)
 		return
+	}
+	if ideaPrompt != "" {
+		ideaID, err := id.New()
+		if err == nil {
+			err = m.env.Q.CreateAutoResearchIdea(r.Context(), db.CreateAutoResearchIdeaParams{
+				ID: ideaID, ProjectID: projectID, Ordinal: 1, Source: "human",
+				Title: req.Name, Body: ideaPrompt, Selected: 0,
+			})
+		}
+		if err != nil {
+			_, _ = m.env.DB.ExecContext(r.Context(), "DELETE FROM autoresearch_projects WHERE id = ?", projectID)
+			httpx.HandleErr(w, err)
+			return
+		}
 	}
 	row, err := m.env.Q.GetAutoResearchProject(r.Context(), projectID)
 	if err != nil {
@@ -347,6 +365,8 @@ func (m *Module) SelectAutoResearchIdea(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if err := adoptIdea(m.projectRoot(projectID.String()), row); err != nil {
+			_, _ = m.env.DB.ExecContext(r.Context(), `UPDATE autoresearch_ideas SET selected=0, version=version+1,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND project_id=?`, row.ID, row.ProjectID)
 			httpx.HandleErr(w, err)
 			return
 		}

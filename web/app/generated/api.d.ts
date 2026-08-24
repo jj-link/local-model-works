@@ -36,6 +36,315 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/autoresearch/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAutoResearchProjects"];
+        put?: never;
+        post: operations["createAutoResearchProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getAutoResearchProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateAutoResearchProject"];
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listAutoResearchIdeas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/ideas/{ideaId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                ideaId: components["parameters"]["AutoResearchIdeaId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAutoResearchIdea"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/ideas/{ideaId}/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                ideaId: components["parameters"]["AutoResearchIdeaId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["selectAutoResearchIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/ideas/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["generateAutoResearchIdeas"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["chatEditAutoResearchPaper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/compile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["compileAutoResearchPaper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAutoResearchPaperFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                path: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getAutoResearchPaperFile"];
+        put: operations["updateAutoResearchPaperFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAutoResearchPaperPdf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/paper/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["releaseAutoResearchPaper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listAutoResearchRuns"];
+        put?: never;
+        post: operations["createAutoResearchRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/source-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["uploadAutoResearchSourceFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/projects/{projectId}/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listAutoResearchSources"];
+        put?: never;
+        post: operations["createAutoResearchSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/runs/{runId}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pauseAutoResearchRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/runs/{runId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeAutoResearchRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autoresearch/runs/{runId}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stopAutoResearchRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/benchmarks": {
         parameters: {
             query?: never;
@@ -804,6 +1113,172 @@ export interface components {
         };
         /** @enum {string} */
         ArtifactKind: "model" | "dataset" | "adapter" | "checkpoint" | "recipe" | "image" | "result" | "file";
+        AutoResearchAdvisorConfig: {
+            /** @default 1 */
+            backlog: "off" | 1 | 3 | 5;
+            /** @default false */
+            enabled: boolean;
+            provider?: components["schemas"]["AutoResearchProviderRef"];
+        };
+        AutoResearchExternalProviderRef: {
+            /** @enum {string} */
+            backend: "claude" | "codex" | "claude-ds";
+            /** Format: uri */
+            base_url?: string;
+            model: string;
+            secret_name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "AutoResearchExternalProviderRef";
+        };
+        /** @enum {string} */
+        AutoResearchFactory: "idea" | "proposal" | "deep_lit" | "experiment" | "paper";
+        AutoResearchIdea: {
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            ordinal: number;
+            /** Format: uuid */
+            project_id: string;
+            selected: boolean;
+            /** @enum {string} */
+            source: "human" | "generated";
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            version: number;
+        };
+        AutoResearchIdeaGenerate: {
+            /** @default 1 */
+            candidate_count: number;
+            prompt?: string;
+        };
+        AutoResearchIdeaUpdate: {
+            body: string;
+            title: string;
+        };
+        AutoResearchLMWProviderRef: {
+            /** Format: uuid */
+            deployment_id: string;
+            model: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "AutoResearchLMWProviderRef";
+        };
+        AutoResearchPaperChatRequest: {
+            base_etags: {
+                [key: string]: string;
+            };
+            message: string;
+        };
+        AutoResearchPaperChatResponse: {
+            after_digests: {
+                [key: string]: string;
+            };
+            before_digests: {
+                [key: string]: string;
+            };
+            changed_paths: string[];
+            run: components["schemas"]["Run"];
+        };
+        AutoResearchPaperFile: {
+            path: string;
+            sha256: string;
+            size: number;
+        };
+        AutoResearchProject: {
+            config: components["schemas"]["AutoResearchProjectConfig"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            idea_prompt: string;
+            name: string;
+            /** Format: uuid */
+            runner_node_id?: string | null;
+            status: components["schemas"]["AutoResearchProjectStatus"];
+            /** Format: date-time */
+            updated_at: string;
+            version: number;
+        };
+        AutoResearchProjectConfig: {
+            advisors?: {
+                [key: string]: components["schemas"]["AutoResearchAdvisorConfig"];
+            };
+            auditor_prompts?: {
+                [key: string]: string;
+            };
+            /** @default 1 */
+            candidate_count: number;
+            fallbacks?: {
+                [key: string]: components["schemas"]["AutoResearchProviderRef"][];
+            };
+            human_gates?: {
+                [key: string]: boolean;
+            };
+            /** @default 5 */
+            paper_max_rounds: number;
+            roles?: {
+                [key: string]: components["schemas"]["AutoResearchProviderRef"];
+            };
+        };
+        AutoResearchProjectCreate: {
+            config?: components["schemas"]["AutoResearchProjectConfig"];
+            idea_prompt?: string;
+            name: string;
+            /** Format: uuid */
+            runner_node_id?: string;
+        };
+        AutoResearchProjectPatch: {
+            config?: components["schemas"]["AutoResearchProjectConfig"];
+            idea_prompt?: string;
+            name?: string;
+            /** Format: uuid */
+            runner_node_id?: string;
+        };
+        /** @enum {string} */
+        AutoResearchProjectStatus: "idea_intake" | "awaiting_idea_selection" | "running" | "paper_editing" | "completed" | "failed";
+        AutoResearchProviderRef: components["schemas"]["AutoResearchLMWProviderRef"] | components["schemas"]["AutoResearchExternalProviderRef"];
+        AutoResearchRunCreate: {
+            factory: components["schemas"]["AutoResearchFactory"];
+            /** Format: uuid */
+            parent_run_id?: string;
+            provider_overrides?: {
+                [key: string]: components["schemas"]["AutoResearchProviderRef"];
+            };
+            ssh_secret_name?: string;
+        };
+        AutoResearchSource: {
+            /** Format: date-time */
+            created_at: string;
+            error?: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AutoResearchSourceKind"];
+            locator: string;
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: uuid */
+            project_id: string;
+            sha256?: string | null;
+            status: components["schemas"]["AutoResearchSourceStatus"];
+            title?: string | null;
+        };
+        AutoResearchSourceCreate: {
+            kind: components["schemas"]["AutoResearchSourceKind"];
+            locator: string;
+        };
+        /** @enum {string} */
+        AutoResearchSourceKind: "arxiv" | "doi" | "url" | "pdf";
+        /** @enum {string} */
+        AutoResearchSourceStatus: "pending" | "ready" | "blocked" | "failed";
         BenchmarkCreate: {
             /** Format: uuid */
             deployment_id: string;
@@ -1287,7 +1762,7 @@ export interface components {
             run_id: string;
         };
         /** @enum {string} */
-        RunState: "queued" | "planning" | "waiting" | "running" | "verifying" | "succeeded" | "failed" | "cancelling" | "cancelled" | "interrupted";
+        RunState: "queued" | "planning" | "waiting" | "running" | "paused" | "verifying" | "succeeded" | "failed" | "cancelling" | "cancelled" | "interrupted";
         RunsPage: {
             items: components["schemas"]["Run"][];
             next_cursor: string | null;
@@ -1299,14 +1774,14 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "model_provider" | "ssh";
             /** Format: date-time */
             updated_at?: string;
         };
         SecretWrite: {
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "model_provider" | "ssh";
             value: string;
         };
         Session: {
@@ -1435,6 +1910,9 @@ export interface components {
         };
     };
     parameters: {
+        AutoResearchIdeaId: string;
+        AutoResearchProjectId: string;
+        AutoResearchRunId: string;
         ID: string;
     };
     requestBodies: never;
@@ -1490,6 +1968,595 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listAutoResearchProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AutoResearch projects */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchProject"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createAutoResearchProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Project created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchProject"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    getAutoResearchProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchProject"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateAutoResearchProject: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchProjectPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchProject"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    listAutoResearchIdeas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Candidate ideas */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchIdea"][];
+                };
+            };
+        };
+    };
+    updateAutoResearchIdea: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                ideaId: components["parameters"]["AutoResearchIdeaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchIdeaUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated idea */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchIdea"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    selectAutoResearchIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                ideaId: components["parameters"]["AutoResearchIdeaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Selected idea */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchIdea"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    generateAutoResearchIdeas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchIdeaGenerate"];
+            };
+        };
+        responses: {
+            /** @description Candidate generation run */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    chatEditAutoResearchPaper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchPaperChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Completed writer edit and changed-file digest set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchPaperChatResponse"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    compileAutoResearchPaper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paper compile run */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listAutoResearchPaperFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paper source files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchPaperFile"][];
+                };
+            };
+        };
+    };
+    getAutoResearchPaperFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paper source file */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    updateAutoResearchPaperFile: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            /** @description Updated paper source file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchPaperFile"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    getAutoResearchPaperPdf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current manuscript PDF */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    releaseAutoResearchPaper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Release validation run */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listAutoResearchRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"][];
+                };
+            };
+        };
+    };
+    createAutoResearchRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Factory run created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    uploadAutoResearchSourceFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description PDF source stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchSource"];
+                };
+            };
+            /** @description PDF exceeds 50 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    listAutoResearchSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sources */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchSource"][];
+                };
+            };
+        };
+    };
+    createAutoResearchSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["AutoResearchProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoResearchSourceCreate"];
+            };
+        };
+        responses: {
+            /** @description Source accepted for resolution */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResearchSource"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    pauseAutoResearchRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: components["parameters"]["AutoResearchRunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paused run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    resumeAutoResearchRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: components["parameters"]["AutoResearchRunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumed run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    stopAutoResearchRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: components["parameters"]["AutoResearchRunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stopped run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            409: components["responses"]["Conflict"];
         };
     };
     listBenchmarks: {

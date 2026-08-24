@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -27,7 +28,8 @@ func TestSelectedSecretScopes(t *testing.T) {
 		"ssh_secret_name": "spark-key",
 	}
 	got := selectedSecretScopes(input)
-	want := []string{"provider-main", "provider-backup", "spark-key"}
+	sort.Strings(got)
+	want := []string{"provider-backup", "provider-main", "spark-key"}
 	if len(got) != len(want) {
 		t.Fatalf("scopes = %v", got)
 	}
@@ -103,6 +105,106 @@ func TestPDFMagicAndSize(t *testing.T) {
 		t.Fatalf("invalid PDF error = %v", err)
 	}
 	invalid.Close()
+}
+
+func TestParseIntakeCandidateRequiresExactHeadingOrder(t *testing.T) {
+	valid := "# Grounded idea\n\n## Research question\nQuestion\n## Motivation\nMotivation\n## Proposed mechanism\nMechanism\n## Supporting sources\nhttps://example.test\n## Falsifiable claims\nClaim\n## Risks and disconfirming evidence\nRisk\n"
+	candidate, err := parseIntakeCandidate([]byte(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Title != "Grounded idea" || !strings.Contains(candidate.Body, "## Falsifiable claims") {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	invalid := strings.Replace(valid, "## Motivation", "## Unknown", 1)
+	if _, err := parseIntakeCandidate([]byte(invalid)); err == nil || !strings.Contains(err.Error(), "## Motivation") {
+		t.Fatalf("invalid candidate error = %v", err)
+	}
+}
+
+func TestProjectHumanGateDefaultsAndOverrides(t *testing.T) {
+	project := db.AutoresearchProject{ConfigJson: `{}`}
+	if !projectHumanGate(project, "idea_selection") || !projectHumanGate(project, "paper_post_edit") {
+		t.Fatal("default required gates are disabled")
+	}
+	if projectHumanGate(project, "experiment_handback") {
+		t.Fatal("default experiment handback gate is enabled")
+	}
+	project.ConfigJson = `{"human_gates":{"paper_post_edit":false,"experiment_handback":true}}`
+	if projectHumanGate(project, "paper_post_edit") || !projectHumanGate(project, "experiment_handback") {
+		t.Fatal("project gate overrides were not applied")
+	}
+}
+
+func TestPaperStatePhaseAndChangedDigests(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "PAPER_STATE.md")
+	if err := os.WriteFile(state, []byte("---\nphase: needs_experiment\nround: 1\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := paperPhase(state)
+	if err != nil || phase != "needs_experiment" {
+		t.Fatalf("phase = %q, %v", phase, err)
+	}
+	before := map[string]string{"main.tex": "old", "removed.tex": "removed"}
+	after := map[string]string{"main.tex": "new", "created.tex": "created"}
+	changed := changedDigestPaths(before, after)
+	want := []string{"created.tex", "main.tex", "removed.tex"}
+	if strings.Join(changed, ",") != strings.Join(want, ",") {
+		t.Fatalf("changed = %v", changed)
+	}
+	if got := filterDigests(before, changed); len(got) != 2 || got["main.tex"] != "old" {
+		t.Fatalf("before digests = %v", got)
+	}
+}
+
+func TestImportGeneratedCandidatesReplacesUnselectedModelIdeas(t *testing.T) {
+	module, projectID, _ := newTestModule(t)
+	ctx := context.Background()
+	if err := module.env.Q.CreateAutoResearchIdea(ctx, db.CreateAutoResearchIdeaParams{
+		ID: uuid.NewString(), ProjectID: projectID, Ordinal: 1, Source: "generated", Title: "Old", Body: "Old", Selected: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	intake := filepath.Join(module.projectRoot(projectID), "artifacts", ".lmw", "intake")
+	if err := os.MkdirAll(intake, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := "# New candidate\n\n## Research question\nQuestion\n## Motivation\nMotivation\n## Proposed mechanism\nMechanism\n## Supporting sources\nSource\n## Falsifiable claims\nClaim\n## Risks and disconfirming evidence\nRisk\n"
+	if err := os.WriteFile(filepath.Join(intake, "candidate-001.md"), []byte(candidate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(intake, "manifest.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project, err := module.env.Q.GetAutoResearchProject(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := module.importGeneratedCandidates(ctx, project, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 2 {
+		t.Fatalf("changed paths = %v", changed)
+	}
+	ideas, err := module.env.Q.ListAutoResearchIdeas(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ideas) != 1 || ideas[0].Title != "New candidate" || ideas[0].Source != "generated" {
+		t.Fatalf("ideas = %#v", ideas)
+	}
+	updated, err := module.env.Q.GetAutoResearchProject(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "awaiting_idea_selection" {
+		t.Fatalf("status = %s", updated.Status)
+	}
+	if status, err := runGit(filepath.Join(module.projectRoot(projectID), "artifacts"), "status", "--porcelain"); err != nil || strings.TrimSpace(string(status)) != "" {
+		t.Fatalf("artifact status = %q, %v", status, err)
+	}
 }
 
 func newTestModule(t *testing.T) (*Module, string, string) {

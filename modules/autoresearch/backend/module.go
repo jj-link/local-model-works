@@ -3,6 +3,7 @@ package backend
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 
@@ -67,6 +68,10 @@ var factoryInputSchema = json.RawMessage(`{
     "parent_run_id":{"type":"string","format":"uuid"},
     "provider_overrides":{"type":"object"},
     "provider_config":{"type":"object"},
+    "candidate_count":{"type":"integer","minimum":1,"maximum":10},
+    "prompt":{"type":"string"},
+    "release":{"type":"boolean"},
+    "paper_request":{"type":"string"},
     "ssh_secret_name":{"type":"string"}
   }
 }`)
@@ -86,7 +91,10 @@ var paperEditInputSchema = json.RawMessage(`{
 var paperCompileInputSchema = json.RawMessage(`{
   "type":"object","additionalProperties":false,
   "required":["project_id"],
-  "properties":{"project_id":{"type":"string","format":"uuid"}}
+  "properties":{
+    "project_id":{"type":"string","format":"uuid"},
+    "provider_config":{"type":"object"}
+  }
 }`)
 
 var runOutputSchema = json.RawMessage(`{
@@ -95,6 +103,8 @@ var runOutputSchema = json.RawMessage(`{
   "properties":{
     "project_id":{"type":"string","format":"uuid"},
     "changed_paths":{"type":"array","items":{"type":"string"}},
+    "before_digests":{"type":"object","additionalProperties":{"type":"string"}},
+    "after_digests":{"type":"object","additionalProperties":{"type":"string"}},
     "paper_path":{"type":"string"}
   }
 }`)
@@ -125,5 +135,6 @@ func selectedSecretScopes(input map[string]any) []string {
 		}
 	}
 	walk(input)
+	sort.Strings(scopes)
 	return scopes
 }

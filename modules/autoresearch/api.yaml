@@ -344,8 +344,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/AutoResearchPaperChatRequest'}
       responses:
-        '202':
-          description: Writer edit run
+        '200':
+          description: Completed writer edit and changed-file digest set
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AutoResearchPaperChatResponse'}
@@ -357,11 +357,11 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/AutoResearchProjectId'}
       responses:
-        '200':
-          description: Released project
+        '202':
+          description: Release validation run
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AutoResearchProject'}
+              schema: {$ref: '#/components/schemas/Run'}
         '409': {$ref: '#/components/responses/Conflict'}
 components:
   parameters:
