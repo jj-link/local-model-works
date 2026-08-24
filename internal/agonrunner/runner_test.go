@@ -25,12 +25,28 @@ func TestFactoryCommandsResolveShippedPrompts(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CLAUDE_PLUGIN_ROOT", root)
 	for _, factory := range []string{"idea", "proposal", "deep_lit", "experiment", "paper", "paper-edit", "paper-compile"} {
-		role, prompt, task, err := commandForFactory(factory)
+		role, prompt, task, err := commandForFactory(factory, map[string]any{})
 		if err != nil || role == "" || task == "" || !strings.HasPrefix(prompt, root+string(filepath.Separator)) {
 			t.Fatalf("factory %s = %q %q %q %v", factory, role, prompt, task, err)
 		}
 	}
-	if _, _, _, err := commandForFactory("unknown"); err == nil {
+	role, prompt, _, err := commandForFactory("idea", map[string]any{"candidate_count": 2})
+	if err != nil || role != "idea-intake-dispatcher" || filepath.Base(prompt) != "idea-intake.md" {
+		t.Fatalf("idea intake = %q %q %v", role, prompt, err)
+	}
+	role, prompt, _, err = commandForFactory("idea", map[string]any{})
+	if err != nil || role != "idea-dispatcher" || filepath.Base(prompt) != "idea-tick.md" {
+		t.Fatalf("idea refinement = %q %q %v", role, prompt, err)
+	}
+	_, _, experimentTask, err := commandForFactory("experiment", map[string]any{"paper_request": "Collect exact evidence"})
+	if err != nil || !strings.Contains(experimentTask, "Collect exact evidence") {
+		t.Fatalf("experiment handback task = %q, %v", experimentTask, err)
+	}
+	_, _, releaseTask, err := commandForFactory("paper", map[string]any{"release": true})
+	if err != nil || !strings.Contains(releaseTask, "stale reviews") || !strings.Contains(releaseTask, "human_release") {
+		t.Fatalf("release task = %q, %v", releaseTask, err)
+	}
+	if _, _, _, err := commandForFactory("unknown", nil); err == nil {
 		t.Fatal("accepted unknown factory")
 	}
 }

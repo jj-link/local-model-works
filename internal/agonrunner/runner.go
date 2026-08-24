@@ -109,22 +109,35 @@ func loadProjectConfig(path string) (projectConfig, error) {
 	return config, nil
 }
 
-func commandForFactory(factory string) (role, prompt, task string, err error) {
+func commandForFactory(factory string, input map[string]any) (role, prompt, task string, err error) {
 	root := os.Getenv("CLAUDE_PLUGIN_ROOT")
 	if root == "" {
 		root = "/opt/agon"
 	}
 	switch factory {
 	case "idea":
-		return "idea-intake-dispatcher", filepath.Join(root, "commands", "idea-intake.md"), "Execute bounded idea intake from /project/.lmw/config.json and stop after candidates are written.", nil
+		if _, intake := input["candidate_count"]; intake {
+			return "idea-intake-dispatcher", filepath.Join(root, "commands", "idea-intake.md"), "Execute bounded idea intake from /project/.lmw/config.json and stop after candidates are written.", nil
+		}
+		return "idea-dispatcher", filepath.Join(root, "commands", "idea-tick.md"), "Execute unmodified idea-tick refinement and review for every selected canonical project idea.", nil
 	case "proposal":
 		return "proposal-dispatcher", filepath.Join(root, "commands", "proposal-tick.md"), "Execute proposal-tick for selected project ideas.", nil
 	case "deep_lit":
 		return "deep-lit-dispatcher", filepath.Join(root, "commands", "deep-lit-tick.md"), "Execute deep-lit-tick to saturation for the current project scope.", nil
 	case "experiment":
-		return "experiment-dispatcher", filepath.Join(root, "commands", "experiment-tick.md"), "Execute experiment-tick for the current project workspace.", nil
-	case "paper", "paper-edit":
-		return "paper-dispatcher", filepath.Join(root, "commands", "paper-tick.md"), "Execute paper-tick for the current project. For paper-edit, apply the human writer request from /project/.lmw/config.json.", nil
+		task := "Execute experiment-tick for the current project workspace."
+		if request, ok := input["paper_request"].(string); ok && strings.TrimSpace(request) != "" {
+			task += "\n\nThis is a paper evidence handback. Execute the exact request below, preserve its scope, and finish the audited experiment before returning to paper:\n\n" + request
+		}
+		return "experiment-dispatcher", filepath.Join(root, "commands", "experiment-tick.md"), task, nil
+	case "paper":
+		task := "Execute one deterministic paper-tick for the current project."
+		if release, _ := input["release"].(bool); release {
+			task += " This is an explicit human release action: rerun compile, claims, citation, reproducibility, rhetorician, reviewer, killer-reviewer, and area-chair gates against the current paper commit. Set human_release and phase done only if every current gate passes; stale reviews or a modified PDF must block release."
+		}
+		return "paper-dispatcher", filepath.Join(root, "commands", "paper-tick.md"), task, nil
+	case "paper-edit":
+		return "paper-writer", filepath.Join(root, "agents", "paper-writer.md"), "Apply only the human writer request and base ETags from /project/.lmw/config.json. Edit paper source, not experiment evidence or decision records.", nil
 	case "paper-compile":
 		return "paper-compiler", filepath.Join(root, "skills_aris", "paper-compile.md"), "Compile the current paper deterministically and update PAPER_STATE.md build paths without changing scientific content.", nil
 	default:
@@ -218,7 +231,7 @@ func runSupervise(ctx context.Context, args []string) error {
 		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.ssh_preflight_failed", "message": err.Error()})
 		return err
 	}
-	role, prompt, task, err := commandForFactory(*factory)
+	role, prompt, task, err := commandForFactory(*factory, config.Input)
 	if err != nil {
 		_ = runEmitter.Emit("error", map[string]any{"code": "autoresearch.factory_invalid", "message": err.Error()})
 		return err

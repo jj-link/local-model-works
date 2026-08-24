@@ -314,20 +314,12 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	output := map[string]any{"project_id": projectID, "changed_paths": []string{}}
 	paper := filepath.Join(m.paperRoot(projectID), "build", "manuscript.pdf")
 	if _, err := os.Stat(paper); err == nil {
-		output["paper_path"] = paper
+		output["paper_path"] = "workspace/project/paper/build/manuscript.pdf"
 	}
 	return output, nil
 }
 
 func (m *Module) runFactory(ctx context.Context, job *jobs.Context) (map[string]any, error) {
 	factory, _ := job.Input["factory"].(string)
-	return m.executeWorker(ctx, job, factory)
-}
-
-func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (map[string]any, error) {
-	return m.executeWorker(ctx, job, "paper-edit")
-}
-
-func (m *Module) runPaperCompile(ctx context.Context, job *jobs.Context) (map[string]any, error) {
-	return m.executeWorker(ctx, job, "paper-compile")
+	return m.runFactoryLifecycle(ctx, job, factory)
 }

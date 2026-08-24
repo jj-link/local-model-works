@@ -13,10 +13,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/httpx"
 	"github.com/jj-link/local-model-works/internal/id"
+	runsvc "github.com/jj-link/local-model-works/internal/runs"
 )
 
 const maxPaperSourceFile = 5 << 20
@@ -312,9 +314,9 @@ func (m *Module) ChatEditAutoResearchPaper(w http.ResponseWriter, r *http.Reques
 		httpx.HandleErr(w, err)
 		return
 	}
-	base, _ := jsonMarshal(req.BaseEtags)
+	emptyChanges, _ := jsonMarshal([]string{})
 	if err := m.env.Q.CreateAutoResearchMessage(r.Context(), db.CreateAutoResearchMessageParams{
-		ID: messageID, ProjectID: project.ID, Role: "human", Body: req.Message, ChangedPathsJson: string(base),
+		ID: messageID, ProjectID: project.ID, Role: "human", Body: req.Message, ChangedPathsJson: string(emptyChanges),
 	}); err != nil {
 		httpx.HandleErr(w, err)
 		return
@@ -324,13 +326,24 @@ func (m *Module) ChatEditAutoResearchPaper(w http.ResponseWriter, r *http.Reques
 		httpx.HandleErr(w, err)
 		return
 	}
-	run, err := m.env.Runs.Get(r.Context(), runID)
+	run, err := m.waitForPaperRun(r, runID)
 	if err != nil {
+		if strings.Contains(err.Error(), "paper.edit_conflict") {
+			httpx.WriteErr(w, http.StatusConflict, "paper.edit_conflict", err.Error())
+			return
+		}
 		httpx.HandleErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
-		"run": run, "changed_paths": []string{}, "before_digests": req.BaseEtags, "after_digests": map[string]string{},
+	changed, _ := run.Output["changed_paths"].([]any)
+	if typed, ok := run.Output["changed_paths"].([]string); ok {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"run": run, "changed_paths": typed, "before_digests": run.Output["before_digests"], "after_digests": run.Output["after_digests"],
+		})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"run": run, "changed_paths": changed, "before_digests": run.Output["before_digests"], "after_digests": run.Output["after_digests"],
 	})
 }
 
@@ -350,6 +363,32 @@ func (m *Module) ReleaseAutoResearchPaper(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, run)
+}
+
+func (m *Module) waitForPaperRun(r *http.Request, runID string) (runsvc.Run, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		run, err := m.env.Runs.Get(r.Context(), runID)
+		if err != nil {
+			return runsvc.Run{}, err
+		}
+		if runsvc.State(run.State).Terminal() {
+			if run.State != string(runsvc.Succeeded) {
+				message := "paper job failed"
+				if run.ErrorMessage != nil {
+					message = *run.ErrorMessage
+				}
+				return run, errors.New(message)
+			}
+			return run, nil
+		}
+		select {
+		case <-r.Context().Done():
+			return runsvc.Run{}, r.Context().Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func jsonMarshal(value any) ([]byte, error) {

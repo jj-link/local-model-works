@@ -255,12 +255,12 @@ paths:
               $ref: '#/components/schemas/AutoResearchPaperChatRequest'
         required: true
       responses:
-        "202":
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AutoResearchPaperChatResponse'
-          description: Writer edit run
+          description: Completed writer edit and changed-file digest set
         "409":
           $ref: '#/components/responses/Conflict'
       tags:
@@ -375,12 +375,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AutoResearchProjectId'
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutoResearchProject'
-          description: Released project
+                $ref: '#/components/schemas/Run'
+          description: Release validation run
         "409":
           $ref: '#/components/responses/Conflict'
       tags:
