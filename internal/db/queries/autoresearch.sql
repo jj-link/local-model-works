@@ -111,3 +111,8 @@ FROM autoresearch_runs ar
 JOIN runs r ON r.id = ar.run_id
 WHERE ar.worker_node_id = ? AND r.state = 'interrupted'
 ORDER BY ar.run_id;
+
+-- name: UpdateAutoResearchInvocationUsage :exec
+UPDATE autoresearch_invocations
+SET input_tokens = ?, output_tokens = ?, cost_usd = ?
+WHERE id = ?;

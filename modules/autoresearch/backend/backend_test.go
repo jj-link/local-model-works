@@ -186,9 +186,9 @@ func TestWorkerSpecIsolation(t *testing.T) {
 	spec := workerSpec(
 		"run-1", "local/agon", "sha256:"+strings.Repeat("a", 64),
 		"/state/autoresearch/project", "/state/autoresearch/project/scratch/run-1", "/state/autoresearch/project/scratch/run-1/credentials",
-		[]string{"preflight"},
+		"1000:1000", []string{"preflight"},
 	)
-	if !spec.ReadonlyRootfs || !spec.NoNewPrivileges || strings.Join(spec.CapDrop, ",") != "ALL" {
+	if !spec.ReadonlyRootfs || !spec.NoNewPrivileges || strings.Join(spec.CapDrop, ",") != "ALL" || spec.User != "1000:1000" {
 		t.Fatalf("isolation flags = %+v", spec)
 	}
 	if spec.NetworkMode != "bridge" || spec.PidsLimit <= 0 || spec.MemoryBytes <= 0 || spec.CPU <= 0 || spec.TmpfsBytes <= 0 {
@@ -213,5 +213,39 @@ func TestWorkerImageMustBeDigestPinned(t *testing.T) {
 	}
 	if _, _, err := imageParts("local/agon:latest"); err == nil {
 		t.Fatal("accepted mutable worker image")
+	}
+}
+
+func TestLMWProviderPreflightRequiresStreamingToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"lmw_probe\"}}\n\n"))
+	}))
+	defer server.Close()
+	module := &Module{}
+	if err := module.preflightLMWProvider(context.Background(), server.URL+"/v1", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+
+	incompatible := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{\"text\":\"no tools\"}`))
+	}))
+	defer incompatible.Close()
+	if err := module.preflightLMWProvider(context.Background(), incompatible.URL+"/v1", "fixture"); err == nil || !strings.Contains(err.Error(), "provider_incompatible") {
+		t.Fatalf("incompatible error = %v", err)
+	}
+}
+
+func TestProjectWorkerUsesNonRootOwner(t *testing.T) {
+	root := t.TempDir()
+	user, err := projectWorkerUser(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(user, "0:") || user == "" {
+		t.Fatalf("worker user = %q", user)
 	}
 }

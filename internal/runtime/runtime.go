@@ -43,6 +43,7 @@ type ContainerSpec struct {
 	Env             []string          `json:"env,omitempty"`
 	Labels          map[string]string `json:"labels,omitempty"`
 	WorkingDir      string            `json:"workingDir,omitempty"`
+	User            string            `json:"user,omitempty"`
 	NetworkMode     string            `json:"networkMode"` // bridge | host | none
 	Ports           []PortSpec        `json:"ports,omitempty"`
 	ReadonlyRootfs  bool              `json:"readonlyRootfs"`

@@ -1,0 +1,11 @@
+**
+!.build/
+!.build/worker/
+!.build/worker/lmw-agon-runner
+!third_party/
+!third_party/agon/
+!third_party/agon/**
+third_party/agon/.git
+!workers/
+!workers/agon/
+!workers/agon/Dockerfile

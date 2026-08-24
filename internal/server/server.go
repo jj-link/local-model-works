@@ -79,6 +79,9 @@ type Server struct {
 	agentSrv  *http.Server
 	agentAddr string
 
+	eventMu   sync.Mutex
+	eventBufs map[string][]byte
+
 	runs    *runs.Service
 	deploys *deploy.Service
 }
@@ -150,6 +153,7 @@ func New(d Deps) *Server {
 		commit:           d.Commit,
 		runs:             runsSvc,
 		deploys:          deploys,
+		eventBufs:        map[string][]byte{},
 	}
 	for _, ctor := range modules.Constructors {
 		m := ctor(env)

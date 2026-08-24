@@ -24,6 +24,7 @@ func nullString(value string) sql.NullString {
 func (m *Module) submitFactoryRun(r *http.Request, project db.AutoresearchProject, factory string, input map[string]any, parentRunID string) (string, error) {
 	input["project_id"] = project.ID
 	input["factory"] = factory
+	input["provider_config"] = configSnapshot(project.ConfigJson)
 	runID, err := m.env.Jobs.Submit(r.Context(), "autoresearch-factory", input)
 	if err != nil {
 		return "", err

@@ -66,6 +66,7 @@ var factoryInputSchema = json.RawMessage(`{
     "factory":{"enum":["idea","proposal","deep_lit","experiment","paper"]},
     "parent_run_id":{"type":"string","format":"uuid"},
     "provider_overrides":{"type":"object"},
+    "provider_config":{"type":"object"},
     "ssh_secret_name":{"type":"string"}
   }
 }`)
@@ -77,7 +78,8 @@ var paperEditInputSchema = json.RawMessage(`{
     "project_id":{"type":"string","format":"uuid"},
     "message":{"type":"string","minLength":1},
     "base_etags":{"type":"object","additionalProperties":{"type":"string"}},
-    "provider_overrides":{"type":"object"}
+    "provider_overrides":{"type":"object"},
+    "provider_config":{"type":"object"}
   }
 }`)
 

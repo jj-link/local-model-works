@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/jobs"
@@ -29,6 +31,7 @@ var secretFilename = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 type workerSettings struct {
 	RunnerNodeID string
 	WorkerImage  string
+	SSHHosts     []map[string]string
 }
 
 func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error) {
@@ -42,6 +45,17 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 	}
 	if value, ok := values["worker_image"].(string); ok {
 		settings.WorkerImage = value
+	}
+	if rawHosts, ok := values["ssh_hosts"].([]any); ok {
+		for _, rawHost := range rawHosts {
+			host, ok := rawHost.(map[string]any)
+			if !ok {
+				continue
+			}
+			settings.SSHHosts = append(settings.SSHHosts, map[string]string{
+				"alias": fmt.Sprint(host["alias"]), "hostname": fmt.Sprint(host["hostname"]), "user": fmt.Sprint(host["user"]),
+			})
+		}
 	}
 	if settings.RunnerNodeID == "" || settings.WorkerImage == "" {
 		return workerSettings{}, errors.New("autoresearch.runner_not_configured")
@@ -60,7 +74,7 @@ func imageParts(reference string) (string, string, error) {
 	return reference[:index], reference[index+1:], nil
 }
 
-func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials string, command []string) *runtime.ContainerSpec {
+func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials, user string, command []string) *runtime.ContainerSpec {
 	mounts := []runtime.MountSpec{
 		{Source: projectRoot, Dest: "/project", ReadOnly: false},
 		{Source: scratch, Dest: "/scratch", ReadOnly: false},
@@ -70,7 +84,7 @@ func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials 
 	}
 	return &runtime.ContainerSpec{
 		Image: imageRef, ImageDigest: imageDigest,
-		Cmd: command, WorkingDir: "/project/artifacts", NetworkMode: "bridge",
+		Cmd: command, WorkingDir: "/project/artifacts", User: user, NetworkMode: "bridge",
 		ReadonlyRootfs: true, NoNewPrivileges: true, CapDrop: []string{"ALL"},
 		TmpfsBytes: 1 << 30, ShmBytes: 1 << 30, PidsLimit: 512, MemoryBytes: 16 << 30, CPU: 8,
 		Mounts: mounts,
@@ -80,6 +94,33 @@ func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials 
 			"LMW_CREDENTIAL_DIR=/run/lmw-credentials", "TMPDIR=/scratch/tmp",
 		},
 	}
+}
+
+func projectWorkerUser(root string) (string, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("autoresearch.project_owner_unavailable")
+	}
+	uid, gid := int(stat.Uid), int(stat.Gid)
+	if uid == 0 {
+		uid, gid = 10001, 10001
+		if err := filepath.Walk(root, func(path string, _ os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			return os.Chown(path, uid, gid)
+		}); err != nil {
+			return "", err
+		}
+	}
+	if uid <= 0 || gid < 0 {
+		return "", errors.New("autoresearch.worker_user_invalid")
+	}
+	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
 func writeCredentialFiles(root string, secrets map[string]string) (string, error) {
@@ -140,7 +181,7 @@ func waitContainer(ctx context.Context, client *workload.Client, limit time.Dura
 	}
 }
 
-func (m *Module) preflightSharedRoot(ctx context.Context, settings workerSettings, projectRoot, scratch, imageRef, imageDigest, runID string) error {
+func (m *Module) preflightSharedRoot(ctx context.Context, settings workerSettings, projectRoot, scratch, imageRef, imageDigest, runID, user string) error {
 	token := runID + "-shared-root"
 	name := ".shared-root-" + strings.ReplaceAll(runID, "-", "")
 	sentinel := filepath.Join(projectRoot, ".lmw", name)
@@ -150,7 +191,7 @@ func (m *Module) preflightSharedRoot(ctx context.Context, settings workerSetting
 	defer os.Remove(sentinel)
 	preflightRunID := runID + "-preflight"
 	client := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", preflightRunID, 0)
-	spec := workerSpec(preflightRunID, imageRef, imageDigest, projectRoot, scratch, "", []string{
+	spec := workerSpec(preflightRunID, imageRef, imageDigest, projectRoot, scratch, "", user, []string{
 		"preflight", "--sentinel", "/project/.lmw/" + name, "--expect", token,
 	})
 	specJSON, _ := json.Marshal(spec)
@@ -197,6 +238,10 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	if err := initializeProjectRoot(projectRoot); err != nil {
 		return nil, err
 	}
+	user, err := projectWorkerUser(projectRoot)
+	if err != nil {
+		return nil, err
+	}
 	scratch := filepath.Join(projectRoot, "scratch", job.RunID)
 	if err := os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700); err != nil {
 		return nil, err
@@ -208,7 +253,14 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	if credentials != "" {
 		defer os.RemoveAll(credentials)
 	}
-	config := map[string]any{"schema": 1, "project_id": projectID, "run_id": job.RunID, "factory": factory, "project": configSnapshot(project.ConfigJson), "input": job.Input}
+	projectConfig := configSnapshot(project.ConfigJson)
+	if err := m.resolveProjectProviders(ctx, projectConfig); err != nil {
+		return nil, err
+	}
+	config := map[string]any{
+		"schema": 1, "project_id": projectID, "run_id": job.RunID, "factory": factory,
+		"project": projectConfig, "input": job.Input, "worker": map[string]any{"ssh_hosts": settings.SSHHosts},
+	}
 	configJSON, _ := json.MarshalIndent(config, "", "  ")
 	if err := os.WriteFile(filepath.Join(projectRoot, ".lmw", "config.json"), append(configJSON, '\n'), 0o600); err != nil {
 		return nil, err
@@ -218,16 +270,16 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 		return nil, err
 	}
 	pullClient := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", job.RunID+"-preflight", 0)
-	pullSpec := workerSpec(job.RunID+"-preflight", imageRef, imageDigest, projectRoot, scratch, "", []string{"preflight"})
+	pullSpec := workerSpec(job.RunID+"-preflight", imageRef, imageDigest, projectRoot, scratch, "", user, []string{"preflight"})
 	pullJSON, _ := json.Marshal(pullSpec)
 	if _, err := runOperation(ctx, pullClient, agentv1.WorkloadOp_WORKLOAD_OP_PULL, pullJSON, workerPullTimeout); err != nil {
 		return nil, err
 	}
-	if err := m.preflightSharedRoot(ctx, settings, projectRoot, scratch, imageRef, imageDigest, job.RunID); err != nil {
+	if err := m.preflightSharedRoot(ctx, settings, projectRoot, scratch, imageRef, imageDigest, job.RunID, user); err != nil {
 		return nil, err
 	}
 	client := workload.New(m.env.Nodes, m.env.Commands, settings.RunnerNodeID, "", job.RunID, 0)
-	spec := workerSpec(job.RunID, imageRef, imageDigest, projectRoot, scratch, credentials, factoryCommand(job, factory))
+	spec := workerSpec(job.RunID, imageRef, imageDigest, projectRoot, scratch, credentials, user, factoryCommand(job, factory))
 	specJSON, _ := json.Marshal(spec)
 	if _, err := runOperation(ctx, client, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, specJSON, workerOpTimeout); err != nil {
 		return nil, err
