@@ -46,7 +46,8 @@ export const autoResearchHandlers = [
   http.get("*/api/v1/autoresearch/projects/:projectId/paper/files", ({ params }) => HttpResponse.json(params.projectId === autoResearchProjects[4].id ? [{ path: "PAPER_STATE.md", sha256: "state", size: 256 }, { path: "main.tex", sha256: "main", size: 128 }, { path: "sections/introduction.tex", sha256: "intro", size: 64 }] : [])),
   http.get("*/api/v1/autoresearch/projects/:projectId/paper/files/:path", ({ params }) => {
     const path = decodeURIComponent(String(params.path));
-    const contents = path === "PAPER_STATE.md" ? "---\nphase: awaiting_human_edit\n---\n## Claims–Evidence Matrix\n| C-001 | E-001 |\n## Open findings\n- REV-001: concern: Tighten the limitation.\n## Revision history\n- round 005 compiled\n" : path === "main.tex" ? "\\documentclass{article}\n\\begin{document}\nFixture\\end{document}\n" : "\\section{Introduction}\nFixture\n";
+    const contents = path === "PAPER_STATE.md" ? "---\nphase: awaiting_human_edit\n---\n## Claims–Evidence Matrix\n| C-001 | E-001 |\n## Open findings\n| Finding ID | Role | Severity | Status | References | Finding | Resolution |\n|---|---|---|---|---|---|---|\n| REV-001 | paper-reviewer | concern | open | sections/introduction.tex | Tighten the limitation. | |\n## Revision history\n- round 005 compiled\n" : path === "main.tex" ? "\\documentclass{article}\n\\begin{document}\nFixture\\end{document}\n" : "\\section{Introduction}\nFixture\n";
     return new HttpResponse(contents, { headers: { "content-type": "text/plain", etag: `\"${path}\"` } });
   }),
+  http.get("*/api/v1/runs/:runId/logs", () => new HttpResponse("event: end\ndata: {}\n\n", { headers: { "content-type": "text/event-stream" } })),
 ];

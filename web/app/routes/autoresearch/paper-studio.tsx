@@ -25,8 +25,13 @@ interface Finding {
 function parseFindings(state: string): Finding[] {
   const findings: Finding[] = [];
   for (const line of state.split("\n")) {
-    const match = line.match(/^\s*[-|]\s*([A-Z][A-Z0-9_-]{2,})\s*[|:]\s*(nit|concern|blocker|open)\s*[|:]\s*(.+)$/i);
-    if (match) findings.push({ id: match[1], severity: match[2].toLowerCase(), text: match[3].replace(/\|\s*$/, "").trim() });
+    const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+    if (cells.length >= 6 && /^[A-Z][A-Z0-9_-]{2,}$/.test(cells[0]) && cells[3].toLowerCase() === "open") {
+      findings.push({ id: cells[0], severity: cells[2].toLowerCase(), text: cells[5] });
+      continue;
+    }
+    const match = line.match(/^\s*-\s*([A-Z][A-Z0-9_-]{2,})\s*:\s*(nit|concern|blocker|open)\s*:\s*(.+)$/i);
+    if (match) findings.push({ id: match[1], severity: match[2].toLowerCase(), text: match[3].trim() });
   }
   return findings;
 }

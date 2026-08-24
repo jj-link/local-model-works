@@ -39,4 +39,15 @@ describe("AutoResearchRoute", () => {
     expect(screen.getByText("license acceptance required")).toBeVisible();
     expect(screen.getByRole("button", { name: /continue selected/i })).toBeDisabled();
   });
+
+  it("renders table-backed paper findings in the studio", async () => {
+    server.use(http.get("*/api/v1/nodes", () => HttpResponse.json([])));
+    const user = userEvent.setup();
+    renderRoute();
+    const projectSelect = await screen.findByLabelText("Active project");
+    await user.selectOptions(projectSelect, "00000000-0000-4000-8000-000000000005");
+    expect(await screen.findByText("REV-001")).toBeVisible();
+    expect(screen.getByText("Tighten the limitation.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /release/i })).toBeEnabled();
+  });
 });
