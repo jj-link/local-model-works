@@ -14,6 +14,29 @@ import (
 	"github.com/jj-link/local-model-works/internal/runs"
 )
 
+func TestMergedSecretScopes(t *testing.T) {
+	input := map[string]any{"provider_secret": "provider-main", "ssh_secret": "spark-key"}
+	spec := Spec{
+		SecretScopes: []string{"static", "provider-main"},
+		SecretScopesFor: func(got map[string]any) []string {
+			if got["provider_secret"] != input["provider_secret"] {
+				t.Fatalf("selector received %#v", got)
+			}
+			return []string{"provider-main", "", "spark-key", "spark-key"}
+		},
+	}
+	got := mergedSecretScopes(spec, input)
+	want := []string{"static", "provider-main", "spark-key"}
+	if len(got) != len(want) {
+		t.Fatalf("scopes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("scopes = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestJobResourceContracts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

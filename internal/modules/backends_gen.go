@@ -5,6 +5,7 @@ package modules
 
 import (
 	"github.com/jj-link/local-model-works/internal/moduleapi"
+	autoresearch "github.com/jj-link/local-model-works/modules/autoresearch/backend"
 	benchmarks "github.com/jj-link/local-model-works/modules/benchmarks/backend"
 	fleet "github.com/jj-link/local-model-works/modules/fleet/backend"
 	library "github.com/jj-link/local-model-works/modules/library/backend"
@@ -17,6 +18,7 @@ import (
 // Constructors is the compile-time list of first-party module backends,
 // aligned with the Registry (same order).
 var Constructors = []func(*moduleapi.Env) moduleapi.Module{
+	autoresearch.New,
 	benchmarks.New,
 	fleet.New,
 	library.New,

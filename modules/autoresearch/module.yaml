@@ -1,0 +1,114 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: autoresearch
+title: AutoResearch
+route: /autoresearch
+nav:
+  label: AutoResearch
+  order: 45
+  icon: autoresearch
+settingsSchema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties:
+    runner_node_id:
+      type: string
+      format: uuid
+    worker_image:
+      type: string
+      pattern: '^.+@sha256:[0-9a-f]{64}$'
+    external_providers:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [name, backend, model, secret_name]
+        properties:
+          name:
+            type: string
+            minLength: 1
+          backend:
+            type: string
+            enum: [claude, codex, claude-ds]
+          model:
+            type: string
+            minLength: 1
+          base_url:
+            type: string
+            format: uri
+          secret_name:
+            type: string
+            minLength: 1
+    default_role_assignments:
+      type: object
+      additionalProperties:
+        $ref: '#/$defs/providerRef'
+    default_advisor_assignments:
+      type: object
+      additionalProperties:
+        $ref: '#/$defs/advisor'
+  $defs:
+    providerRef:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [source, deployment_id, model]
+          properties:
+            source:
+              const: lmw
+            deployment_id:
+              type: string
+              format: uuid
+            model:
+              type: string
+              minLength: 1
+        - type: object
+          additionalProperties: false
+          required: [source, backend, model, secret_name]
+          properties:
+            source:
+              const: external
+            backend:
+              type: string
+              enum: [claude, codex, claude-ds]
+            model:
+              type: string
+              minLength: 1
+            base_url:
+              type: string
+              format: uri
+            secret_name:
+              type: string
+              minLength: 1
+    advisor:
+      type: object
+      additionalProperties: false
+      required: [enabled, backlog]
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        backlog:
+          oneOf:
+            - const: off
+            - const: 1
+            - const: 3
+            - const: 5
+          default: 1
+        provider:
+          $ref: '#/$defs/providerRef'
+jobKinds:
+  - autoresearch-factory
+  - autoresearch-paper-edit
+  - autoresearch-paper-compile
+artifactKinds:
+  - research-workspace
+  - research-paper
+apiFragment: api.yaml
+capabilities:
+  - runs.create
+  - nodes.read
+  - artifacts.write
+  - secrets.read
+  - events.publish

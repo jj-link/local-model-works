@@ -17,36 +17,38 @@ const (
 	EnvPeerAddr  = "LMW_PEER_ADDR"
 	// EnvPeerAdvertise is the routable host:port a remote source dials;
 	// empty falls back to PeerAddr when it names an explicit host.
-	EnvPeerAdvertise   = "LMW_PEER_ADVERTISE"
-	EnvServerName      = "LMW_SERVER_NAME"
-	EnvStateRoot       = "LMW_STATE_ROOT"
-	EnvConfigDir       = "LMW_CONFIG_DIR"
-	EnvSessionTTL      = "LMW_SESSION_TTL"
-	EnvTrustKey        = "LMW_TRUST_KEY_PEM"
-	EnvPublicOrigin    = "LMW_PUBLIC_ORIGIN"
-	EnvPublicAgentURL  = "LMW_PUBLIC_AGENT_URL"
-	EnvAgentServer     = "LMW_AGENT_SERVER"
-	EnvAgentCASha256   = "LMW_AGENT_CA_SHA256"
-	EnvAgentToken      = "LMW_AGENT_TOKEN"
-	EnvAgentStateRoot  = "LMW_AGENT_STATE_ROOT"
-	EnvAgentDockerSock = "LMW_AGENT_DOCKER_SOCKET"
-	EnvAgentWorkspace  = "LMW_AGENT_WORKSPACE"
-	EnvAgentCacheRoots = "LMW_AGENT_CACHE_ROOTS"
-	EnvAgentTeleInt    = "LMW_AGENT_TELEMETRY_INTERVAL"
+	EnvPeerAdvertise    = "LMW_PEER_ADVERTISE"
+	EnvServerName       = "LMW_SERVER_NAME"
+	EnvStateRoot        = "LMW_STATE_ROOT"
+	EnvConfigDir        = "LMW_CONFIG_DIR"
+	EnvAutoResearchRoot = "LMW_AUTORESEARCH_ROOT"
+	EnvSessionTTL       = "LMW_SESSION_TTL"
+	EnvTrustKey         = "LMW_TRUST_KEY_PEM"
+	EnvPublicOrigin     = "LMW_PUBLIC_ORIGIN"
+	EnvPublicAgentURL   = "LMW_PUBLIC_AGENT_URL"
+	EnvAgentServer      = "LMW_AGENT_SERVER"
+	EnvAgentCASha256    = "LMW_AGENT_CA_SHA256"
+	EnvAgentToken       = "LMW_AGENT_TOKEN"
+	EnvAgentStateRoot   = "LMW_AGENT_STATE_ROOT"
+	EnvAgentDockerSock  = "LMW_AGENT_DOCKER_SOCKET"
+	EnvAgentWorkspace   = "LMW_AGENT_WORKSPACE"
+	EnvAgentCacheRoots  = "LMW_AGENT_CACHE_ROOTS"
+	EnvAgentTeleInt     = "LMW_AGENT_TELEMETRY_INTERVAL"
 )
 
 // Server holds controller-plane settings.
 type Server struct {
-	HTTPAddr       string        // browser/CLI listener, default 127.0.0.1:9000
-	AgentAddr      string        // agent mTLS listener, default :9443
-	PeerAddr       string        // peer-transfer port hint, default :9444
-	StateRoot      string        // default /var/lib/local-model-works
-	ConfigDir      string        // default /etc/local-model-works
-	SessionTTL     time.Duration // default 12h
-	ServerName     string        // TLS name for the server leaf cert, default localhost
-	PublicOrigin   string        // required HTTPS browser origin, e.g. https://lmw.tailnet.ts.net
-	PublicAgentURL string        // required HTTPS mTLS agent URL, e.g. https://lmw.tailnet.ts.net:9443
-	TrustKeyPEM    string        // PEM public key for recipe/catalog signature verification
+	HTTPAddr                 string        // browser/CLI listener, default 127.0.0.1:9000
+	AgentAddr                string        // agent mTLS listener, default :9443
+	PeerAddr                 string        // peer-transfer port hint, default :9444
+	StateRoot                string        // default /var/lib/local-model-works
+	ConfigDir                string        // default /etc/local-model-works
+	AutoResearchRootOverride string        // optional LMW_AUTORESEARCH_ROOT override
+	SessionTTL               time.Duration // default 12h
+	ServerName               string        // TLS name for the server leaf cert, default localhost
+	PublicOrigin             string        // required HTTPS browser origin, e.g. https://lmw.tailnet.ts.net
+	PublicAgentURL           string        // required HTTPS mTLS agent URL, e.g. https://lmw.tailnet.ts.net:9443
+	TrustKeyPEM              string        // PEM public key for recipe/catalog signature verification
 
 }
 
@@ -74,16 +76,17 @@ func envStr(key, def string) string {
 // LoadServer reads controller settings.
 func LoadServer() Server {
 	return Server{
-		HTTPAddr:       envStr(EnvHTTPAddr, "127.0.0.1:9000"),
-		AgentAddr:      envStr(EnvAgentAddr, ":9443"),
-		PeerAddr:       envStr(EnvPeerAddr, ":9444"),
-		StateRoot:      envStr(EnvStateRoot, "/var/lib/local-model-works"),
-		ConfigDir:      envStr(EnvConfigDir, "/etc/local-model-works"),
-		SessionTTL:     sessionTTL(),
-		ServerName:     envStr(EnvServerName, "localhost"),
-		PublicOrigin:   strings.TrimSpace(os.Getenv(EnvPublicOrigin)),
-		PublicAgentURL: strings.TrimSpace(os.Getenv(EnvPublicAgentURL)),
-		TrustKeyPEM:    envStr(EnvTrustKey, ""),
+		HTTPAddr:                 envStr(EnvHTTPAddr, "127.0.0.1:9000"),
+		AgentAddr:                envStr(EnvAgentAddr, ":9443"),
+		PeerAddr:                 envStr(EnvPeerAddr, ":9444"),
+		StateRoot:                envStr(EnvStateRoot, "/var/lib/local-model-works"),
+		ConfigDir:                envStr(EnvConfigDir, "/etc/local-model-works"),
+		AutoResearchRootOverride: strings.TrimSpace(os.Getenv(EnvAutoResearchRoot)),
+		SessionTTL:               sessionTTL(),
+		ServerName:               envStr(EnvServerName, "localhost"),
+		PublicOrigin:             strings.TrimSpace(os.Getenv(EnvPublicOrigin)),
+		PublicAgentURL:           strings.TrimSpace(os.Getenv(EnvPublicAgentURL)),
+		TrustKeyPEM:              envStr(EnvTrustKey, ""),
 	}
 }
 
@@ -187,6 +190,12 @@ func (s Server) CACertPath() string    { return s.StateRoot + "/ca/ca.cert.pem" 
 func (s Server) SecretKeyPath() string { return s.StateRoot + "/secrets.key" }
 func (s Server) RecipeRoot() string    { return s.StateRoot + "/recipes" }
 func (s Server) RunRoot() string       { return s.StateRoot + "/runs" }
+func (s Server) AutoResearchRoot() string {
+	if s.AutoResearchRootOverride != "" {
+		return s.AutoResearchRootOverride
+	}
+	return s.StateRoot + "/autoresearch"
+}
 
 // TrustKeyPath is where the recipe/catalog verification public key (PEM
 // PKIX, Ed25519) lives; missing file disables signature verification.

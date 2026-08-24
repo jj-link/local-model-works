@@ -51,8 +51,12 @@ type Spec struct {
 	Schedule string
 	// Executor runs the job. It must respect ctx cancellation and return a
 	// versioned JSON-ready output object.
-	Executor              func(ctx context.Context, c *Context) (map[string]any, error)
-	SecretScopes          []string
+	Executor     func(ctx context.Context, c *Context) (map[string]any, error)
+	SecretScopes []string
+	// SecretScopesFor selects additional secret names from already validated
+	// run input. Values are merged with SecretScopes and deduplicated before
+	// any secret is decrypted.
+	SecretScopesFor       func(input map[string]any) []string
 	PlacementRequirements []string
 	LeaseResources        func(input map[string]any) []string
 	ArtifactKinds         []string
@@ -261,7 +265,7 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 			delete(r.live, runID)
 			r.mu.Unlock()
 		}()
-		secrets, secretErr := r.loadSecrets(execCtx, spec.SecretScopes)
+		secrets, secretErr := r.loadSecrets(execCtx, mergedSecretScopes(spec, input))
 		if secretErr != nil {
 			_ = r.runs.ReleaseLeasesFor(lc, "run", runID)
 			_ = r.runs.Complete(lc, runID, runs.Failed, "run.secret_scope", secretErr.Error())
@@ -329,6 +333,28 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 		_ = r.runs.SetState(lc, runID, runs.Verifying, "", "")
 		finish(runs.Succeeded, "", "")
 	}()
+}
+
+func mergedSecretScopes(spec Spec, input map[string]any) []string {
+	seen := make(map[string]struct{}, len(spec.SecretScopes))
+	scopes := make([]string, 0, len(spec.SecretScopes))
+	add := func(names []string) {
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			scopes = append(scopes, name)
+		}
+	}
+	add(spec.SecretScopes)
+	if spec.SecretScopesFor != nil {
+		add(spec.SecretScopesFor(input))
+	}
+	return scopes
 }
 
 func (r *Registry) loadSecrets(ctx context.Context, scopes []string) (map[string]string, error) {

@@ -13,6 +13,7 @@ tags:
   - name: system
   - name: enrollment
   - name: migration
+  - name: autoresearch
   - name: benchmarks
   - name: nodes
   - name: fabrics
@@ -69,6 +70,474 @@ paths:
           $ref: '#/components/responses/NotFound'
       tags:
         - artifacts
+  /autoresearch/projects:
+    get:
+      operationId: listAutoResearchProjects
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AutoResearchProject'
+                type: array
+          description: AutoResearch projects
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      tags:
+        - autoresearch
+    post:
+      operationId: createAutoResearchProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchProjectCreate'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchProject'
+          description: Project created
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}:
+    get:
+      operationId: getAutoResearchProject
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchProject'
+          description: Project
+        "404":
+          $ref: '#/components/responses/NotFound'
+      tags:
+        - autoresearch
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+    patch:
+      operationId: updateAutoResearchProject
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchProjectPatch'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchProject'
+          description: Updated project
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/ideas:
+    get:
+      operationId: listAutoResearchIdeas
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AutoResearchIdea'
+                type: array
+          description: Candidate ideas
+      tags:
+        - autoresearch
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+  /autoresearch/projects/{projectId}/ideas/{ideaId}:
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+      - $ref: '#/components/parameters/AutoResearchIdeaId'
+    put:
+      operationId: updateAutoResearchIdea
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchIdeaUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchIdea'
+          description: Updated idea
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/ideas/{ideaId}/select:
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+      - $ref: '#/components/parameters/AutoResearchIdeaId'
+    post:
+      operationId: selectAutoResearchIdea
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchIdea'
+          description: Selected idea
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/ideas/generate:
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+    post:
+      operationId: generateAutoResearchIdeas
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchIdeaGenerate'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Candidate generation run
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/chat:
+    post:
+      operationId: chatEditAutoResearchPaper
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchProjectId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchPaperChatRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchPaperChatResponse'
+          description: Writer edit run
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/compile:
+    post:
+      operationId: compileAutoResearchPaper
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchProjectId'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Paper compile run
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/files:
+    get:
+      operationId: listAutoResearchPaperFiles
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchProjectId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AutoResearchPaperFile'
+                type: array
+          description: Paper source files
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/files/{path}:
+    get:
+      operationId: getAutoResearchPaperFile
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Paper source file
+          headers:
+            ETag:
+              schema:
+                type: string
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+      - in: path
+        name: path
+        required: true
+        schema:
+          minLength: 1
+          type: string
+    put:
+      operationId: updateAutoResearchPaperFile
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchPaperFile'
+          description: Updated paper source file
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/pdf:
+    get:
+      operationId: getAutoResearchPaperPdf
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchProjectId'
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+          description: Current manuscript PDF
+        "404":
+          $ref: '#/components/responses/NotFound'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/paper/release:
+    post:
+      operationId: releaseAutoResearchPaper
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchProjectId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchProject'
+          description: Released project
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/runs:
+    get:
+      operationId: listAutoResearchRuns
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Run'
+                type: array
+          description: Project runs
+      tags:
+        - autoresearch
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+    post:
+      operationId: createAutoResearchRun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchRunCreate'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Factory run created
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/source-files:
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+    post:
+      operationId: uploadAutoResearchSourceFile
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  format: binary
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchSource'
+          description: PDF source stored
+        "413":
+          description: PDF exceeds 50 MiB
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/projects/{projectId}/sources:
+    get:
+      operationId: listAutoResearchSources
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AutoResearchSource'
+                type: array
+          description: Sources
+      tags:
+        - autoresearch
+    parameters:
+      - $ref: '#/components/parameters/AutoResearchProjectId'
+    post:
+      operationId: createAutoResearchSource
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoResearchSourceCreate'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResearchSource'
+          description: Source accepted for resolution
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - autoresearch
+  /autoresearch/runs/{runId}/pause:
+    post:
+      operationId: pauseAutoResearchRun
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchRunId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Paused run
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/runs/{runId}/resume:
+    post:
+      operationId: resumeAutoResearchRun
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchRunId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Resumed run
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
+  /autoresearch/runs/{runId}/stop:
+    post:
+      operationId: stopAutoResearchRun
+      parameters:
+        - $ref: '#/components/parameters/AutoResearchRunId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Stopped run
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - autoresearch
   /benchmarks:
     get:
       operationId: listBenchmarks
@@ -1336,6 +1805,27 @@ paths:
         - artifacts
 components:
   parameters:
+    AutoResearchIdeaId:
+      in: path
+      name: ideaId
+      required: true
+      schema:
+        format: uuid
+        type: string
+    AutoResearchProjectId:
+      in: path
+      name: projectId
+      required: true
+      schema:
+        format: uuid
+        type: string
+    AutoResearchRunId:
+      in: path
+      name: runId
+      required: true
+      schema:
+        format: uuid
+        type: string
     ID:
       in: path
       name: id
@@ -1447,6 +1937,401 @@ components:
         - image
         - result
         - file
+      type: string
+    AutoResearchAdvisorConfig:
+      additionalProperties: false
+      properties:
+        backlog:
+          default: 1
+          oneOf:
+            - const: "off"
+            - const: 1
+            - const: 3
+            - const: 5
+        enabled:
+          default: false
+          type: boolean
+        provider:
+          $ref: '#/components/schemas/AutoResearchProviderRef'
+      required:
+        - enabled
+        - backlog
+      type: object
+    AutoResearchExternalProviderRef:
+      additionalProperties: false
+      properties:
+        backend:
+          enum:
+            - claude
+            - codex
+            - claude-ds
+          type: string
+        base_url:
+          format: uri
+          type: string
+        model:
+          minLength: 1
+          type: string
+        secret_name:
+          minLength: 1
+          type: string
+        source:
+          enum:
+            - external
+          type: string
+      required:
+        - source
+        - backend
+        - model
+        - secret_name
+      type: object
+    AutoResearchFactory:
+      enum:
+        - idea
+        - proposal
+        - deep_lit
+        - experiment
+        - paper
+      type: string
+    AutoResearchIdea:
+      properties:
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        ordinal:
+          maximum: 10
+          minimum: 1
+          type: integer
+        project_id:
+          format: uuid
+          type: string
+        selected:
+          type: boolean
+        source:
+          enum:
+            - human
+            - generated
+          type: string
+        title:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        version:
+          type: integer
+      required:
+        - id
+        - project_id
+        - ordinal
+        - source
+        - title
+        - body
+        - selected
+        - version
+        - created_at
+        - updated_at
+      type: object
+    AutoResearchIdeaGenerate:
+      additionalProperties: false
+      properties:
+        candidate_count:
+          default: 1
+          maximum: 10
+          minimum: 1
+          type: integer
+        prompt:
+          maxLength: 100000
+          type: string
+      type: object
+    AutoResearchIdeaUpdate:
+      additionalProperties: false
+      properties:
+        body:
+          maxLength: 1000000
+          minLength: 1
+          type: string
+        title:
+          maxLength: 500
+          minLength: 1
+          type: string
+      required:
+        - title
+        - body
+      type: object
+    AutoResearchLMWProviderRef:
+      additionalProperties: false
+      properties:
+        deployment_id:
+          format: uuid
+          type: string
+        model:
+          minLength: 1
+          type: string
+        source:
+          enum:
+            - lmw
+          type: string
+      required:
+        - source
+        - deployment_id
+        - model
+      type: object
+    AutoResearchPaperChatRequest:
+      additionalProperties: false
+      properties:
+        base_etags:
+          additionalProperties:
+            type: string
+          type: object
+        message:
+          maxLength: 100000
+          minLength: 1
+          type: string
+      required:
+        - message
+        - base_etags
+      type: object
+    AutoResearchPaperChatResponse:
+      properties:
+        after_digests:
+          additionalProperties:
+            type: string
+          type: object
+        before_digests:
+          additionalProperties:
+            type: string
+          type: object
+        changed_paths:
+          items:
+            type: string
+          type: array
+        run:
+          $ref: '#/components/schemas/Run'
+      required:
+        - run
+        - changed_paths
+        - before_digests
+        - after_digests
+      type: object
+    AutoResearchPaperFile:
+      properties:
+        path:
+          type: string
+        sha256:
+          type: string
+        size:
+          type: integer
+      required:
+        - path
+        - sha256
+        - size
+      type: object
+    AutoResearchProject:
+      properties:
+        config:
+          $ref: '#/components/schemas/AutoResearchProjectConfig'
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        idea_prompt:
+          type: string
+        name:
+          type: string
+        runner_node_id:
+          format: uuid
+          nullable: true
+          type: string
+        status:
+          $ref: '#/components/schemas/AutoResearchProjectStatus'
+        updated_at:
+          format: date-time
+          type: string
+        version:
+          type: integer
+      required:
+        - id
+        - name
+        - status
+        - idea_prompt
+        - config
+        - version
+        - created_at
+        - updated_at
+      type: object
+    AutoResearchProjectConfig:
+      additionalProperties: false
+      properties:
+        advisors:
+          additionalProperties:
+            $ref: '#/components/schemas/AutoResearchAdvisorConfig'
+          type: object
+        auditor_prompts:
+          additionalProperties:
+            type: string
+          type: object
+        candidate_count:
+          default: 1
+          maximum: 10
+          minimum: 1
+          type: integer
+        fallbacks:
+          additionalProperties:
+            items:
+              $ref: '#/components/schemas/AutoResearchProviderRef'
+            type: array
+          type: object
+        human_gates:
+          additionalProperties:
+            type: boolean
+          type: object
+        paper_max_rounds:
+          default: 5
+          maximum: 20
+          minimum: 1
+          type: integer
+        roles:
+          additionalProperties:
+            $ref: '#/components/schemas/AutoResearchProviderRef'
+          type: object
+      type: object
+    AutoResearchProjectCreate:
+      additionalProperties: false
+      properties:
+        config:
+          $ref: '#/components/schemas/AutoResearchProjectConfig'
+        idea_prompt:
+          maxLength: 100000
+          type: string
+        name:
+          maxLength: 200
+          minLength: 1
+          type: string
+        runner_node_id:
+          format: uuid
+          type: string
+      required:
+        - name
+      type: object
+    AutoResearchProjectPatch:
+      additionalProperties: false
+      properties:
+        config:
+          $ref: '#/components/schemas/AutoResearchProjectConfig'
+        idea_prompt:
+          maxLength: 100000
+          type: string
+        name:
+          maxLength: 200
+          minLength: 1
+          type: string
+        runner_node_id:
+          format: uuid
+          type: string
+      type: object
+    AutoResearchProjectStatus:
+      enum:
+        - idea_intake
+        - awaiting_idea_selection
+        - running
+        - paper_editing
+        - completed
+        - failed
+      type: string
+    AutoResearchProviderRef:
+      discriminator:
+        propertyName: source
+      oneOf:
+        - $ref: '#/components/schemas/AutoResearchLMWProviderRef'
+        - $ref: '#/components/schemas/AutoResearchExternalProviderRef'
+    AutoResearchRunCreate:
+      additionalProperties: false
+      properties:
+        factory:
+          $ref: '#/components/schemas/AutoResearchFactory'
+        parent_run_id:
+          format: uuid
+          type: string
+        provider_overrides:
+          additionalProperties:
+            $ref: '#/components/schemas/AutoResearchProviderRef'
+          type: object
+        ssh_secret_name:
+          type: string
+      required:
+        - factory
+      type: object
+    AutoResearchSource:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        error:
+          nullable: true
+          type: string
+        id:
+          format: uuid
+          type: string
+        kind:
+          $ref: '#/components/schemas/AutoResearchSourceKind'
+        locator:
+          type: string
+        metadata:
+          additionalProperties: true
+          type: object
+        project_id:
+          format: uuid
+          type: string
+        sha256:
+          nullable: true
+          type: string
+        status:
+          $ref: '#/components/schemas/AutoResearchSourceStatus'
+        title:
+          nullable: true
+          type: string
+      required:
+        - id
+        - project_id
+        - kind
+        - locator
+        - metadata
+        - status
+        - created_at
+      type: object
+    AutoResearchSourceCreate:
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/AutoResearchSourceKind'
+        locator:
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+        - kind
+        - locator
+      type: object
+    AutoResearchSourceKind:
+      enum:
+        - arxiv
+        - doi
+        - url
+        - pdf
+      type: string
+    AutoResearchSourceStatus:
+      enum:
+        - pending
+        - ready
+        - blocked
+        - failed
       type: string
     BenchmarkCreate:
       properties:
@@ -2595,6 +3480,8 @@ components:
             - huggingface
             - github
             - registry
+            - model_provider
+            - ssh
           type: string
         updated_at:
           format: date-time
@@ -2613,6 +3500,8 @@ components:
             - huggingface
             - github
             - registry
+            - model_provider
+            - ssh
           type: string
         value:
           type: string
