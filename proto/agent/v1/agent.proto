@@ -64,6 +64,7 @@ message AgentMessage {
     TransferProgress transfer_progress = 8;
     RotateCertificateRequest rotate_certificate = 9;
     Ack ack = 10;
+    TraceChunk trace_chunk = 11;
   }
 }
 
@@ -78,6 +79,7 @@ message ServerMessage {
     Close close = 7;
     ArtifactCommand artifact_command = 8;
     ExtensionCommand extension_command = 9;
+    TraceAck trace_ack = 10;
   }
 }
 
@@ -311,6 +313,35 @@ message WorkloadCommand {
   bytes container_spec = 6;
   // Log directory on the agent for this run/deployment (byte-cursor source).
   string log_dir = 7;
+  // Trace-enabled workloads receive an agent-owned Unix socket at trace_socket.
+  bool trace_enabled = 8;
+  string trace_schema = 9;
+  string trace_socket = 10;
+  // Run-scoped credentials travel only inside the mTLS command and the
+  // agent-owned socket handshake; they are never added to container env.
+  map<string, string> secrets = 11;
+}
+
+// TraceChunk is a durable byte-cursor segment from an agent-owned trace spool.
+message TraceChunk {
+  string run_id = 1;
+  int32 rank = 2;
+  string source = 3;
+  uint64 offset = 4;
+  bytes data = 5;
+  bool final = 6;
+  uint64 end_offset = 7;
+}
+
+// TraceAck authorizes deletion of committed spool bytes through committed_offset.
+message TraceAck {
+  string run_id = 1;
+  int32 rank = 2;
+  string source = 3;
+  uint64 committed_offset = 4;
+  uint64 next_sequence = 5;
+  bool final = 6;
+  string error = 7;
 }
 
 enum WorkloadOp {

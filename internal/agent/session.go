@@ -55,6 +55,7 @@ func (a *Agent) session(ctx context.Context) error {
 		}})
 	}
 	a.reconcile(ctx, nil)
+	a.traceSpools.resendAll()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- a.sendLoop(ctx, stream) }()
@@ -100,6 +101,8 @@ func (a *Agent) session(ctx context.Context) error {
 			if err := a.applyCertificate(b.Certificate); err != nil {
 				log.Printf("agent: apply certificate: %v", err)
 			}
+		case *agentv1.ServerMessage_TraceAck:
+			a.traceSpools.ack(b.TraceAck)
 		case *agentv1.ServerMessage_Close:
 			return errCleanClose
 		}

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 
 	"github.com/jj-link/local-model-works/internal/cjson"
 )
@@ -110,9 +109,7 @@ func manifestFile(label, path, full string) FileEntry {
 		return e
 	}
 	e.Size = st.Size()
-	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-		e.MTimeNS = sys.Mtim.Nano()
-	}
+	e.MTimeNS = mtimeNS(st)
 	if e.Size > 0 && e.Size <= hashLimitBytes {
 		if raw, rerr := os.ReadFile(full); rerr == nil {
 			e.SHA256 = sha256Hex(raw)

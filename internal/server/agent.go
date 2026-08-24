@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/nodes"
+	"github.com/jj-link/local-model-works/internal/traces"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	agentv1connect "github.com/jj-link/local-model-works/proto/agent/v1/agentv1connect"
 )
@@ -395,6 +397,8 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			s.applyStateUpdate(ctx, nodeID, body.StateUpdate)
 		case *agentv1.AgentMessage_LogChunk:
 			s.appendLog(nodeID, body.LogChunk)
+		case *agentv1.AgentMessage_TraceChunk:
+			s.ingestTraceChunk(ctx, nodeID, conn, body.TraceChunk)
 		case *agentv1.AgentMessage_PlacementReport:
 			s.applyPlacementReport(ctx, nodeID, body.PlacementReport)
 		case *agentv1.AgentMessage_TransferProgress:
@@ -486,6 +490,29 @@ func (s *Server) appendLog(nodeID string, lc *agentv1.LogChunk) {
 	}
 	defer f.Close()
 	_, _ = f.Write(lc.GetData())
+}
+
+func (s *Server) ingestTraceChunk(ctx context.Context, nodeID string, conn *nodes.Conn, chunk *agentv1.TraceChunk) {
+	reply := &agentv1.TraceAck{RunId: chunk.GetRunId(), Rank: chunk.GetRank(), Source: chunk.GetSource()}
+	if chunk.GetOffset() > math.MaxInt64 || chunk.GetEndOffset() > math.MaxInt64 {
+		reply.Error = "trace.offset_invalid"
+	} else if trace, err := s.traces.GetByRun(ctx, chunk.GetRunId()); err != nil || trace.State != "recording" {
+		reply.Error = "trace.not_recording"
+	} else {
+		ack, err := s.traces.IngestChunk(ctx, traces.Chunk{
+			TraceID: trace.ID, NodeID: nodeID, Rank: int64(chunk.GetRank()),
+			Source: chunk.GetSource(), Offset: int64(chunk.GetOffset()), Data: chunk.GetData(),
+			Final: chunk.GetFinal(), EndOffset: int64(chunk.GetEndOffset()),
+		})
+		if err != nil {
+			reply.Error = "trace.ingest_rejected"
+		} else {
+			reply.CommittedOffset = uint64(ack.CommittedOffset)
+			reply.NextSequence = uint64(ack.NextSequence)
+			reply.Final = ack.Final
+		}
+	}
+	conn.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_TraceAck{TraceAck: reply}})
 }
 
 // applyPlacementReport records one node placement report. Agents carry the

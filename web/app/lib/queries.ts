@@ -1,4 +1,9 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import * as api from "~/lib/api";
 
 export const queryClient = new QueryClient({
@@ -42,6 +47,23 @@ export const qk = {
   secrets: ["secrets"] as const,
   moduleSettings: (id: string) => ["modules", id, "settings"] as const,
   enrollmentTokens: ["enrollment-tokens"] as const,
+  codingTraces: (filter: {
+    state?: string;
+    taskId?: string;
+    success?: boolean;
+  }) =>
+    [
+      "coding-traces",
+      filter.state ?? "",
+      filter.taskId ?? "",
+      filter.success == null ? "" : String(filter.success),
+    ] as const,
+  codingTrace: (id: string) => ["coding-traces", id] as const,
+  codingTraceEvents: (id: string) => ["coding-traces", id, "events"] as const,
+  codingTraceExports: ["coding-traces", "exports"] as const,
+  sweGymExperiments: ["coding-traces", "swe-gym", "experiments"] as const,
+  sweGymExperiment: (id: string) =>
+    ["coding-traces", "swe-gym", "experiments", id] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -49,15 +71,27 @@ export const qk = {
 /* ------------------------------------------------------------------ */
 
 export function useSystemInfo() {
-  return useQuery({ queryKey: qk.systemInfo, queryFn: ({ signal }) => api.systemInfo({ signal }), staleTime: CATALOG });
+  return useQuery({
+    queryKey: qk.systemInfo,
+    queryFn: ({ signal }) => api.systemInfo({ signal }),
+    staleTime: CATALOG,
+  });
 }
 
 export function useModules() {
-  return useQuery({ queryKey: qk.modules, queryFn: ({ signal }) => api.listModules({ signal }), staleTime: 5 * 60_000 });
+  return useQuery({
+    queryKey: qk.modules,
+    queryFn: ({ signal }) => api.listModules({ signal }),
+    staleTime: 5 * 60_000,
+  });
 }
 
 export function useNodes() {
-  return useQuery({ queryKey: qk.nodes, queryFn: ({ signal }) => api.listNodes({ signal }), staleTime: LIVE });
+  return useQuery({
+    queryKey: qk.nodes,
+    queryFn: ({ signal }) => api.listNodes({ signal }),
+    staleTime: LIVE,
+  });
 }
 
 export function useNode(id: string | undefined) {
@@ -70,7 +104,11 @@ export function useNode(id: string | undefined) {
 }
 
 export function useFabrics() {
-  return useQuery({ queryKey: qk.fabrics, queryFn: ({ signal }) => api.listFabrics({ signal }), staleTime: LIVE });
+  return useQuery({
+    queryKey: qk.fabrics,
+    queryFn: ({ signal }) => api.listFabrics({ signal }),
+    staleTime: LIVE,
+  });
 }
 
 export function useFabric(id: string | undefined) {
@@ -83,7 +121,11 @@ export function useFabric(id: string | undefined) {
 }
 
 export function useRecipes() {
-  return useQuery({ queryKey: qk.recipes, queryFn: ({ signal }) => api.listRecipes({ signal }), staleTime: CATALOG });
+  return useQuery({
+    queryKey: qk.recipes,
+    queryFn: ({ signal }) => api.listRecipes({ signal }),
+    staleTime: CATALOG,
+  });
 }
 
 export function useRecipe(digest: string | undefined) {
@@ -95,7 +137,9 @@ export function useRecipe(digest: string | undefined) {
   });
 }
 
-export function useArtifacts(params: { kind?: api.ArtifactKind; node?: string } = {}) {
+export function useArtifacts(
+  params: { kind?: api.ArtifactKind; node?: string } = {},
+) {
   return useQuery({
     queryKey: [...qk.artifacts, params.kind ?? "", params.node ?? ""],
     queryFn: ({ signal }) => api.listArtifacts({ ...params, signal }),
@@ -104,11 +148,19 @@ export function useArtifacts(params: { kind?: api.ArtifactKind; node?: string } 
 }
 
 export function useTransfers() {
-  return useQuery({ queryKey: qk.transfers, queryFn: ({ signal }) => api.listTransfers({ signal }), staleTime: LIVE });
+  return useQuery({
+    queryKey: qk.transfers,
+    queryFn: ({ signal }) => api.listTransfers({ signal }),
+    staleTime: LIVE,
+  });
 }
 
 export function useDeployments() {
-  return useQuery({ queryKey: qk.deployments, queryFn: ({ signal }) => api.listDeployments({ signal }), staleTime: LIVE });
+  return useQuery({
+    queryKey: qk.deployments,
+    queryFn: ({ signal }) => api.listDeployments({ signal }),
+    staleTime: LIVE,
+  });
 }
 
 export function useDeployment(id: string | undefined) {
@@ -124,7 +176,12 @@ export function useRuns(filter: { module?: string; state?: string } = {}) {
   return useQuery({
     queryKey: qk.runs(filter),
     queryFn: ({ signal }) =>
-      api.listRuns({ module: filter.module, state: filter.state as api.RunState | undefined, limit: 50, signal }),
+      api.listRuns({
+        module: filter.module,
+        state: filter.state as api.RunState | undefined,
+        limit: 50,
+        signal,
+      }),
     staleTime: LIVE,
   });
 }
@@ -139,26 +196,97 @@ export function useRun(id: string | undefined) {
 }
 
 export function useBenchmarkRuns() {
-  return useQuery({ queryKey: qk.benchmarkRuns, queryFn: ({ signal }) => api.listBenchmarks({ signal }), staleTime: CATALOG });
+  return useQuery({
+    queryKey: qk.benchmarkRuns,
+    queryFn: ({ signal }) => api.listBenchmarks({ signal }),
+    staleTime: CATALOG,
+  });
 }
 
 export function useBenchmarkResults() {
-  return useQuery({ queryKey: qk.benchmarkResults, queryFn: ({ signal }) => api.listBenchmarkResults({ signal }), staleTime: CATALOG });
+  return useQuery({
+    queryKey: qk.benchmarkResults,
+    queryFn: ({ signal }) => api.listBenchmarkResults({ signal }),
+    staleTime: CATALOG,
+  });
 }
 
 export function useSecrets() {
-  return useQuery({ queryKey: qk.secrets, queryFn: ({ signal }) => api.listSecrets({ signal }), staleTime: CATALOG });
+  return useQuery({
+    queryKey: qk.secrets,
+    queryFn: ({ signal }) => api.listSecrets({ signal }),
+    staleTime: CATALOG,
+  });
 }
 
 export function useModuleSettings(moduleId: string | undefined) {
   return useQuery({
     queryKey: qk.moduleSettings(moduleId ?? ""),
     enabled: !!moduleId,
-    queryFn: ({ signal }) => api.getModuleSettings(moduleId as string, { signal }),
+    queryFn: ({ signal }) =>
+      api.getModuleSettings(moduleId as string, { signal }),
     staleTime: CATALOG,
   });
 }
 
+export function useCodingTraces(
+  filter: { state?: string; taskId?: string; success?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: qk.codingTraces(filter),
+    queryFn: ({ signal }) =>
+      api.listCodingTraces({ ...filter, limit: 100, signal }),
+    staleTime: LIVE,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useCodingTrace(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.codingTrace(id ?? ""),
+    enabled: Boolean(id),
+    queryFn: ({ signal }) => api.getCodingTrace(id as string, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useCodingTraceEvents(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.codingTraceEvents(id ?? ""),
+    enabled: Boolean(id),
+    queryFn: ({ signal }) =>
+      api.listCodingTraceEvents(id as string, 0, 1_000, { signal }),
+    staleTime: LIVE,
+  });
+}
+
+export function useCodingTraceExports() {
+  return useQuery({
+    queryKey: qk.codingTraceExports,
+    queryFn: ({ signal }) => api.listCodingTraceExports({ signal }),
+    staleTime: LIVE,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useSweGymExperiments() {
+  return useQuery({
+    queryKey: qk.sweGymExperiments,
+    queryFn: ({ signal }) => api.listSweGymExperiments({ signal }),
+    staleTime: LIVE,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useSweGymExperiment(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.sweGymExperiment(id ?? ""),
+    enabled: Boolean(id),
+    queryFn: ({ signal }) => api.getSweGymExperiment(id as string, { signal }),
+    staleTime: LIVE,
+    refetchInterval: 3_000,
+  });
+}
 export function useEnrollmentTokens(enabled = true) {
   return useQuery({
     queryKey: qk.enrollmentTokens,
@@ -169,11 +297,18 @@ export function useEnrollmentTokens(enabled = true) {
 }
 
 export function useRecipeDrafts() {
-  return useQuery({ queryKey: qk.recipeDrafts, queryFn: ({ signal }) => api.listRecipeDrafts({ signal }) });
+  return useQuery({
+    queryKey: qk.recipeDrafts,
+    queryFn: ({ signal }) => api.listRecipeDrafts({ signal }),
+  });
 }
 
 export function useRecipeDraft(id: string) {
-  return useQuery({ queryKey: qk.recipeDraft(id), queryFn: ({ signal }) => api.getRecipeDraft(id, { signal }), enabled: Boolean(id) });
+  return useQuery({
+    queryKey: qk.recipeDraft(id),
+    queryFn: ({ signal }) => api.getRecipeDraft(id, { signal }),
+    enabled: Boolean(id),
+  });
 }
 /* ------------------------------------------------------------------ */
 /* mutations                                                           */
@@ -188,7 +323,6 @@ function invalidates(...keys: ReadonlyArray<readonly unknown[]>) {
 export function useApproveNode() {
   const qc = useQueryClient();
   return useMutation({
-
     mutationFn: (id: string) => api.approveNode(id),
     onSuccess: () => invalidates(qk.nodes, qk.systemInfo)(qc),
   });
@@ -225,7 +359,10 @@ export function useCreateFabric() {
 export function useUpdateFabric() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & api.CreateFabricRequest & { ifMatch: string }) =>
+    mutationFn: ({
+      id,
+      ...body
+    }: { id: string } & api.CreateFabricRequest & { ifMatch: string }) =>
       api.updateFabric(id, body, body.ifMatch),
     onSuccess: (f) => {
       invalidates(qk.fabrics)(qc);
@@ -254,7 +391,10 @@ export function useImportRecipe() {
 export function useSetRecipeTrust() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ digest, ...body }: { digest: string } & api.RecipeTrustRequest) =>
+    mutationFn: ({
+      digest,
+      ...body
+    }: { digest: string } & api.RecipeTrustRequest) =>
       api.setRecipeTrust(digest, body),
     onSuccess: (r) => {
       invalidates(qk.recipes)(qc);
@@ -298,7 +438,8 @@ export function usePlanDeployment() {
 export function useCreateDeployment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: api.DeploymentCreateRequest) => api.createDeployment(body),
+    mutationFn: (body: api.DeploymentCreateRequest) =>
+      api.createDeployment(body),
     onSuccess: () => invalidates(qk.deployments, qk.runs({}))(qc),
   });
 }
@@ -363,6 +504,71 @@ export function useCreateBenchmark() {
       invalidates(qk.benchmarkRuns, qk.benchmarkResults, qk.runs({}))(qc),
   });
 }
+export function usePlanSweGymExperiment() {
+  return useMutation({
+    mutationFn: (body: api.SweGymConfig) => api.planSweGymExperiment(body),
+  });
+}
+
+export function useCreateSweGymExperiment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.SweGymCreate) => api.createSweGymExperiment(body),
+    onSuccess: () =>
+      invalidates(qk.sweGymExperiments, qk.codingTraces({}), qk.runs({}))(qc),
+  });
+}
+
+export function useCancelSweGymExperiment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.cancelSweGymExperiment(id),
+    onSuccess: (experiment) => {
+      invalidates(qk.sweGymExperiments)(qc);
+      qc.setQueryData(qk.sweGymExperiment(experiment.id ?? ""), experiment);
+    },
+  });
+}
+
+export function useResumeSweGymExperiment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.resumeSweGymExperiment(id),
+    onSuccess: (experiment) => {
+      invalidates(qk.sweGymExperiments)(qc);
+      qc.setQueryData(qk.sweGymExperiment(experiment.id ?? ""), experiment);
+    },
+  });
+}
+
+export function useCreateCodingTraceExport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: api.TraceExportCreate) =>
+      api.createCodingTraceExport(body),
+    onSuccess: () => invalidates(qk.codingTraceExports, qk.runs({}))(qc),
+  });
+}
+
+export function usePinCodingTrace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
+      api.pinCodingTrace(id, pinned),
+    onSuccess: (trace) => {
+      invalidates(qk.codingTraces({}))(qc);
+      qc.setQueryData(qk.codingTrace(trace.id), trace);
+    },
+  });
+}
+
+export function useDeleteCodingTrace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteCodingTrace(id),
+    onSuccess: () => invalidates(qk.codingTraces({}))(qc),
+  });
+}
 
 export function usePutSecret() {
   const qc = useQueryClient();
@@ -399,7 +605,8 @@ export function usePutModuleSettings() {
 export function useCreateEnrollmentToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body?: { description?: string }) => api.createEnrollmentToken(body),
+    mutationFn: (body?: { description?: string }) =>
+      api.createEnrollmentToken(body),
     onSuccess: () => invalidates(qk.enrollmentTokens)(qc),
   });
 }

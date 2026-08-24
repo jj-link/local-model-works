@@ -70,6 +70,9 @@ func TestJobResourceContracts(t *testing.T) {
 			if artifact.Identity == "" || artifact.Size != 6 {
 				t.Errorf("artifact = %+v", artifact)
 			}
+			if artifact.Path != "result.txt" {
+				t.Errorf("artifact path = %q", artifact.Path)
+			}
 			seen <- struct{}{}
 			return map[string]any{"results": []map[string]any{{"language": "go"}}}, nil
 		},
@@ -98,6 +101,27 @@ func TestJobResourceContracts(t *testing.T) {
 			t.Fatalf("run state = %s", run.State)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	run, err := runsSvc.Get(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := run.Output["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("persisted output = %#v", run.Output)
+	}
+	var metadata string
+	if err := database.QueryRowContext(ctx, "SELECT metadata FROM artifacts LIMIT 1").Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	var metadataView struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &metadataView); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.IsAbs(metadataView.Path) || metadataView.Path != "result.txt" {
+		t.Fatalf("artifact metadata exposed controller path: %s", metadata)
 	}
 	var leaseCount int
 	if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM leases WHERE owner_kind = ? AND owner_id = ? AND state = 'active'", "run", runID).Scan(&leaseCount); err != nil {

@@ -32,6 +32,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/telemetry"
+	"github.com/jj-link/local-model-works/internal/traces"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -68,6 +69,7 @@ type Server struct {
 	jobs             *jobs.Registry
 	settings         *settings.Registry
 	telemetry        *telemetry.Service
+	traces           *traces.Service
 	env              *moduleapi.Env
 	modules          []moduleapi.Module
 	heartbeatTimeout time.Duration
@@ -100,6 +102,7 @@ func New(d Deps) *Server {
 	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx, d.DB, d.Q)
 	settingsReg := settings.New(d.Q)
 	telemetrySvc := telemetry.New(d.DB, d.Q)
+	tracesSvc := traces.New(d.DB, d.Q, traces.NewRedactor())
 	go telemetrySvc.RunRetention(d.Ctx)
 
 	v, err := recipe.NewValidator()
@@ -124,7 +127,7 @@ func New(d Deps) *Server {
 	env := &moduleapi.Env{
 		Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
 		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder, Runs: runsSvc,
-		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc,
+		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc, Traces: tracesSvc,
 		Nodes: nodes, Commands: broker, RunRoot: runRoot,
 	}
 	s := &Server{
@@ -140,6 +143,7 @@ func New(d Deps) *Server {
 		jobs:             jobsReg,
 		settings:         settingsReg,
 		telemetry:        telemetrySvc,
+		traces:           tracesSvc,
 		env:              env,
 		heartbeatTimeout: hbt,
 		version:          d.Version,

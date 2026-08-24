@@ -178,6 +178,21 @@ func (s *Service) Get(ctx context.Context, rid string) (Run, error) {
 	return s.view(ctx, row)
 }
 
+// SetOutput persists a validated executor result before the terminal state.
+func (s *Service) SetOutput(ctx context.Context, rid string, output map[string]any) error {
+	data, err := cjson.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("run output: %w", err)
+	}
+	if _, err := s.q.GetRun(ctx, rid); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnknown
+		}
+		return err
+	}
+	return s.q.SetRunOutput(ctx, db.SetRunOutputParams{Output: sql.NullString{String: string(data), Valid: true}, ID: rid})
+}
+
 // List returns a ledger page, newest first.
 func (s *Service) List(ctx context.Context, f Filter) ([]Run, error) {
 	limit := f.Limit

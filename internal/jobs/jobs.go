@@ -51,8 +51,11 @@ type Spec struct {
 	Schedule string
 	// Executor runs the job. It must respect ctx cancellation and return a
 	// versioned JSON-ready output object.
-	Executor              func(ctx context.Context, c *Context) (map[string]any, error)
-	SecretScopes          []string
+	Executor     func(ctx context.Context, c *Context) (map[string]any, error)
+	SecretScopes []string
+	// SecretScopesFor resolves optional run-selected secret names after input
+	// validation. Values are delivered only in Context.Secrets.
+	SecretScopesFor       func(input map[string]any) []string
 	PlacementRequirements []string
 	LeaseResources        func(input map[string]any) []string
 	ArtifactKinds         []string
@@ -197,6 +200,20 @@ func normalizeJSON(value any) (any, error) {
 // Submit validates the input, creates a run, and starts the executor. The
 // request ctx only covers creation; execution outlives the request.
 func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any) (string, error) {
+	return r.submit(ctx, kind, input, nil)
+}
+
+// SubmitPrepared invokes prepare after durable run/workspace creation and
+// before the executor can start. It is the atomic linkage point for module
+// records that reference the new run.
+func (r *Registry) SubmitPrepared(ctx context.Context, kind string, input map[string]any, prepare func(runID string) error) (string, error) {
+	if prepare == nil {
+		return "", errors.New("prepare callback is required")
+	}
+	return r.submit(ctx, kind, input, prepare)
+}
+
+func (r *Registry) submit(ctx context.Context, kind string, input map[string]any, prepare func(runID string) error) (string, error) {
 	r.mu.RLock()
 	spec, ok := r.specs[kind]
 	module := r.moduleOf[kind]
@@ -244,6 +261,13 @@ func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any
 			}
 		}
 	}
+	if prepare != nil {
+		if err := prepare(runID); err != nil {
+			_ = r.runs.ReleaseLeasesFor(ctx, "run", runID)
+			_ = r.runs.Complete(ctx, runID, runs.Failed, "run.prepare_failed", err.Error())
+			return "", err
+		}
+	}
 	r.start(module, spec, runID, ws, input)
 	return runID, nil
 }
@@ -261,7 +285,11 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 			delete(r.live, runID)
 			r.mu.Unlock()
 		}()
-		secrets, secretErr := r.loadSecrets(execCtx, spec.SecretScopes)
+		scopes := append([]string(nil), spec.SecretScopes...)
+		if spec.SecretScopesFor != nil {
+			scopes = append(scopes, spec.SecretScopesFor(input)...)
+		}
+		secrets, secretErr := r.loadSecrets(execCtx, scopes)
 		if secretErr != nil {
 			_ = r.runs.ReleaseLeasesFor(lc, "run", runID)
 			_ = r.runs.Complete(lc, runID, runs.Failed, "run.secret_scope", secretErr.Error())
@@ -308,6 +336,13 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 						to, code, msg = runs.Failed, "run.output_invalid", normalizeErr.Error()
 					} else if vErr := outSchema.Validate(normalized); vErr != nil {
 						to, code, msg = runs.Failed, "run.output_invalid", vErr.Error()
+					} else {
+						out = normalized.(map[string]any)
+					}
+				}
+				if to == runs.Succeeded {
+					if outputErr := r.runs.SetOutput(lc, runID, out); outputErr != nil {
+						to, code, msg = runs.Failed, "run.output_persist_failed", outputErr.Error()
 					}
 				}
 			}
@@ -381,14 +416,14 @@ func (r *Registry) publishArtifact(ctx context.Context, runID, workspace, kind, 
 	identity := "file://" + digest
 	sum := sha256.Sum256([]byte(identity))
 	artifactID := "artifact-" + hex.EncodeToString(sum[:8])
-	metadata, _ := json.Marshal(map[string]string{"run_id": runID, "path": path})
+	metadata, _ := json.Marshal(map[string]string{"run_id": runID, "path": filepath.ToSlash(relative)})
 	if err := r.q.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID: artifactID, Kind: kind, Identity: identity,
 		Digest: sql.NullString{String: digest, Valid: true}, Metadata: string(metadata),
 	}); err != nil {
 		return PublishedArtifact{}, err
 	}
-	return PublishedArtifact{ID: artifactID, Kind: kind, Identity: identity, Path: path, Size: size}, nil
+	return PublishedArtifact{ID: artifactID, Kind: kind, Identity: identity, Path: filepath.ToSlash(relative), Size: size}, nil
 }
 
 // Cancel stops a live job's context and records the cancelling state.

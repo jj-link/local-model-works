@@ -91,7 +91,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 // cancel — POST /runs/{id}/cancel
 func (m *Module) cancel(w http.ResponseWriter, r *http.Request) {
 	rid := chi.URLParam(r, "id")
-	if err := m.env.Runs.Cancel(r.Context(), rid); err != nil {
+	if err := m.env.Jobs.Cancel(r.Context(), rid); err != nil {
 		httpx.HandleErr(w, err)
 		return
 	}

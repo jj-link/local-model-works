@@ -52,6 +52,94 @@ type BenchmarkResult struct {
 	CreatedAt        string         `json:"created_at"`
 }
 
+type CodingTrace struct {
+	ID               string         `json:"id"`
+	RunID            string         `json:"run_id"`
+	ExperimentID     sql.NullString `json:"experiment_id"`
+	TaskID           string         `json:"task_id"`
+	Problem          string         `json:"problem"`
+	Repository       string         `json:"repository"`
+	BaseRevision     string         `json:"base_revision"`
+	ModelSource      string         `json:"model_source"`
+	Model            string         `json:"model"`
+	Scaffold         string         `json:"scaffold"`
+	Sampling         string         `json:"sampling"`
+	State            string         `json:"state"`
+	FinalDiff        sql.NullString `json:"final_diff"`
+	VerificationID   sql.NullString `json:"verification_id"`
+	SuccessLabel     sql.NullInt64  `json:"success_label"`
+	FailureKind      sql.NullString `json:"failure_kind"`
+	TokenCount       int64          `json:"token_count"`
+	TurnCount        int64          `json:"turn_count"`
+	Pinned           int64          `json:"pinned"`
+	RetainUntil      sql.NullString `json:"retain_until"`
+	SchemaVersion    string         `json:"schema_version"`
+	RedactionVersion string         `json:"redaction_version"`
+	RedactionCount   int64          `json:"redaction_count"`
+	Digest           sql.NullString `json:"digest"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
+	FinishedAt       sql.NullString `json:"finished_at"`
+}
+
+type CodingTraceEvent struct {
+	TraceID        string `json:"trace_id"`
+	Sequence       int64  `json:"sequence"`
+	EventID        string `json:"event_id"`
+	AgentID        string `json:"agent_id"`
+	ParentAgentID  string `json:"parent_agent_id"`
+	OccurredAt     string `json:"occurred_at"`
+	Kind           string `json:"kind"`
+	Payload        string `json:"payload"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	RedactionCount int64  `json:"redaction_count"`
+}
+
+type CodingTraceExport struct {
+	ID             string         `json:"id"`
+	RunID          string         `json:"run_id"`
+	State          string         `json:"state"`
+	Selection      string         `json:"selection"`
+	Seed           int64          `json:"seed"`
+	ArtifactPath   sql.NullString `json:"artifact_path"`
+	ManifestDigest sql.NullString `json:"manifest_digest"`
+	CanonicalCount int64          `json:"canonical_count"`
+	PolicyCount    int64          `json:"policy_count"`
+	VerifierCount  int64          `json:"verifier_count"`
+	ExcludedCount  int64          `json:"excluded_count"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
+	FinishedAt     sql.NullString `json:"finished_at"`
+}
+
+type CodingTraceStream struct {
+	TraceID           string        `json:"trace_id"`
+	NodeID            string        `json:"node_id"`
+	Rank              int64         `json:"rank"`
+	Source            string        `json:"source"`
+	ByteOffset        int64         `json:"byte_offset"`
+	NextEventSequence int64         `json:"next_event_sequence"`
+	FinalOffset       sql.NullInt64 `json:"final_offset"`
+	EofAcknowledged   int64         `json:"eof_acknowledged"`
+	UpdatedAt         string        `json:"updated_at"`
+}
+
+type CodingTraceVerification struct {
+	ID               string         `json:"id"`
+	TraceID          string         `json:"trace_id"`
+	Command          string         `json:"command"`
+	TimeoutSeconds   int64          `json:"timeout_seconds"`
+	ExitStatus       sql.NullInt64  `json:"exit_status"`
+	Stdout           string         `json:"stdout"`
+	Stderr           string         `json:"stderr"`
+	FailToPassReport string         `json:"fail_to_pass_report"`
+	PassToPassReport string         `json:"pass_to_pass_report"`
+	Status           string         `json:"status"`
+	FailureKind      sql.NullString `json:"failure_kind"`
+	CreatedAt        string         `json:"created_at"`
+}
+
 type Deployment struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
@@ -213,6 +301,43 @@ type Session struct {
 	CsrfHash  string `json:"csrf_hash"`
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
+}
+
+type SweGymExperiment struct {
+	ID                   string         `json:"id"`
+	RunID                sql.NullString `json:"run_id"`
+	State                string         `json:"state"`
+	Config               string         `json:"config"`
+	ConfigDigest         string         `json:"config_digest"`
+	Plan                 string         `json:"plan"`
+	PlanDigest           string         `json:"plan_digest"`
+	Manifest             string         `json:"manifest"`
+	TotalItems           int64          `json:"total_items"`
+	CompletedItems       int64          `json:"completed_items"`
+	ResolvedItems        int64          `json:"resolved_items"`
+	UnresolvedItems      int64          `json:"unresolved_items"`
+	InfrastructureErrors int64          `json:"infrastructure_errors"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
+	FinishedAt           sql.NullString `json:"finished_at"`
+}
+
+type SweGymWorkItem struct {
+	ID           string         `json:"id"`
+	ExperimentID string         `json:"experiment_id"`
+	TaskID       string         `json:"task_id"`
+	RolloutIndex int64          `json:"rollout_index"`
+	Attempt      int64          `json:"attempt"`
+	State        string         `json:"state"`
+	ChildRunID   sql.NullString `json:"child_run_id"`
+	TraceID      sql.NullString `json:"trace_id"`
+	NodeID       sql.NullString `json:"node_id"`
+	Output       sql.NullString `json:"output"`
+	ErrorCode    sql.NullString `json:"error_code"`
+	ErrorMessage sql.NullString `json:"error_message"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+	FinishedAt   sql.NullString `json:"finished_at"`
 }
 
 type Telemetry1m struct {

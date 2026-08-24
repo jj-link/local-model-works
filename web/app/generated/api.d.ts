@@ -69,6 +69,198 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/coding-traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCodingTraces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCodingTrace"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteCodingTrace"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCodingTraceEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/{id}/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pinCodingTrace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCodingTraceExports"];
+        put?: never;
+        post: operations["createCodingTraceExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/exports/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downloadCodingTraceExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCodingTraceSettings"];
+        put: operations["putCodingTraceSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/swe-gym/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listSweGymExperiments"];
+        put?: never;
+        post: operations["createSweGymExperiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/swe-gym/experiments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSweGymExperiment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/swe-gym/experiments/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancelSweGymExperiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/swe-gym/experiments/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeSweGymExperiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coding-traces/swe-gym/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["planSweGymExperiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deployments": {
         parameters: {
             query?: never;
@@ -860,6 +1052,55 @@ export interface components {
             not_before?: string;
             serial?: string;
         };
+        CodingTrace: {
+            base_revision: string;
+            /** Format: date-time */
+            created_at: string;
+            digest?: string | null;
+            experiment_id?: string | null;
+            failure_kind?: string | null;
+            final_diff?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            id: string;
+            model: string;
+            /** @enum {string} */
+            model_source: "lmw_deployment" | "external_api";
+            pinned: boolean;
+            problem: string;
+            redaction_count: number;
+            redaction_version: string;
+            repository: string;
+            run_id: string;
+            sampling?: {
+                [key: string]: unknown;
+            };
+            scaffold?: string;
+            schema_version: string;
+            /** @enum {string} */
+            state: "recording" | "completed" | "interrupted";
+            success_label?: boolean | null;
+            task_id: string;
+            token_count: number;
+            turn_count: number;
+        };
+        CodingTraceDetail: components["schemas"]["CodingTrace"] & {
+            verification?: components["schemas"]["TraceVerification"];
+        };
+        CodingTracePage: {
+            items: components["schemas"]["CodingTrace"][];
+            next_cursor: string;
+        };
+        CodingTraceSettings: {
+            /** @default true */
+            capture_reasoning: boolean;
+            /** @default 32768 */
+            export_max_context_tokens: number;
+            /** @default 2 */
+            export_success_cap_per_task: number;
+            /** @default 0 */
+            retention_days: number;
+        };
         Compatibility: {
             accelerator?: {
                 [key: string]: unknown;
@@ -1299,14 +1540,14 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "model-provider" | "runtime-provider";
             /** Format: date-time */
             updated_at?: string;
         };
         SecretWrite: {
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "model-provider" | "runtime-provider";
             value: string;
         };
         Session: {
@@ -1314,6 +1555,105 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
             username: string;
+        };
+        SweGymConfig: {
+            readonly capture_reasoning?: boolean;
+            context_limit?: number;
+            /** @enum {string} */
+            dataset: "lite" | "full";
+            deployment_id?: string;
+            eligible_nodes?: string[];
+            endpoint?: string;
+            image_prefix?: string;
+            limit?: number;
+            max_turns: number;
+            model: string;
+            /** @enum {string} */
+            model_source: "lmw_deployment" | "external_api";
+            output_limit?: number;
+            per_node_workers?: number;
+            /**
+             * @default custom
+             * @enum {string}
+             */
+            preset: "custom" | "paper-d0" | "paper-d1" | "paper-d2";
+            repositories?: string[];
+            retry_limit?: number;
+            rollouts_per_task: number;
+            /** @enum {string} */
+            runtime: "lmw_local" | "openhands_remote";
+            runtime_endpoint?: string;
+            runtime_secret_reference?: string;
+            secret_reference?: string;
+            seed?: number;
+            task_ids?: string[];
+            temperatures: number[];
+            timeout_seconds?: number;
+            workers: number;
+        };
+        SweGymCreate: {
+            plan: components["schemas"]["SweGymPlan"];
+        };
+        SweGymExperiment: {
+            completed_items?: number;
+            config?: components["schemas"]["SweGymConfig"];
+            config_digest?: string;
+            /** Format: date-time */
+            created_at?: string;
+            id?: string;
+            infrastructure_errors?: number;
+            manifest?: {
+                [key: string]: unknown;
+            };
+            plan?: components["schemas"]["SweGymPlan"];
+            plan_digest?: string;
+            resolved_items?: number;
+            run_id?: string | null;
+            state?: string;
+            total_items?: number;
+            unresolved_items?: number;
+        };
+        SweGymExperimentDetail: components["schemas"]["SweGymExperiment"] & {
+            work_items?: {
+                [key: string]: unknown;
+            }[];
+        };
+        SweGymExperimentPage: {
+            items: components["schemas"]["SweGymExperiment"][];
+            next_cursor: string;
+        };
+        SweGymPlan: {
+            config: components["schemas"]["SweGymConfig"];
+            config_digest: string;
+            node_capacity?: {
+                [key: string]: unknown;
+            };
+            plan_digest: string;
+            sampling_matrix: {
+                max_turns: number;
+                model: string;
+                name: string;
+                rollouts: number;
+                temperature: number;
+            }[];
+            sources: {
+                [key: string]: unknown;
+            };
+            tasks: components["schemas"]["SweGymTask"][];
+            total_rollouts: number;
+            warnings: string[];
+        };
+        SweGymTask: {
+            base_commit: string;
+            fail_to_pass: string[];
+            image: string;
+            image_digest: string;
+            instance_id: string;
+            pass_to_pass: string[];
+            problem_statement: string;
+            repo: string;
+            test_patch: string;
+            version?: string;
         };
         SystemInfo: {
             /** Format: uri */
@@ -1337,6 +1677,74 @@ export interface components {
             };
             /** Format: int64 */
             ts: number;
+        };
+        TraceEvent: {
+            agent_id?: string;
+            event_id: string;
+            input_tokens: number;
+            kind: string;
+            /** Format: date-time */
+            occurred_at: string;
+            output_tokens: number;
+            parent_agent_id?: string;
+            payload: {
+                [key: string]: unknown;
+            };
+            redaction_count: number;
+            sequence: number;
+            trace_id: string;
+        };
+        TraceEventPage: {
+            items: components["schemas"]["TraceEvent"][];
+            next_cursor: string;
+        };
+        TraceExport: {
+            artifact_path?: string | null;
+            canonical_count?: number;
+            /** Format: date-time */
+            created_at?: string;
+            excluded_count?: number;
+            id?: string;
+            manifest_digest?: string | null;
+            policy_count?: number;
+            run_id?: string;
+            seed?: number;
+            selection?: {
+                [key: string]: unknown;
+            };
+            state?: string;
+            verifier_count?: number;
+        };
+        TraceExportCreate: {
+            /** @default 32768 */
+            max_context_tokens: number;
+            model?: string;
+            /** @default 0 */
+            seed: number;
+            state?: string;
+            /** @default 2 */
+            success_cap_per_task: number;
+            task_ids?: string[];
+            /** @default cl100k_base */
+            tokenizer: string;
+            trace_ids?: string[];
+        };
+        TraceVerification: {
+            command?: string;
+            exit_status?: number | null;
+            fail_to_pass_report?: {
+                [key: string]: unknown;
+            };
+            failure_kind?: string | null;
+            id?: string;
+            pass_to_pass_report?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status?: "resolved" | "unresolved" | "infrastructure_error";
+            stderr?: string;
+            stdout?: string;
+            timeout_seconds?: number;
         };
         Transfer: {
             /** Format: uuid */
@@ -1435,7 +1843,10 @@ export interface components {
         };
     };
     parameters: {
+        ExperimentID: string;
+        ExportID: string;
         ID: string;
+        TraceID: string;
     };
     requestBodies: never;
     headers: never;
@@ -1561,6 +1972,387 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listCodingTraces: {
+        parameters: {
+            query?: {
+                state?: string;
+                task_id?: string;
+                success?: boolean;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trace page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingTracePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getCodingTrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["TraceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trace detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingTraceDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteCodingTrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["TraceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listCodingTraceEvents: {
+        parameters: {
+            query?: {
+                from?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["TraceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ordered events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceEventPage"];
+                };
+            };
+        };
+    };
+    pinCodingTrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["TraceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    pinned: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated trace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingTrace"];
+                };
+            };
+        };
+    };
+    listCodingTraceExports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exports */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceExport"][];
+                };
+            };
+        };
+    };
+    createCodingTraceExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceExportCreate"];
+            };
+        };
+        responses: {
+            /** @description Export created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    downloadCodingTraceExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ExportID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deterministic dataset archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getCodingTraceSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingTraceSettings"];
+                };
+            };
+        };
+    };
+    putCodingTraceSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodingTraceSettings"];
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingTraceSettings"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listSweGymExperiments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Experiment page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymExperimentPage"];
+                };
+            };
+        };
+    };
+    createSweGymExperiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SweGymCreate"];
+            };
+        };
+        responses: {
+            /** @description Experiment created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymExperiment"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    getSweGymExperiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ExperimentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Experiment and work items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymExperimentDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    cancelSweGymExperiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ExperimentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelling experiment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymExperiment"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    resumeSweGymExperiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ExperimentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumed experiment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymExperiment"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    planSweGymExperiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SweGymConfig"];
+            };
+        };
+        responses: {
+            /** @description Immutable preflight plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweGymPlan"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listDeployments: {

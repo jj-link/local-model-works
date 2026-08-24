@@ -14,6 +14,7 @@ tags:
   - name: enrollment
   - name: migration
   - name: benchmarks
+  - name: coding-traces
   - name: nodes
   - name: fabrics
   - name: artifacts
@@ -129,6 +130,312 @@ paths:
           $ref: '#/components/responses/Unauthorized'
       tags:
         - benchmarks
+  /coding-traces:
+    get:
+      operationId: listCodingTraces
+      parameters:
+        - in: query
+          name: state
+          schema:
+            type: string
+        - in: query
+          name: task_id
+          schema:
+            type: string
+        - in: query
+          name: success
+          schema:
+            type: boolean
+        - in: query
+          name: cursor
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodingTracePage'
+          description: Trace page
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      tags:
+        - coding-traces
+  /coding-traces/{id}:
+    delete:
+      operationId: deleteCodingTrace
+      parameters:
+        - $ref: '#/components/parameters/TraceID'
+      responses:
+        "204":
+          description: Deleted
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - coding-traces
+    get:
+      operationId: getCodingTrace
+      parameters:
+        - $ref: '#/components/parameters/TraceID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodingTraceDetail'
+          description: Trace detail
+        "404":
+          $ref: '#/components/responses/NotFound'
+      tags:
+        - coding-traces
+  /coding-traces/{id}/events:
+    get:
+      operationId: listCodingTraceEvents
+      parameters:
+        - $ref: '#/components/parameters/TraceID'
+        - in: query
+          name: from
+          schema:
+            minimum: 0
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            maximum: 1000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceEventPage'
+          description: Ordered events
+      tags:
+        - coding-traces
+  /coding-traces/{id}/pin:
+    post:
+      operationId: pinCodingTrace
+      parameters:
+        - $ref: '#/components/parameters/TraceID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                pinned:
+                  type: boolean
+              required:
+                - pinned
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodingTrace'
+          description: Updated trace
+      tags:
+        - coding-traces
+  /coding-traces/exports:
+    get:
+      operationId: listCodingTraceExports
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TraceExport'
+                type: array
+          description: Exports
+      tags:
+        - coding-traces
+    post:
+      operationId: createCodingTraceExport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TraceExportCreate'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+          description: Export created
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - coding-traces
+  /coding-traces/exports/{id}/download:
+    get:
+      operationId: downloadCodingTraceExport
+      parameters:
+        - $ref: '#/components/parameters/ExportID'
+      responses:
+        "200":
+          content:
+            application/gzip:
+              schema:
+                format: binary
+                type: string
+          description: Deterministic dataset archive
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - coding-traces
+  /coding-traces/settings:
+    get:
+      operationId: getCodingTraceSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodingTraceSettings'
+          description: Settings
+      tags:
+        - coding-traces
+    put:
+      operationId: putCodingTraceSettings
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CodingTraceSettings'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodingTraceSettings'
+          description: Updated settings
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - coding-traces
+  /coding-traces/swe-gym/experiments:
+    get:
+      operationId: listSweGymExperiments
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymExperimentPage'
+          description: Experiment page
+      tags:
+        - coding-traces
+    post:
+      operationId: createSweGymExperiment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SweGymCreate'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymExperiment'
+          description: Experiment created
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - coding-traces
+  /coding-traces/swe-gym/experiments/{id}:
+    get:
+      operationId: getSweGymExperiment
+      parameters:
+        - $ref: '#/components/parameters/ExperimentID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymExperimentDetail'
+          description: Experiment and work items
+        "404":
+          $ref: '#/components/responses/NotFound'
+      tags:
+        - coding-traces
+  /coding-traces/swe-gym/experiments/{id}/cancel:
+    post:
+      operationId: cancelSweGymExperiment
+      parameters:
+        - $ref: '#/components/parameters/ExperimentID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymExperiment'
+          description: Cancelling experiment
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - coding-traces
+  /coding-traces/swe-gym/experiments/{id}/resume:
+    post:
+      operationId: resumeSweGymExperiment
+      parameters:
+        - $ref: '#/components/parameters/ExperimentID'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymExperiment'
+          description: Resumed experiment
+        "409":
+          $ref: '#/components/responses/Conflict'
+      tags:
+        - coding-traces
+  /coding-traces/swe-gym/plan:
+    post:
+      operationId: planSweGymExperiment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SweGymConfig'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SweGymPlan'
+          description: Immutable preflight plan
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+      tags:
+        - coding-traces
   /deployments:
     get:
       operationId: listDeployments
@@ -1336,7 +1643,25 @@ paths:
         - artifacts
 components:
   parameters:
+    ExperimentID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    ExportID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
     ID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    TraceID:
       in: path
       name: id
       required: true
@@ -1552,6 +1877,141 @@ components:
           type: string
       required:
         - expires_at
+      type: object
+    CodingTrace:
+      properties:
+        base_revision:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        digest:
+          type:
+            - string
+            - "null"
+        experiment_id:
+          type:
+            - string
+            - "null"
+        failure_kind:
+          type:
+            - string
+            - "null"
+        final_diff:
+          type:
+            - string
+            - "null"
+        finished_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        id:
+          type: string
+        model:
+          type: string
+        model_source:
+          enum:
+            - lmw_deployment
+            - external_api
+          type: string
+        pinned:
+          type: boolean
+        problem:
+          type: string
+        redaction_count:
+          type: integer
+        redaction_version:
+          type: string
+        repository:
+          type: string
+        run_id:
+          type: string
+        sampling:
+          additionalProperties: true
+          type: object
+        scaffold:
+          type: string
+        schema_version:
+          type: string
+        state:
+          enum:
+            - recording
+            - completed
+            - interrupted
+          type: string
+        success_label:
+          type:
+            - boolean
+            - "null"
+        task_id:
+          type: string
+        token_count:
+          type: integer
+        turn_count:
+          type: integer
+      required:
+        - id
+        - run_id
+        - task_id
+        - problem
+        - repository
+        - base_revision
+        - model_source
+        - model
+        - state
+        - token_count
+        - turn_count
+        - pinned
+        - schema_version
+        - redaction_version
+        - redaction_count
+        - created_at
+      type: object
+    CodingTraceDetail:
+      allOf:
+        - $ref: '#/components/schemas/CodingTrace'
+        - properties:
+            verification:
+              $ref: '#/components/schemas/TraceVerification'
+          type: object
+    CodingTracePage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CodingTrace'
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - next_cursor
+      type: object
+    CodingTraceSettings:
+      properties:
+        capture_reasoning:
+          default: true
+          type: boolean
+        export_max_context_tokens:
+          default: 32768
+          maximum: 1048576
+          minimum: 1024
+          type: integer
+        export_success_cap_per_task:
+          default: 2
+          maximum: 100
+          minimum: 1
+          type: integer
+        retention_days:
+          default: 0
+          maximum: 3650
+          minimum: 0
+          type: integer
+      required:
+        - capture_reasoning
+        - retention_days
+        - export_max_context_tokens
+        - export_success_cap_per_task
       type: object
     Compatibility:
       properties:
@@ -2595,6 +3055,8 @@ components:
             - huggingface
             - github
             - registry
+            - model-provider
+            - runtime-provider
           type: string
         updated_at:
           format: date-time
@@ -2613,6 +3075,8 @@ components:
             - huggingface
             - github
             - registry
+            - model-provider
+            - runtime-provider
           type: string
         value:
           type: string
@@ -2634,6 +3098,272 @@ components:
         - username
         - csrf_token
         - expires_at
+      type: object
+    SweGymConfig:
+      properties:
+        capture_reasoning:
+          readOnly: true
+          type: boolean
+        context_limit:
+          minimum: 1024
+          type: integer
+        dataset:
+          enum:
+            - lite
+            - full
+          type: string
+        deployment_id:
+          type: string
+        eligible_nodes:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+        endpoint:
+          type: string
+        image_prefix:
+          type: string
+        limit:
+          maximum: 2438
+          minimum: 1
+          type: integer
+        max_turns:
+          maximum: 200
+          minimum: 1
+          type: integer
+        model:
+          type: string
+        model_source:
+          enum:
+            - lmw_deployment
+            - external_api
+          type: string
+        output_limit:
+          minimum: 1
+          type: integer
+        per_node_workers:
+          maximum: 32
+          minimum: 1
+          type: integer
+        preset:
+          default: custom
+          enum:
+            - custom
+            - paper-d0
+            - paper-d1
+            - paper-d2
+          type: string
+        repositories:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+        retry_limit:
+          maximum: 10
+          minimum: 0
+          type: integer
+        rollouts_per_task:
+          maximum: 100
+          minimum: 1
+          type: integer
+        runtime:
+          enum:
+            - lmw_local
+            - openhands_remote
+          type: string
+        runtime_endpoint:
+          type: string
+        runtime_secret_reference:
+          type: string
+        secret_reference:
+          type: string
+        seed:
+          type: integer
+        task_ids:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+        temperatures:
+          items:
+            maximum: 2
+            minimum: 0
+            type: number
+          minItems: 1
+          type: array
+        timeout_seconds:
+          maximum: 86400
+          minimum: 60
+          type: integer
+        workers:
+          maximum: 128
+          minimum: 1
+          type: integer
+      required:
+        - dataset
+        - model_source
+        - model
+        - temperatures
+        - rollouts_per_task
+        - max_turns
+        - workers
+        - runtime
+      type: object
+    SweGymCreate:
+      properties:
+        plan:
+          $ref: '#/components/schemas/SweGymPlan'
+      required:
+        - plan
+      type: object
+    SweGymExperiment:
+      properties:
+        completed_items:
+          type: integer
+        config:
+          $ref: '#/components/schemas/SweGymConfig'
+        config_digest:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        infrastructure_errors:
+          type: integer
+        manifest:
+          additionalProperties: true
+          type: object
+        plan:
+          $ref: '#/components/schemas/SweGymPlan'
+        plan_digest:
+          type: string
+        resolved_items:
+          type: integer
+        run_id:
+          type:
+            - string
+            - "null"
+        state:
+          type: string
+        total_items:
+          type: integer
+        unresolved_items:
+          type: integer
+      type: object
+    SweGymExperimentDetail:
+      allOf:
+        - $ref: '#/components/schemas/SweGymExperiment'
+        - properties:
+            work_items:
+              items:
+                additionalProperties: true
+                type: object
+              type: array
+          type: object
+    SweGymExperimentPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SweGymExperiment'
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - next_cursor
+      type: object
+    SweGymPlan:
+      properties:
+        config:
+          $ref: '#/components/schemas/SweGymConfig'
+        config_digest:
+          type: string
+        node_capacity:
+          additionalProperties: true
+          type: object
+        plan_digest:
+          type: string
+        sampling_matrix:
+          items:
+            properties:
+              max_turns:
+                type: integer
+              model:
+                type: string
+              name:
+                type: string
+              rollouts:
+                type: integer
+              temperature:
+                type: number
+            required:
+              - name
+              - model
+              - temperature
+              - max_turns
+              - rollouts
+            type: object
+          type: array
+        sources:
+          additionalProperties: true
+          type: object
+        tasks:
+          items:
+            $ref: '#/components/schemas/SweGymTask'
+          type: array
+        total_rollouts:
+          type: integer
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - config
+        - config_digest
+        - plan_digest
+        - tasks
+        - sampling_matrix
+        - total_rollouts
+        - sources
+        - warnings
+      type: object
+    SweGymTask:
+      properties:
+        base_commit:
+          type: string
+        fail_to_pass:
+          items:
+            type: string
+          type: array
+        image:
+          type: string
+        image_digest:
+          type: string
+        instance_id:
+          type: string
+        pass_to_pass:
+          items:
+            type: string
+          type: array
+        problem_statement:
+          type: string
+        repo:
+          type: string
+        test_patch:
+          type: string
+        version:
+          type: string
+      required:
+        - instance_id
+        - repo
+        - base_commit
+        - problem_statement
+        - fail_to_pass
+        - pass_to_pass
+        - test_patch
+        - image
+        - image_digest
       type: object
     SystemInfo:
       properties:
@@ -2682,6 +3412,152 @@ components:
         - node_id
         - ts
         - payload
+      type: object
+    TraceEvent:
+      properties:
+        agent_id:
+          type: string
+        event_id:
+          type: string
+        input_tokens:
+          type: integer
+        kind:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        output_tokens:
+          type: integer
+        parent_agent_id:
+          type: string
+        payload:
+          additionalProperties: true
+          type: object
+        redaction_count:
+          type: integer
+        sequence:
+          type: integer
+        trace_id:
+          type: string
+      required:
+        - trace_id
+        - sequence
+        - event_id
+        - occurred_at
+        - kind
+        - payload
+        - input_tokens
+        - output_tokens
+        - redaction_count
+      type: object
+    TraceEventPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TraceEvent'
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - next_cursor
+      type: object
+    TraceExport:
+      properties:
+        artifact_path:
+          type:
+            - string
+            - "null"
+        canonical_count:
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        excluded_count:
+          type: integer
+        id:
+          type: string
+        manifest_digest:
+          type:
+            - string
+            - "null"
+        policy_count:
+          type: integer
+        run_id:
+          type: string
+        seed:
+          type: integer
+        selection:
+          additionalProperties: true
+          type: object
+        state:
+          type: string
+        verifier_count:
+          type: integer
+      type: object
+    TraceExportCreate:
+      properties:
+        max_context_tokens:
+          default: 32768
+          minimum: 1024
+          type: integer
+        model:
+          type: string
+        seed:
+          default: 0
+          type: integer
+        state:
+          type: string
+        success_cap_per_task:
+          default: 2
+          minimum: 1
+          type: integer
+        task_ids:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+        tokenizer:
+          default: cl100k_base
+          type: string
+        trace_ids:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+      type: object
+    TraceVerification:
+      properties:
+        command:
+          type: string
+        exit_status:
+          type:
+            - integer
+            - "null"
+        fail_to_pass_report:
+          additionalProperties: true
+          type: object
+        failure_kind:
+          type:
+            - string
+            - "null"
+        id:
+          type: string
+        pass_to_pass_report:
+          additionalProperties: true
+          type: object
+        status:
+          enum:
+            - resolved
+            - unresolved
+            - infrastructure_error
+          type: string
+        stderr:
+          type: string
+        stdout:
+          type: string
+        timeout_seconds:
+          type: integer
       type: object
     Transfer:
       properties:

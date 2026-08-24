@@ -1,13 +1,13 @@
 # Local Model Works
 
-Local Model Works is a self-hosted control plane for a small heterogeneous AI fleet. It enrolls Linux nodes over mTLS, inventories accelerators and model caches, installs immutable OCI recipe packages, plans multi-node placements, supervises model-serving containers, runs compiler-backed benchmarks, and exposes a React operator console.
+Local Model Works is a self-hosted control plane for a small heterogeneous AI fleet. It enrolls Linux nodes over mTLS, inventories accelerators and model caches, installs immutable OCI recipe packages, plans multi-node placements, supervises model-serving containers, runs compiler-backed benchmarks and pinned SWE-Gym trajectory collection, and exposes a React operator console.
 
 ## Architecture
 
 - `lmw-server`: Go control plane, SQLite state, authenticated browser/API listener, mTLS agent listener, embedded web console.
-- `lmw-agent`: node daemon for hardware inventory, telemetry, Docker lifecycle, artifact transfer, and byte-cursor logs.
+- `lmw-agent`: node daemon for hardware inventory, telemetry, Docker lifecycle, artifact transfer, byte-cursor logs, and redacted trace spooling.
 - `lmw`: offline operator CLI for account bootstrap, recipe authoring, and DGX Dashboard migration.
-- `modules/`: compile-time first-party Fleet, Library, Serving, Benchmarks, Workshop, Runs, and Settings modules.
+- `modules/`: compile-time first-party Fleet, Library, Serving, Benchmarks, Workshop, Runs, Coding Traces, and Settings modules.
 
 Recipes and images are digest-pinned. Git sources require full commit hashes. Agents only manage containers bearing Local Model Works ownership labels. Browser mutations require a secure origin-bound session and CSRF token.
 
@@ -54,6 +54,12 @@ sudo lmw-agent install \
 ```
 
 The installer writes a root-owned environment file and enables `local-model-works-agent.service`. Enrollment tokens are single-use; node certificates are independently rotatable.
+
+## SWE-Gym trajectory workflow
+
+The **Coding Traces** console runs the pinned OpenHands/SWE-Gym data-collection workflow. Preflight resolves the selected dataset revision, exact task rows, immutable instance-image digests, sampling matrix, and live node capacity. Every rollout is recorded through the agent-owned trace socket, redacted before node or controller persistence, graded in a fresh SWE-Gym image, and exported as deterministic `canonical.jsonl`, policy-SFT, and balanced success-verifier datasets.
+
+LMW deployments are the default model source. Optional external model and OpenHands runtime credentials must be stored under the `model-provider` and `runtime-provider` secret purposes; values travel only over mTLS and the run-owned socket. The workflow produces training data but does not fine-tune models or train a verifier.
 
 ## Recipe workflow
 

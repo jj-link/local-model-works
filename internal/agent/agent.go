@@ -49,6 +49,7 @@ type Agent struct {
 	rt  runtime.Runtime
 	acc hardware.Driver // accelerator source (NVML); host telemetry is built in
 	*workloads
+	traceSpools   *traceSpoolManager
 	dockerVersion string
 	dockerOK      bool
 	startTime     time.Time
@@ -96,6 +97,7 @@ func New(cfg config.Agent, version, commit string, rt runtime.Runtime, drv hardw
 		extensionStopped: map[string]bool{},
 	}
 	a.workloads = newWorkloads(a)
+	a.traceSpools = newTraceSpoolManager(a)
 	return a
 }
 
@@ -112,6 +114,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("state dir %s: %w", d, err)
 		}
+	}
+	if err := a.traceSpools.load(); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("trace spool: %w", err)
 	}
 	if err := a.loadIdentity(); err != nil {
 		return err

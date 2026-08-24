@@ -124,10 +124,25 @@ func (r *Registry) Set(ctx context.Context, moduleID string, value map[string]an
 	if err != nil {
 		return "", err
 	}
-	if err := r.q.PutModuleSettings(ctx, db.PutModuleSettingsParams{
-		Module: moduleID, Settings: string(enc), Version: version,
-	}); err != nil {
-		return "", err
+	if cur.Version == "0" {
+		if err := r.q.CreateModuleSettings(ctx, db.CreateModuleSettingsParams{
+			Module: moduleID, Settings: string(enc), Version: version,
+		}); err != nil {
+			if _, getErr := r.q.GetModuleSettings(ctx, moduleID); getErr == nil {
+				return "", fmt.Errorf("%w: settings were created concurrently", ErrStale)
+			}
+			return "", err
+		}
+	} else {
+		rows, err := r.q.UpdateModuleSettings(ctx, db.UpdateModuleSettingsParams{
+			Settings: string(enc), Version: version, Module: moduleID, Version_2: ifMatch,
+		})
+		if err != nil {
+			return "", err
+		}
+		if rows != 1 {
+			return "", fmt.Errorf("%w: settings changed concurrently", ErrStale)
+		}
 	}
 	return version, nil
 }

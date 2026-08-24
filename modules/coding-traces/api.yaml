@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: Local Model Works coding traces fragment
+  version: 1.0.0
+tags:
+  - name: coding-traces
+paths:
+  /coding-traces:
+    get:
+      tags: [coding-traces]
+      operationId: listCodingTraces
+      parameters:
+        - {name: state, in: query, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+        - {name: success, in: query, schema: {type: boolean}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200}}
+      responses:
+        '200':
+          description: Trace page
+          content: {application/json: {schema: {$ref: '#/components/schemas/CodingTracePage'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /coding-traces/{id}:
+    get:
+      tags: [coding-traces]
+      operationId: getCodingTrace
+      parameters: [{$ref: '#/components/parameters/TraceID'}]
+      responses:
+        '200': {description: Trace detail, content: {application/json: {schema: {$ref: '#/components/schemas/CodingTraceDetail'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [coding-traces]
+      operationId: deleteCodingTrace
+      parameters: [{$ref: '#/components/parameters/TraceID'}]
+      responses:
+        '204': {description: Deleted}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /coding-traces/{id}/events:
+    get:
+      tags: [coding-traces]
+      operationId: listCodingTraceEvents
+      parameters:
+        - {$ref: '#/components/parameters/TraceID'}
+        - {name: from, in: query, schema: {type: integer, minimum: 0}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000}}
+      responses:
+        '200': {description: Ordered events, content: {application/json: {schema: {$ref: '#/components/schemas/TraceEventPage'}}}}
+  /coding-traces/{id}/pin:
+    post:
+      tags: [coding-traces]
+      operationId: pinCodingTrace
+      parameters: [{$ref: '#/components/parameters/TraceID'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [pinned], properties: {pinned: {type: boolean}}}}}}
+      responses:
+        '200': {description: Updated trace, content: {application/json: {schema: {$ref: '#/components/schemas/CodingTrace'}}}}
+  /coding-traces/exports:
+    get:
+      tags: [coding-traces]
+      operationId: listCodingTraceExports
+      responses:
+        '200': {description: Exports, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/TraceExport'}}}}}
+    post:
+      tags: [coding-traces]
+      operationId: createCodingTraceExport
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TraceExportCreate'}}}}
+      responses:
+        '201': {description: Export created, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /coding-traces/exports/{id}/download:
+    get:
+      tags: [coding-traces]
+      operationId: downloadCodingTraceExport
+      parameters: [{$ref: '#/components/parameters/ExportID'}]
+      responses:
+        '200': {description: Deterministic dataset archive, content: {application/gzip: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /coding-traces/swe-gym/plan:
+    post:
+      tags: [coding-traces]
+      operationId: planSweGymExperiment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymConfig'}}}}
+      responses:
+        '200': {description: Immutable preflight plan, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymPlan'}}}}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /coding-traces/swe-gym/experiments:
+    get:
+      tags: [coding-traces]
+      operationId: listSweGymExperiments
+      responses:
+        '200': {description: Experiment page, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymExperimentPage'}}}}
+    post:
+      tags: [coding-traces]
+      operationId: createSweGymExperiment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymCreate'}}}}
+      responses:
+        '201': {description: Experiment created, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymExperiment'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /coding-traces/swe-gym/experiments/{id}:
+    get:
+      tags: [coding-traces]
+      operationId: getSweGymExperiment
+      parameters: [{$ref: '#/components/parameters/ExperimentID'}]
+      responses:
+        '200': {description: Experiment and work items, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymExperimentDetail'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /coding-traces/swe-gym/experiments/{id}/cancel:
+    post:
+      tags: [coding-traces]
+      operationId: cancelSweGymExperiment
+      parameters: [{$ref: '#/components/parameters/ExperimentID'}]
+      responses:
+        '200': {description: Cancelling experiment, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymExperiment'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /coding-traces/swe-gym/experiments/{id}/resume:
+    post:
+      tags: [coding-traces]
+      operationId: resumeSweGymExperiment
+      parameters: [{$ref: '#/components/parameters/ExperimentID'}]
+      responses:
+        '200': {description: Resumed experiment, content: {application/json: {schema: {$ref: '#/components/schemas/SweGymExperiment'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /coding-traces/settings:
+    get:
+      tags: [coding-traces]
+      operationId: getCodingTraceSettings
+      responses:
+        '200': {description: Settings, content: {application/json: {schema: {$ref: '#/components/schemas/CodingTraceSettings'}}}}
+    put:
+      tags: [coding-traces]
+      operationId: putCodingTraceSettings
+      parameters: [{name: If-Match, in: header, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CodingTraceSettings'}}}}
+      responses:
+        '200': {description: Updated settings, content: {application/json: {schema: {$ref: '#/components/schemas/CodingTraceSettings'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+components:
+  parameters:
+    TraceID: {name: id, in: path, required: true, schema: {type: string}}
+    ExportID: {name: id, in: path, required: true, schema: {type: string}}
+    ExperimentID: {name: id, in: path, required: true, schema: {type: string}}
+  schemas:
+    CodingTrace:
+      type: object
+      required: [id, run_id, task_id, problem, repository, base_revision, model_source, model, state, token_count, turn_count, pinned, schema_version, redaction_version, redaction_count, created_at]
+      properties:
+        id: {type: string}
+        run_id: {type: string}
+        experiment_id: {type: [string, 'null']}
+        task_id: {type: string}
+        problem: {type: string}
+        repository: {type: string}
+        base_revision: {type: string}
+        model_source: {type: string, enum: [lmw_deployment, external_api]}
+        model: {type: string}
+        scaffold: {type: string}
+        sampling: {type: object, additionalProperties: true}
+        state: {type: string, enum: [recording, completed, interrupted]}
+        final_diff: {type: [string, 'null']}
+        success_label: {type: [boolean, 'null']}
+        failure_kind: {type: [string, 'null']}
+        token_count: {type: integer}
+        turn_count: {type: integer}
+        pinned: {type: boolean}
+        schema_version: {type: string}
+        redaction_version: {type: string}
+        redaction_count: {type: integer}
+        digest: {type: [string, 'null']}
+        created_at: {type: string, format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+    CodingTracePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/CodingTrace'}}
+        next_cursor: {type: string}
+    CodingTraceDetail:
+      allOf:
+        - {$ref: '#/components/schemas/CodingTrace'}
+        - type: object
+          properties:
+            verification: {$ref: '#/components/schemas/TraceVerification'}
+    TraceEvent:
+      type: object
+      required: [trace_id, sequence, event_id, occurred_at, kind, payload, input_tokens, output_tokens, redaction_count]
+      properties:
+        trace_id: {type: string}
+        sequence: {type: integer}
+        event_id: {type: string}
+        agent_id: {type: string}
+        parent_agent_id: {type: string}
+        occurred_at: {type: string, format: date-time}
+        kind: {type: string}
+        payload: {type: object, additionalProperties: true}
+        input_tokens: {type: integer}
+        output_tokens: {type: integer}
+        redaction_count: {type: integer}
+    TraceEventPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TraceEvent'}}
+        next_cursor: {type: string}
+    TraceVerification:
+      type: object
+      properties:
+        id: {type: string}
+        command: {type: string}
+        timeout_seconds: {type: integer}
+        exit_status: {type: [integer, 'null']}
+        stdout: {type: string}
+        stderr: {type: string}
+        fail_to_pass_report: {type: object, additionalProperties: true}
+        pass_to_pass_report: {type: object, additionalProperties: true}
+        status: {type: string, enum: [resolved, unresolved, infrastructure_error]}
+        failure_kind: {type: [string, 'null']}
+    TraceExportCreate:
+      type: object
+      properties:
+        trace_ids: {type: array, items: {type: string}, uniqueItems: true}
+        state: {type: string}
+        model: {type: string}
+        task_ids: {type: array, items: {type: string}, uniqueItems: true}
+        tokenizer: {type: string, default: cl100k_base}
+        max_context_tokens: {type: integer, minimum: 1024, default: 32768}
+        success_cap_per_task: {type: integer, minimum: 1, default: 2}
+        seed: {type: integer, default: 0}
+    TraceExport:
+      type: object
+      properties:
+        id: {type: string}
+        run_id: {type: string}
+        state: {type: string}
+        selection: {type: object, additionalProperties: true}
+        seed: {type: integer}
+        artifact_path: {type: [string, 'null']}
+        manifest_digest: {type: [string, 'null']}
+        canonical_count: {type: integer}
+        policy_count: {type: integer}
+        verifier_count: {type: integer}
+        excluded_count: {type: integer}
+        created_at: {type: string, format: date-time}
+    SweGymConfig:
+      type: object
+      required: [dataset, model_source, model, temperatures, rollouts_per_task, max_turns, workers, runtime]
+      properties:
+        preset: {type: string, enum: [custom, paper-d0, paper-d1, paper-d2], default: custom}
+        dataset: {type: string, enum: [lite, full]}
+        task_ids: {type: array, items: {type: string}, uniqueItems: true}
+        repositories: {type: array, items: {type: string}, uniqueItems: true}
+        limit: {type: integer, minimum: 1, maximum: 2438}
+        model_source: {type: string, enum: [lmw_deployment, external_api]}
+        deployment_id: {type: string}
+        model: {type: string}
+        endpoint: {type: string}
+        secret_reference: {type: string}
+        runtime_secret_reference: {type: string}
+        runtime_endpoint: {type: string}
+        temperatures: {type: array, minItems: 1, items: {type: number, minimum: 0, maximum: 2}}
+        rollouts_per_task: {type: integer, minimum: 1, maximum: 100}
+        max_turns: {type: integer, minimum: 1, maximum: 200}
+        context_limit: {type: integer, minimum: 1024}
+        capture_reasoning: {type: boolean, readOnly: true}
+        output_limit: {type: integer, minimum: 1}
+        seed: {type: integer}
+        workers: {type: integer, minimum: 1, maximum: 128}
+        per_node_workers: {type: integer, minimum: 1, maximum: 32}
+        eligible_nodes: {type: array, items: {type: string}, uniqueItems: true}
+        runtime: {type: string, enum: [lmw_local, openhands_remote]}
+        retry_limit: {type: integer, minimum: 0, maximum: 10}
+        timeout_seconds: {type: integer, minimum: 60, maximum: 86400}
+        image_prefix: {type: string}
+    SweGymPlan:
+      type: object
+      required: [config, config_digest, plan_digest, tasks, sampling_matrix, total_rollouts, sources, warnings]
+      properties:
+        config: {$ref: '#/components/schemas/SweGymConfig'}
+        config_digest: {type: string}
+        plan_digest: {type: string}
+        tasks: {type: array, items: {$ref: '#/components/schemas/SweGymTask'}}
+        sampling_matrix:
+          type: array
+          items:
+            type: object
+            required: [name, model, temperature, max_turns, rollouts]
+            properties:
+              name: {type: string}
+              model: {type: string}
+              temperature: {type: number}
+              max_turns: {type: integer}
+              rollouts: {type: integer}
+        total_rollouts: {type: integer}
+        sources: {type: object, additionalProperties: true}
+        node_capacity: {type: object, additionalProperties: true}
+        warnings: {type: array, items: {type: string}}
+    SweGymTask:
+      type: object
+      required: [instance_id, repo, base_commit, problem_statement, fail_to_pass, pass_to_pass, test_patch, image, image_digest]
+      properties:
+        instance_id: {type: string}
+        repo: {type: string}
+        base_commit: {type: string}
+        version: {type: string}
+        problem_statement: {type: string}
+        fail_to_pass: {type: array, items: {type: string}}
+        pass_to_pass: {type: array, items: {type: string}}
+        image: {type: string}
+        test_patch: {type: string}
+        image_digest: {type: string}
+    SweGymCreate:
+      type: object
+      required: [plan]
+      properties:
+        plan: {$ref: '#/components/schemas/SweGymPlan'}
+    SweGymExperiment:
+      type: object
+      properties:
+        id: {type: string}
+        run_id: {type: [string, 'null']}
+        state: {type: string}
+        config: {$ref: '#/components/schemas/SweGymConfig'}
+        config_digest: {type: string}
+        plan: {$ref: '#/components/schemas/SweGymPlan'}
+        plan_digest: {type: string}
+        manifest: {type: object, additionalProperties: true}
+        total_items: {type: integer}
+        completed_items: {type: integer}
+        resolved_items: {type: integer}
+        unresolved_items: {type: integer}
+        infrastructure_errors: {type: integer}
+        created_at: {type: string, format: date-time}
+    SweGymExperimentPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SweGymExperiment'}}
+        next_cursor: {type: string}
+    SweGymExperimentDetail:
+      allOf:
+        - {$ref: '#/components/schemas/SweGymExperiment'}
+        - type: object
+          properties:
+            work_items: {type: array, items: {type: object, additionalProperties: true}}
+    CodingTraceSettings:
+      type: object
+      required: [capture_reasoning, retention_days, export_max_context_tokens, export_success_cap_per_task]
+      properties:
+        capture_reasoning: {type: boolean, default: true}
+        retention_days: {type: integer, minimum: 0, maximum: 3650, default: 0}
+        export_max_context_tokens: {type: integer, minimum: 1024, maximum: 1048576, default: 32768}
+        export_success_cap_per_task: {type: integer, minimum: 1, maximum: 100, default: 2}

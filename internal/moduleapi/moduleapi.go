@@ -27,6 +27,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/telemetry"
+	"github.com/jj-link/local-model-works/internal/traces"
 )
 
 // Nav is the sidebar entry for a module.
@@ -70,6 +71,7 @@ type Env struct {
 	Settings      *settings.Registry
 	Secrets       *auth.SecretBox
 	Telemetry     *telemetry.Service
+	Traces        *traces.Service
 	// Nodes is the live agent session registry (send workload/transfer/log
 	// commands, query online state).
 	Nodes *nodes.Registry

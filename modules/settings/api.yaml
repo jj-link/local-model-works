@@ -146,7 +146,7 @@ components:
           type: string
         purpose:
           type: string
-          enum: [huggingface, github, registry]
+          enum: [huggingface, github, registry, model-provider, runtime-provider]
         created_at:
           type: string
           format: date-time
@@ -162,6 +162,6 @@ components:
           type: string
         purpose:
           type: string
-          enum: [huggingface, github, registry]
+          enum: [huggingface, github, registry, model-provider, runtime-provider]
         value:
           type: string

@@ -172,7 +172,7 @@ function ModuleSettingsPanel() {
 
 /* --------------------------------- secrets ------------------------------ */
 
-const PURPOSES: SecretWrite["purpose"][] = ["huggingface", "github", "registry"];
+const PURPOSES: SecretWrite["purpose"][] = ["huggingface", "github", "registry", "model-provider", "runtime-provider"];
 
 function SecretsPanel() {
   const { data, isPending, isError, error, refetch } = useSecrets();

@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 import {
   Boxes,
   BookOpen,
+  Braces,
   Command as CommandIcon,
   Gauge,
   History,
@@ -53,6 +54,8 @@ const MODULE_SECTIONS: Record<string, NavSection> = {
   library: { id: "library", label: "Library", route: "/library", icon: BookOpen },
   serving: { id: "serving", label: "Serving", route: "/serving", icon: Radio },
   benchmarks: { id: "benchmarks", label: "Benchmarks", route: "/benchmarks", icon: Gauge },
+  runs: { id: "runs", label: "Runs", route: "/runs", icon: History },
+  "coding-traces": { id: "coding-traces", label: "Coding Traces", route: "/coding-traces", icon: Braces },
   settings: { id: "settings", label: "Settings", route: "/settings", icon: Settings2 },
 };
 

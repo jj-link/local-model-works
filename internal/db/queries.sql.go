@@ -242,6 +242,22 @@ func (q *Queries) CreateFabric(ctx context.Context, arg CreateFabricParams) erro
 	return err
 }
 
+const createModuleSettings = `-- name: CreateModuleSettings :exec
+INSERT INTO module_settings (module, settings, version)
+VALUES (?, ?, ?)
+`
+
+type CreateModuleSettingsParams struct {
+	Module   string `json:"module"`
+	Settings string `json:"settings"`
+	Version  string `json:"version"`
+}
+
+func (q *Queries) CreateModuleSettings(ctx context.Context, arg CreateModuleSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, createModuleSettings, arg.Module, arg.Settings, arg.Version)
+	return err
+}
+
 const createNode = `-- name: CreateNode :exec
 INSERT INTO nodes (id, display_name, labels, status, created_at)
 VALUES (?, ?, ?, 'pending', ?)
@@ -1970,27 +1986,6 @@ func (q *Queries) MaxEventID(ctx context.Context) (interface{}, error) {
 	return coalesce, err
 }
 
-const putModuleSettings = `-- name: PutModuleSettings :exec
-INSERT INTO module_settings (module, settings, version)
-VALUES (?, ?, ?)
-ON CONFLICT (module)
-DO UPDATE SET settings = excluded.settings,
-              version = excluded.version,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE module_settings.version = ?
-`
-
-type PutModuleSettingsParams struct {
-	Module   string `json:"module"`
-	Settings string `json:"settings"`
-	Version  string `json:"version"`
-}
-
-func (q *Queries) PutModuleSettings(ctx context.Context, arg PutModuleSettingsParams) error {
-	_, err := q.db.ExecContext(ctx, putModuleSettings, arg.Module, arg.Settings, arg.Version)
-	return err
-}
-
 const recipeReferencedByDeployments = `-- name: RecipeReferencedByDeployments :one
 SELECT COUNT(*) FROM deployments WHERE recipe_digest = ?
 `
@@ -2273,6 +2268,33 @@ type UpdateFabricStateParams struct {
 func (q *Queries) UpdateFabricState(ctx context.Context, arg UpdateFabricStateParams) error {
 	_, err := q.db.ExecContext(ctx, updateFabricState, arg.State, arg.Diagnostics, arg.ID)
 	return err
+}
+
+const updateModuleSettings = `-- name: UpdateModuleSettings :execrows
+UPDATE module_settings
+SET settings = ?, version = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE module = ? AND version = ?
+`
+
+type UpdateModuleSettingsParams struct {
+	Settings  string `json:"settings"`
+	Version   string `json:"version"`
+	Module    string `json:"module"`
+	Version_2 string `json:"version_2"`
+}
+
+func (q *Queries) UpdateModuleSettings(ctx context.Context, arg UpdateModuleSettingsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateModuleSettings,
+		arg.Settings,
+		arg.Version,
+		arg.Module,
+		arg.Version_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateNodeMeta = `-- name: UpdateNodeMeta :exec

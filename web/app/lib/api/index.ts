@@ -46,6 +46,19 @@ export type EnrollmentToken = Schemas["EnrollmentToken"];
 export type MigrationScanRequest = Schemas["MigrationScanRequest"];
 export type MigrationImportRequest = Schemas["MigrationImportRequest"];
 export type RunAccepted = Schemas["RunAccepted"];
+export type CodingTrace = Schemas["CodingTrace"];
+export type CodingTracePage = Schemas["CodingTracePage"];
+export type CodingTraceDetail = Schemas["CodingTraceDetail"];
+export type TraceEventPage = Schemas["TraceEventPage"];
+export type TraceExport = Schemas["TraceExport"];
+export type TraceExportCreate = Schemas["TraceExportCreate"];
+export type SweGymConfig = Schemas["SweGymConfig"];
+export type SweGymPlan = Schemas["SweGymPlan"];
+export type SweGymCreate = Schemas["SweGymCreate"];
+export type SweGymExperiment = Schemas["SweGymExperiment"];
+export type SweGymExperimentPage = Schemas["SweGymExperimentPage"];
+export type SweGymExperimentDetail = Schemas["SweGymExperimentDetail"];
+export type CodingTraceSettings = Schemas["CodingTraceSettings"];
 type Sig = { signal?: AbortSignal };
 
 /* ------------------------------------------------------------------ */
@@ -75,7 +88,8 @@ export const deleteEnrollmentToken = (id: string) =>
 /* nodes                                                               */
 /* ------------------------------------------------------------------ */
 
-export const listNodes = ({ signal }: Sig = {}) => http.get<Node[]>("/nodes", { signal });
+export const listNodes = ({ signal }: Sig = {}) =>
+  http.get<Node[]>("/nodes", { signal });
 
 export const getNode = (id: string, { signal }: Sig = {}) =>
   http.get<Node>(`/nodes/${id}`, { signal });
@@ -83,7 +97,8 @@ export const getNode = (id: string, { signal }: Sig = {}) =>
 export const updateNode = (id: string, body: UpdateNodeRequest) =>
   http.put<Node>(`/nodes/${id}`, body);
 
-export const approveNode = (id: string) => http.post<Node>(`/nodes/${id}/approve`);
+export const approveNode = (id: string) =>
+  http.post<Node>(`/nodes/${id}/approve`);
 
 export const rotateNodeCertificate = (id: string) =>
   http.post<CertificateInfo>(`/nodes/${id}/rotate-certificate`);
@@ -92,7 +107,8 @@ export const rotateNodeCertificate = (id: string) =>
 /* fabrics                                                             */
 /* ------------------------------------------------------------------ */
 
-export const listFabrics = ({ signal }: Sig = {}) => http.get<Fabric[]>("/fabrics", { signal });
+export const listFabrics = ({ signal }: Sig = {}) =>
+  http.get<Fabric[]>("/fabrics", { signal });
 
 export const createFabric = (body: CreateFabricRequest) =>
   http.post<Fabric>("/fabrics", body);
@@ -100,8 +116,14 @@ export const createFabric = (body: CreateFabricRequest) =>
 export const getFabric = (id: string, { signal }: Sig = {}) =>
   http.get<Fabric>(`/fabrics/${id}`, { signal });
 
-export const updateFabric = (id: string, body: CreateFabricRequest, ifMatch: string) =>
-  http.put<Fabric>(`/fabrics/${id}`, body, { headers: { "if-match": ifMatch } });
+export const updateFabric = (
+  id: string,
+  body: CreateFabricRequest,
+  ifMatch: string,
+) =>
+  http.put<Fabric>(`/fabrics/${id}`, body, {
+    headers: { "if-match": ifMatch },
+  });
 
 export const deleteFabric = (id: string, ifMatch: string) =>
   http.del<void>(`/fabrics/${id}`, { headers: { "if-match": ifMatch } });
@@ -110,7 +132,8 @@ export const deleteFabric = (id: string, ifMatch: string) =>
 /* recipes                                                             */
 /* ------------------------------------------------------------------ */
 
-export const listRecipes = ({ signal }: Sig = {}) => http.get<Recipe[]>("/recipes", { signal });
+export const listRecipes = ({ signal }: Sig = {}) =>
+  http.get<Recipe[]>("/recipes", { signal });
 
 export const getRecipe = (digest: string, { signal }: Sig = {}) =>
   http.get<RecipeDetail>(`/recipes/${digest}`, { signal });
@@ -122,7 +145,8 @@ export const deleteRecipe = (digest: string) =>
 export const setRecipeTrust = (digest: string, body: RecipeTrustRequest) =>
   http.post<Recipe>(`/recipes/${digest}/trust`, body);
 
-export const importRecipe = (body: RecipeImport) => http.post<Recipe>("/recipes/import", body);
+export const importRecipe = (body: RecipeImport) =>
+  http.post<Recipe>("/recipes/import", body);
 
 export const createRecipeDraft = (body: RecipeDraftSource) =>
   http.post<{ run_id: string }>("/recipe-drafts", body);
@@ -134,12 +158,21 @@ export const updateRecipeDraft = (
   id: string,
   version: number,
   body: { manifest: Record<string, unknown>; selected_assets: string[] },
-) => http.put<RecipeDraft>(`/recipe-drafts/${id}`, body, { headers: { "if-match": String(version) } });
+) =>
+  http.put<RecipeDraft>(`/recipe-drafts/${id}`, body, {
+    headers: { "if-match": String(version) },
+  });
 export const packageRecipeDraft = (id: string) =>
   http.post<RecipeDraft>(`/recipe-drafts/${id}/package`);
-export const installRecipeDraft = (id: string, permissionDiffAccepted: boolean) =>
-  http.post<Recipe>(`/recipe-drafts/${id}/install`, { permission_diff_accepted: permissionDiffAccepted });
-export const deleteRecipeDraft = (id: string) => http.del<void>(`/recipe-drafts/${id}`);
+export const installRecipeDraft = (
+  id: string,
+  permissionDiffAccepted: boolean,
+) =>
+  http.post<Recipe>(`/recipe-drafts/${id}/install`, {
+    permission_diff_accepted: permissionDiffAccepted,
+  });
+export const deleteRecipeDraft = (id: string) =>
+  http.del<void>(`/recipe-drafts/${id}`);
 
 /* ------------------------------------------------------------------ */
 /* artifacts + transfers                                               */
@@ -165,7 +198,8 @@ export const createTransfer = (body: TransferRequest) =>
 export const getTransfer = (id: string, { signal }: Sig = {}) =>
   http.get<Transfer>(`/transfers/${id}`, { signal });
 
-export const cancelTransfer = (id: string) => http.del<Transfer>(`/transfers/${id}`);
+export const cancelTransfer = (id: string) =>
+  http.del<Transfer>(`/transfers/${id}`);
 
 /* ------------------------------------------------------------------ */
 /* deployments                                                         */
@@ -207,8 +241,16 @@ export interface RunsQuery {
   signal?: AbortSignal;
 }
 
-export const listRuns = ({ module, state, limit, cursor, signal }: RunsQuery = {}) =>
-  http.get<RunsPage>(`/runs${qs({ module, state, limit, cursor })}`, { signal });
+export const listRuns = ({
+  module,
+  state,
+  limit,
+  cursor,
+  signal,
+}: RunsQuery = {}) =>
+  http.get<RunsPage>(`/runs${qs({ module, state, limit, cursor })}`, {
+    signal,
+  });
 
 export const getRun = (id: string, { signal }: Sig = {}) =>
   http.get<Run>(`/runs/${id}`, { signal });
@@ -229,20 +271,94 @@ export const listBenchmarkResults = ({ signal }: Sig = {}) =>
   http.get<BenchmarkResult[]>("/benchmarks/results", { signal });
 
 /* ------------------------------------------------------------------ */
+/* coding traces + SWE-Gym replication                                 */
+/* ------------------------------------------------------------------ */
+
+export interface CodingTraceQuery {
+  state?: string;
+  taskId?: string;
+  success?: boolean;
+  limit?: number;
+  cursor?: string;
+  signal?: AbortSignal;
+}
+
+export const listCodingTraces = ({
+  state,
+  taskId,
+  success,
+  limit,
+  cursor,
+  signal,
+}: CodingTraceQuery = {}) =>
+  http.get<CodingTracePage>(
+    `/coding-traces${qs({ state, task_id: taskId, success: success == null ? undefined : String(success), limit, cursor })}`,
+    { signal },
+  );
+export const getCodingTrace = (id: string, { signal }: Sig = {}) =>
+  http.get<CodingTraceDetail>(`/coding-traces/${id}`, { signal });
+export const listCodingTraceEvents = (
+  id: string,
+  from = 0,
+  limit = 1000,
+  { signal }: Sig = {},
+) =>
+  http.get<TraceEventPage>(
+    `/coding-traces/${id}/events${qs({ from, limit })}`,
+    { signal },
+  );
+export const pinCodingTrace = (id: string, pinned: boolean) =>
+  http.post<CodingTrace>(`/coding-traces/${id}/pin`, { pinned });
+export const deleteCodingTrace = (id: string) =>
+  http.del<void>(`/coding-traces/${id}`);
+export const listCodingTraceExports = ({ signal }: Sig = {}) =>
+  http.get<TraceExport[]>("/coding-traces/exports", { signal });
+export const createCodingTraceExport = (body: TraceExportCreate) =>
+  http.post<Run>("/coding-traces/exports", body);
+export const codingTraceExportURL = (id: string) =>
+  `${API_BASE}/coding-traces/exports/${id}/download`;
+export const planSweGymExperiment = (body: SweGymConfig) =>
+  http.post<SweGymPlan>("/coding-traces/swe-gym/plan", body);
+export const createSweGymExperiment = (body: SweGymCreate) =>
+  http.post<SweGymExperiment>("/coding-traces/swe-gym/experiments", body);
+export const listSweGymExperiments = ({ signal }: Sig = {}) =>
+  http.get<SweGymExperimentPage>("/coding-traces/swe-gym/experiments", {
+    signal,
+  });
+export const getSweGymExperiment = (id: string, { signal }: Sig = {}) =>
+  http.get<SweGymExperimentDetail>(`/coding-traces/swe-gym/experiments/${id}`, {
+    signal,
+  });
+export const cancelSweGymExperiment = (id: string) =>
+  http.post<SweGymExperiment>(
+    `/coding-traces/swe-gym/experiments/${id}/cancel`,
+  );
+export const resumeSweGymExperiment = (id: string) =>
+  http.post<SweGymExperiment>(
+    `/coding-traces/swe-gym/experiments/${id}/resume`,
+  );
+
+/* ------------------------------------------------------------------ */
 /* module settings + secrets                                           */
 /* ------------------------------------------------------------------ */
 
 export const getModuleSettings = (moduleId: string, { signal }: Sig = {}) =>
   http.get<ModuleSettings>(`/modules/${moduleId}/settings`, { signal });
 
-export const putModuleSettings = (moduleId: string, body: ModuleSettings, ifMatch: string) =>
+export const putModuleSettings = (
+  moduleId: string,
+  body: ModuleSettings,
+  ifMatch: string,
+) =>
   http.put<ModuleSettings>(`/modules/${moduleId}/settings`, body, {
     headers: { "if-match": ifMatch },
   });
 
-export const listSecrets = ({ signal }: Sig = {}) => http.get<Secret[]>("/secrets", { signal });
+export const listSecrets = ({ signal }: Sig = {}) =>
+  http.get<Secret[]>("/secrets", { signal });
 
-export const putSecret = (body: SecretWrite) => http.post<Secret>("/secrets", body);
+export const putSecret = (body: SecretWrite) =>
+  http.post<Secret>("/secrets", body);
 
 export const deleteSecret = (id: string) => http.del<void>(`/secrets/${id}`);
 
@@ -260,7 +376,8 @@ export const migrationImport = (body: MigrationImportRequest) =>
 /* SSE stream URLs (consumed by the streamEvents helper)               */
 /* ------------------------------------------------------------------ */
 
-export const eventsUrl = (types?: string) => `${API_BASE}/events${qs({ types })}`;
+export const eventsUrl = (types?: string) =>
+  `${API_BASE}/events${qs({ types })}`;
 
 export const runLogsUrl = (id: string) => `${API_BASE}/runs/${id}/logs`;
 

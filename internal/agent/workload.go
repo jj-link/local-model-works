@@ -147,6 +147,22 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
+		if wc.GetTraceEnabled() {
+			if runID == "" {
+				a.result(cmdID, false, 0, "trace.run_required", "", "")
+				return
+			}
+			if err := a.traceSpools.start(wc, spec); err != nil {
+				a.result(cmdID, false, 0, err.Error(), "", "")
+				return
+			}
+			for name := range wc.Secrets {
+				delete(wc.Secrets, name)
+			}
+		} else if len(wc.GetSecrets()) > 0 {
+			a.result(cmdID, false, 0, "trace.secrets_without_trace", "", "")
+			return
+		}
 
 		if info, err := a.rt.Inspect(ctx, name); err == nil {
 			if identityErr := validateContainerIdentity(info.Labels, deploymentID, runID, wc.GetRank()); identityErr != nil {
@@ -200,6 +216,12 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			return
 		}
 		w.stopTailer(wc.GetRunId(), wc.GetDeploymentId(), wc.GetRank())
+		if a.traceSpools.enabled(runID, wc.GetRank()) {
+			if err := a.traceSpools.finalize(runID, wc.GetRank()); err != nil {
+				a.result(cmdID, false, 0, err.Error(), id, "")
+				return
+			}
+		}
 		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_INSPECT:
 		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
