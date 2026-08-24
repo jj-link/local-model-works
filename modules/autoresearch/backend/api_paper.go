@@ -255,7 +255,7 @@ func (m *Module) GetAutoResearchPaperPdf(w http.ResponseWriter, r *http.Request,
 
 func (m *Module) submitPaperJob(r *http.Request, project db.AutoresearchProject, kind string, input map[string]any) (string, error) {
 	input["project_id"] = project.ID
-	input["provider_config"] = configSnapshot(project.ConfigJson)
+	input["provider_config"] = m.projectConfigWithDefaults(r.Context(), project.ConfigJson)
 	runID, err := m.env.Jobs.Submit(r.Context(), kind, input)
 	if err != nil {
 		return "", err
