@@ -61,6 +61,53 @@ func parseIntakeCandidate(contents []byte) (intakeCandidate, error) {
 	}, nil
 }
 
+func (m *Module) writeIdeaIntakeInputs(ctx context.Context, projectID, projectRoot, prompt string) (map[string]any, error) {
+	inputRoot := filepath.Join(projectRoot, ".lmw", "inputs")
+	if err := os.MkdirAll(inputRoot, 0o700); err != nil {
+		return nil, err
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return nil, errors.New("autoresearch.idea_prompt_required")
+	}
+	promptPath := filepath.Join(inputRoot, "topic-prompt.txt")
+	if err := os.WriteFile(promptPath, []byte(prompt+"\n"), 0o600); err != nil {
+		return nil, err
+	}
+	sources, err := m.env.Q.ListAutoResearchSources(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	manifest := make([]map[string]any, 0, len(sources))
+	for _, source := range sources {
+		if source.Status != "ready" {
+			return nil, errors.New("autoresearch.source_decision_required")
+		}
+		entry := map[string]any{
+			"kind": source.Kind, "locator": source.Locator, "status": source.Status,
+		}
+		if source.Title.Valid {
+			entry["title"] = source.Title.String
+		}
+		metadata := map[string]any{}
+		_ = json.Unmarshal([]byte(source.MetadataJson), &metadata)
+		entry["metadata"] = metadata
+		if source.LocalPath.Valid {
+			entry["local_path"] = "/project/.lmw/sources/" + filepath.Base(source.LocalPath.String)
+		}
+		manifest = append(manifest, entry)
+	}
+	manifestPath := filepath.Join(inputRoot, "source-manifest.json")
+	encoded, _ := json.MarshalIndent(manifest, "", "  ")
+	if err := os.WriteFile(manifestPath, append(encoded, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"topic_prompt_file": "/project/.lmw/inputs/topic-prompt.txt",
+		"source_manifest":   "/project/.lmw/inputs/source-manifest.json",
+	}, nil
+}
+
 func candidateCount(input map[string]any) (int, bool) {
 	value, exists := input["candidate_count"]
 	if !exists {
