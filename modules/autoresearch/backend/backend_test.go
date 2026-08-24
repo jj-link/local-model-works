@@ -161,6 +161,26 @@ func TestMergeProjectDefaultsPreservesOverrides(t *testing.T) {
 	}
 }
 
+func TestWriteIdeaIntakeInputsMaterializesPromptAndManifest(t *testing.T) {
+	module, projectID, _ := newTestModule(t)
+	inputs, err := module.writeIdeaIntakeInputs(context.Background(), projectID, module.projectRoot(projectID), " bounded prompt ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs["topic_prompt_file"] != "/project/.lmw/inputs/topic-prompt.txt" ||
+		inputs["source_manifest"] != "/project/.lmw/inputs/source-manifest.json" {
+		t.Fatalf("inputs = %v", inputs)
+	}
+	prompt, err := os.ReadFile(filepath.Join(module.projectRoot(projectID), ".lmw", "inputs", "topic-prompt.txt"))
+	if err != nil || string(prompt) != "bounded prompt\n" {
+		t.Fatalf("prompt = %q, %v", prompt, err)
+	}
+	manifest, err := os.ReadFile(filepath.Join(module.projectRoot(projectID), ".lmw", "inputs", "source-manifest.json"))
+	if err != nil || strings.TrimSpace(string(manifest)) != "[]" {
+		t.Fatalf("manifest = %q, %v", manifest, err)
+	}
+}
+
 func TestPaperStatePhaseAndChangedDigests(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "PAPER_STATE.md")

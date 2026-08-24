@@ -298,9 +298,25 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	if err := m.resolveProjectProviders(ctx, projectConfig); err != nil {
 		return nil, err
 	}
+	runInput := make(map[string]any, len(job.Input)+2)
+	for key, value := range job.Input {
+		runInput[key] = value
+	}
+	if factory == "idea" {
+		if _, generated := candidateCount(job.Input); generated {
+			prompt, _ := job.Input["prompt"].(string)
+			intakeInputs, err := m.writeIdeaIntakeInputs(ctx, projectID, projectRoot, prompt)
+			if err != nil {
+				return nil, err
+			}
+			for key, value := range intakeInputs {
+				runInput[key] = value
+			}
+		}
+	}
 	config := map[string]any{
 		"schema": 1, "project_id": projectID, "run_id": job.RunID, "factory": factory,
-		"project": projectConfig, "input": job.Input, "worker": map[string]any{"ssh_hosts": settings.SSHHosts},
+		"project": projectConfig, "input": runInput, "worker": map[string]any{"ssh_hosts": settings.SSHHosts},
 	}
 	configJSON, _ := json.MarshalIndent(config, "", "  ")
 	if err := os.WriteFile(filepath.Join(projectRoot, ".lmw", "config.json"), append(configJSON, '\n'), 0o600); err != nil {

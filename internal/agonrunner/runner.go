@@ -117,7 +117,7 @@ func commandForFactory(factory string, input map[string]any) (role, prompt, task
 	switch factory {
 	case "idea":
 		if _, intake := input["candidate_count"]; intake {
-			return "idea-intake-dispatcher", filepath.Join(root, "commands", "idea-intake.md"), "Execute bounded idea intake from /project/.lmw/config.json and stop after candidates are written.", nil
+			return "idea-intake-dispatcher", filepath.Join(root, "commands", "idea-intake.md"), "Execute bounded idea intake using input.topic_prompt_file and input.source_manifest from /project/.lmw/config.json. Write the exact candidate count only under artifacts/.lmw/intake and stop.", nil
 		}
 		return "idea-dispatcher", filepath.Join(root, "commands", "idea-tick.md"), "Execute unmodified idea-tick refinement and review for every selected canonical project idea.", nil
 	case "proposal":
