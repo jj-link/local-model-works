@@ -262,6 +262,46 @@ const artifactManifest = `{
 	}]
 }`
 
+const endpointManifest = `{
+	"apiVersion": "lmw.dev/v1",
+	"kind": "Recipe",
+	"metadata": {"name": "endpoint-serve", "version": "1"},
+	"parameters": [{"name": "model", "type": "string", "default": "qwen-7b"}],
+	"profiles": {"default": {"model": "qwen-7b"}},
+	"workloads": [{
+		"image": {"reference": "test-serve:latest"},
+		"command": ["serve"],
+		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+		"devices": {"accelerator": {"all": true}},
+		"ports": [{"container": 8000}],
+		"readiness": {"httpGet": {"path": "/v1/health", "port": 8000}}
+	}]
+}`
+
+// TestDeploymentEndpointMetadataSurvivesRead verifies the endpoint model/path
+// captured at create is persisted and restored on a fresh DB read (the values
+// a reopened control plane sees without re-parsing recipes).
+func TestDeploymentEndpointMetadataSurvivesRead(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
+	h.seedRecipe(t, "endpoint-serve", endpointManifest)
+	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Profile: "default", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if dep.Endpoint == nil || dep.Endpoint.Model != "qwen-7b" || dep.Endpoint.Path != "/v1/health" {
+		t.Fatalf("create endpoint: %+v", dep.Endpoint)
+	}
+	// Re-read through the store (fresh SELECT) and confirm metadata survived.
+	again, err := h.svc.Get(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if again.Endpoint == nil || again.Endpoint.Model != "qwen-7b" || again.Endpoint.Path != "/v1/health" {
+		t.Fatalf("re-read endpoint: %+v", again.Endpoint)
+	}
+}
+
 func (h *harness) createDeployment(t *testing.T, digest string, overrides ...PlacementOverride) *Deployment {
 	t.Helper()
 	dep, err := h.svc.Create(context.Background(), CreateRequest{

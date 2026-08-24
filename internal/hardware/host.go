@@ -42,6 +42,18 @@ func (s *hostSampler) Sample(ctx context.Context) Telemetry {
 
 	total, idle := readCPUCumulative()
 	net := readNetCounters()
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apply(&t, now, total, idle, net)
+	return t
+}
+
+// apply derives interval CPU/network values from deltas against the previous
+// sample. The first sample, counter rollback, an invalid elapsed interval, and
+// a zero delta all yield zero rather than a spike. Callers hold s.mu.
+func (s *hostSampler) apply(t *Telemetry, now time.Time, total, idle uint64, net []netCounter) {
 	var aggRx, aggTx uint64
 	cur := make(map[string][2]uint64, len(net))
 	for _, c := range net {
@@ -49,10 +61,6 @@ func (s *hostSampler) Sample(ctx context.Context) Telemetry {
 		aggRx += c.rx
 		aggTx += c.tx
 	}
-	now := time.Now()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if !s.last.IsZero() {
 		dt := now.Sub(s.last).Seconds()
@@ -89,7 +97,6 @@ func (s *hostSampler) Sample(ctx context.Context) Telemetry {
 	s.cpuTotal, s.cpuIdle = total, idle
 	s.aggRx, s.aggTx = aggRx, aggTx
 	s.ifaces = cur
-	return t
 }
 
 // byteRate converts a byte delta and a wall-clock delta to whole bytes/sec.
