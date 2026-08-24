@@ -159,6 +159,11 @@ func newFramedSink(path string) (EventSink, io.Closer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	var acknowledgement [1]byte
+	if _, err := io.ReadFull(connection, acknowledgement[:]); err != nil || acknowledgement[0] != 1 {
+		connection.Close()
+		return nil, nil, errors.New("autoresearch.event_socket_handshake")
+	}
 	sink := &framedSink{conn: connection}
 	return sink, connection, nil
 }
@@ -186,7 +191,8 @@ func (s *framedSink) Emit(event Event) error {
 type SocketServer struct {
 	listener net.Listener
 	sink     EventSink
-	wg       sync.WaitGroup
+	acceptWG sync.WaitGroup
+	connWG   sync.WaitGroup
 }
 
 func StartSocketServer(path string, sink EventSink) (*SocketServer, error) {
@@ -200,26 +206,29 @@ func StartSocketServer(path string, sink EventSink) (*SocketServer, error) {
 		return nil, err
 	}
 	server := &SocketServer{listener: listener, sink: sink}
-	server.wg.Add(1)
+	server.acceptWG.Add(1)
 	go server.accept()
 	return server, nil
 }
 
 func (s *SocketServer) accept() {
-	defer s.wg.Done()
+	defer s.acceptWG.Done()
 	for {
 		connection, err := s.listener.Accept()
 		if err != nil {
 			return
 		}
-		s.wg.Add(1)
+		s.connWG.Add(1)
 		go s.read(connection)
 	}
 }
 
 func (s *SocketServer) read(connection net.Conn) {
-	defer s.wg.Done()
+	defer s.connWG.Done()
 	defer connection.Close()
+	if _, err := connection.Write([]byte{1}); err != nil {
+		return
+	}
 	reader := bufio.NewReader(connection)
 	for {
 		var header [4]byte
@@ -244,7 +253,8 @@ func (s *SocketServer) read(connection net.Conn) {
 
 func (s *SocketServer) Close() error {
 	err := s.listener.Close()
-	s.wg.Wait()
+	s.acceptWG.Wait()
+	s.connWG.Wait()
 	return err
 }
 
