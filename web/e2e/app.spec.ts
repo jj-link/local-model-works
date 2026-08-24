@@ -3,8 +3,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const moduleRows = [
   ["fleet", "Fleet", "/fleet", 10], ["library", "Library", "/library", 20],
   ["serving", "Serving", "/serving", 30], ["benchmarks", "Benchmarks", "/benchmarks", 40],
-  ["workshop", "Workshop", "/workshop", 45], ["runs", "Runs", "/runs", 50],
-  ["settings", "Settings", "/settings", 60],
+  ["autoresearch", "AutoResearch", "/autoresearch", 45], ["workshop", "Workshop", "/workshop", 46],
+  ["runs", "Runs", "/runs", 50], ["settings", "Settings", "/settings", 60],
 ] as const;
 
 const nodes = [{
@@ -47,13 +47,32 @@ test("unauthenticated navigation lands on the operator login", async ({ page }) 
 
 test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
   await installAPI(page);
-  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/settings", "/modules"];
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/autoresearch", "/workshop", "/runs", "/settings", "/modules"];
   for (const path of routes) {
     await page.goto(path);
     await expect(page.getByRole("navigation")).toBeVisible();
     await expect(page.locator("body")).not.toContainText("Application Error");
     await expect(page.locator("main").first()).toBeVisible();
   }
+});
+
+test("AutoResearch mounts its empty and project-composer states without overflow", async ({ page }) => {
+  await installAPI(page);
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 1024, height: 768 },
+    { width: 768, height: 1024 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/autoresearch");
+    await expect(page.getByText("No research project selected")).toBeVisible();
+    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", viewport.width);
+  }
+  await page.getByRole("button", { name: "project" }).click();
+  await expect(page.getByLabel("project name")).toBeVisible();
+  await expect(page.getByLabel("direct idea (optional)")).toBeVisible();
+  await expect(page.getByLabel("runner node")).toBeVisible();
 });
 
 test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {

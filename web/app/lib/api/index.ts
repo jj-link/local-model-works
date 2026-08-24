@@ -1,6 +1,6 @@
 // One typed function per OpenAPI operation (operationId-named). Generated
 // types come from ~/generated/api (openapi-typescript).
-import { API_BASE, http, qs } from "./client";
+import { API_BASE, http, qs, requestRaw } from "./client";
 import type { components } from "~/generated/api";
 
 export type Schemas = components["schemas"];
@@ -46,6 +46,23 @@ export type EnrollmentToken = Schemas["EnrollmentToken"];
 export type MigrationScanRequest = Schemas["MigrationScanRequest"];
 export type MigrationImportRequest = Schemas["MigrationImportRequest"];
 export type RunAccepted = Schemas["RunAccepted"];
+export type AutoResearchProject = Schemas["AutoResearchProject"];
+export type AutoResearchProjectCreate = Schemas["AutoResearchProjectCreate"];
+export type AutoResearchProjectPatch = Schemas["AutoResearchProjectPatch"];
+export type AutoResearchIdea = Schemas["AutoResearchIdea"];
+export type AutoResearchIdeaGenerate = Schemas["AutoResearchIdeaGenerate"];
+export type AutoResearchIdeaUpdate = Schemas["AutoResearchIdeaUpdate"];
+export type AutoResearchSource = Schemas["AutoResearchSource"];
+export type AutoResearchSourceCreate = Schemas["AutoResearchSourceCreate"];
+export type AutoResearchRunCreate = Schemas["AutoResearchRunCreate"];
+export type AutoResearchPaperFile = Schemas["AutoResearchPaperFile"];
+export type AutoResearchPaperChatRequest = Schemas["AutoResearchPaperChatRequest"];
+export type AutoResearchPaperChatResponse = Schemas["AutoResearchPaperChatResponse"];
+export interface AutoResearchPaperContents {
+  path: string;
+  contents: string;
+  etag: string;
+}
 type Sig = { signal?: AbortSignal };
 
 /* ------------------------------------------------------------------ */
@@ -255,6 +272,128 @@ export const migrationScan = (body: MigrationScanRequest) =>
 
 export const migrationImport = (body: MigrationImportRequest) =>
   http.post<RunAccepted>("/migration/import", body);
+
+/* ------------------------------------------------------------------ */
+/* autoresearch                                                        */
+/* ------------------------------------------------------------------ */
+
+export const listAutoResearchProjects = ({ signal }: Sig = {}) =>
+  http.get<AutoResearchProject[]>("/autoresearch/projects", { signal });
+
+export const createAutoResearchProject = (body: AutoResearchProjectCreate) =>
+  http.post<AutoResearchProject>("/autoresearch/projects", body);
+
+export const getAutoResearchProject = (id: string, { signal }: Sig = {}) =>
+  http.get<AutoResearchProject>(`/autoresearch/projects/${id}`, { signal });
+
+export const updateAutoResearchProject = (id: string, version: number, body: AutoResearchProjectPatch) =>
+  http.put<AutoResearchProject>(`/autoresearch/projects/${id}`, body, {
+    headers: { "if-match": String(version) },
+  });
+
+export const listAutoResearchIdeas = (projectId: string, { signal }: Sig = {}) =>
+  http.get<AutoResearchIdea[]>(`/autoresearch/projects/${projectId}/ideas`, { signal });
+
+export const updateAutoResearchIdea = (
+  projectId: string,
+  ideaId: string,
+  version: number,
+  body: AutoResearchIdeaUpdate,
+) =>
+  http.put<AutoResearchIdea>(`/autoresearch/projects/${projectId}/ideas/${ideaId}`, body, {
+    headers: { "if-match": String(version) },
+  });
+
+export const selectAutoResearchIdea = (projectId: string, ideaId: string) =>
+  http.post<AutoResearchIdea>(`/autoresearch/projects/${projectId}/ideas/${ideaId}/select`);
+
+export const generateAutoResearchIdeas = (projectId: string, body: AutoResearchIdeaGenerate) =>
+  http.post<Run>(`/autoresearch/projects/${projectId}/ideas/generate`, body);
+
+export const listAutoResearchSources = (projectId: string, { signal }: Sig = {}) =>
+  http.get<AutoResearchSource[]>(`/autoresearch/projects/${projectId}/sources`, { signal });
+
+export const createAutoResearchSource = (projectId: string, body: AutoResearchSourceCreate) =>
+  http.post<AutoResearchSource>(`/autoresearch/projects/${projectId}/sources`, body);
+
+export async function uploadAutoResearchSource(projectId: string, file: File): Promise<AutoResearchSource> {
+  const body = new FormData();
+  body.set("file", file);
+  const response = await requestRaw(`/autoresearch/projects/${projectId}/source-files`, {
+    method: "POST",
+    body,
+  });
+  return (await response.json()) as AutoResearchSource;
+}
+
+export const listAutoResearchRuns = (projectId: string, { signal }: Sig = {}) =>
+  http.get<Run[]>(`/autoresearch/projects/${projectId}/runs`, { signal });
+
+export const createAutoResearchRun = (projectId: string, body: AutoResearchRunCreate) =>
+  http.post<Run>(`/autoresearch/projects/${projectId}/runs`, body);
+
+export const pauseAutoResearchRun = (runId: string) =>
+  http.post<Run>(`/autoresearch/runs/${runId}/pause`);
+
+export const resumeAutoResearchRun = (runId: string) =>
+  http.post<Run>(`/autoresearch/runs/${runId}/resume`);
+
+export const stopAutoResearchRun = (runId: string) =>
+  http.post<Run>(`/autoresearch/runs/${runId}/stop`);
+
+// The Go router decodes one URL layer before matching its single path
+// segment; preserve nested paper paths for securePaperPath's second decode.
+function paperPathSegment(path: string): string {
+  return encodeURIComponent(encodeURIComponent(path));
+}
+
+export const listAutoResearchPaperFiles = (projectId: string, { signal }: Sig = {}) =>
+  http.get<AutoResearchPaperFile[]>(`/autoresearch/projects/${projectId}/paper/files`, { signal });
+
+export async function getAutoResearchPaperFile(
+  projectId: string,
+  path: string,
+  { signal }: Sig = {},
+): Promise<AutoResearchPaperContents> {
+  const response = await requestRaw(
+    `/autoresearch/projects/${projectId}/paper/files/${paperPathSegment(path)}`,
+    { signal },
+  );
+  return {
+    path,
+    contents: await response.text(),
+    etag: response.headers.get("etag") ?? "",
+  };
+}
+
+export async function updateAutoResearchPaperFile(
+  projectId: string,
+  path: string,
+  contents: string,
+  etag: string,
+): Promise<AutoResearchPaperFile> {
+  const response = await requestRaw(
+    `/autoresearch/projects/${projectId}/paper/files/${paperPathSegment(path)}`,
+    {
+      method: "PUT",
+      body: contents,
+      headers: { "content-type": "text/plain; charset=utf-8", "if-match": etag },
+    },
+  );
+  return (await response.json()) as AutoResearchPaperFile;
+}
+
+export const compileAutoResearchPaper = (projectId: string) =>
+  http.post<Run>(`/autoresearch/projects/${projectId}/paper/compile`);
+
+export const chatEditAutoResearchPaper = (projectId: string, body: AutoResearchPaperChatRequest) =>
+  http.post<AutoResearchPaperChatResponse>(`/autoresearch/projects/${projectId}/paper/chat`, body);
+
+export const releaseAutoResearchPaper = (projectId: string) =>
+  http.post<Run>(`/autoresearch/projects/${projectId}/paper/release`);
+
+export const autoResearchPaperPdfUrl = (projectId: string, cacheKey = "") =>
+  `${API_BASE}/autoresearch/projects/${projectId}/paper/pdf${qs({ v: cacheKey })}`;
 
 /* ------------------------------------------------------------------ */
 /* SSE stream URLs (consumed by the streamEvents helper)               */
