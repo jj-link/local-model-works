@@ -138,14 +138,15 @@ func TestProjectHumanGateDefaultsAndOverrides(t *testing.T) {
 
 func TestMergeProjectDefaultsPreservesOverrides(t *testing.T) {
 	config := map[string]any{
-		"roles": map[string]any{"paper-writer": map[string]any{"model": "project"}},
+		"roles":    map[string]any{"paper-writer": map[string]any{"model": "project"}},
+		"advisors": map[string]any{"paper-writer": map[string]any{"enabled": true, "backlog": 1}},
 	}
 	settings := workerSettings{
 		DefaultRoles: map[string]any{
 			"default":      map[string]any{"model": "module"},
 			"paper-writer": map[string]any{"model": "module-writer"},
 		},
-		DefaultAdvisors: map[string]any{"default": map[string]any{"enabled": false, "backlog": 1}},
+		DefaultAdvisors: map[string]any{"default": map[string]any{"enabled": false, "backlog": 1, "provider": map[string]any{"model": "advisor"}}},
 	}
 	mergeProjectDefaults(config, settings)
 	roles := config["roles"].(map[string]any)
@@ -158,6 +159,9 @@ func TestMergeProjectDefaultsPreservesOverrides(t *testing.T) {
 	advisors := config["advisors"].(map[string]any)
 	if advisors["default"].(map[string]any)["enabled"] != false {
 		t.Fatal("module advisor defaults were not applied")
+	}
+	if advisors["paper-writer"].(map[string]any)["provider"].(map[string]any)["model"] != "advisor" {
+		t.Fatal("enabled advisor did not inherit the configured default provider")
 	}
 }
 

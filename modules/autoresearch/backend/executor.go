@@ -89,6 +89,24 @@ func mergeProjectDefaults(config map[string]any, settings workerSettings) {
 			}
 		}
 	}
+	advisors, _ := config["advisors"].(map[string]any)
+	defaultAdvisor, _ := advisors["default"].(map[string]any)
+	defaultProvider, hasDefaultProvider := defaultAdvisor["provider"]
+	if !hasDefaultProvider {
+		return
+	}
+	for name, raw := range advisors {
+		if name == "default" {
+			continue
+		}
+		advisor, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, configured := advisor["provider"]; !configured {
+			advisor["provider"] = defaultProvider
+		}
+	}
 }
 
 func (m *Module) projectConfigWithDefaults(ctx context.Context, raw string) map[string]any {
