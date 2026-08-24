@@ -51,6 +51,35 @@ func TestFactoryCommandsResolveShippedPrompts(t *testing.T) {
 	}
 }
 
+func TestCodexProviderCommandPinsConfiguredBaseURL(t *testing.T) {
+	root := t.TempDir()
+	prompt := filepath.Join(root, "prompt.md")
+	output := filepath.Join(root, "output.txt")
+	if err := os.WriteFile(prompt, []byte("prompt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := filepath.Join(root, "credentials")
+	if err := os.Mkdir(credentials, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credentials, "spark-local"), []byte("lmw-local"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LMW_CREDENTIAL_DIR", credentials)
+	command, err := providerCommand(context.Background(), AgentOptions{
+		RunID: "run", InvocationID: "invocation", Role: "idea-creator", Backend: "codex",
+		Model: "deepseek", BaseURL: "http://100.92.139.82:8888/v1/", SecretName: "spark-local",
+		WorkingDirectory: root, PromptPath: prompt, OutputPath: output, Task: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Join(command.Args, " ")
+	if !strings.Contains(arguments, `openai_base_url="http://100.92.139.82:8888/v1"`) {
+		t.Fatalf("codex arguments = %s", arguments)
+	}
+}
+
 func TestSSHPreflightIsExplicit(t *testing.T) {
 	if err := preflightSSH(context.Background(), projectConfig{Input: map[string]any{}}, t.TempDir()); err != nil {
 		t.Fatal(err)
