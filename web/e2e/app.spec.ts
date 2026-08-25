@@ -45,10 +45,10 @@ const nodeHistory = Array.from({ length: 12 }, (_, i) => ({
     accelerators: [{ index: 0, utilization_percent: 48, memory_used_bytes: 3000000000, memory_total_bytes: 103079215104 }] },
 }));
 const fabrics = [{ id: "22222222-2222-7222-8222-222222222222", name: "workshop-fabric", transport: "tcp", members: [nodes[0].id], state: "ok", version: "1" }];
-const deployments = [{ id: "33333333-3333-7333-8333-333333333333", recipe_digest: "sha256:qwen", recipe_name: "qwen3.8", engine: "sglang", profile: "rtx6000", placements: [{ node_id: nodes[0].id, node_name: "RTX Workshop", rank: 0 }], desired_state: "running", observed_state: "healthy", created_at: "2026-08-20T11:00:00Z", updated_at: "2026-08-20T12:00:00Z", endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } }];
-const deployments = [
-  { id: "33333333-3333-7333-8333-333333333333", recipe_name: "qwen3.8", profile: "rtx6000", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", placements: [{ node_id: "77777777-7777-7777-8777-777777777777", rank: 0 }], endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } },
-  { id: "44444444-4444-7444-8444-444444444444", recipe_name: "qwen3.8", profile: "worker", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", placements: [{ node_id: "77777777-7777-7777-8777-777777777777", rank: 1 }], endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } },
+const sampleDeployments = [{ id: "33333333-3333-7333-8333-333333333333", recipe_digest: "sha256:qwen", recipe_name: "qwen3.8", engine: "sglang", profile: "rtx6000", placements: [{ node_id: nodes[0].id, node_name: "RTX Workshop", rank: 0 }], desired_state: "running", observed_state: "healthy", created_at: "2026-08-20T11:00:00Z", updated_at: "2026-08-20T12:00:00Z", endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } }];
+const fleetDeployments = [
+  { id: "33333333-3333-7333-8333-333333333333", recipe_digest: "sha256:qwen", recipe_name: "qwen3.8", engine: "vllm", profile: "rtx6000", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", placements: [{ node_id: "77777777-7777-7777-8777-777777777777", rank: 0 }], endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } },
+  { id: "44444444-4444-7444-8444-444444444444", recipe_digest: "sha256:qwen", recipe_name: "qwen3.8", engine: "vllm", profile: "worker", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", placements: [{ node_id: "77777777-7777-7777-8777-777777777777", rank: 1 }], endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } },
 ];
 const servingTelemetry = [{
   deployment_id: "33333333-3333-7333-8333-333333333333", ts: nowSec,
@@ -63,22 +63,22 @@ async function fulfill(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean } = {}) {
+async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean; fleetScenario?: boolean } = {}) {
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/api/v1/session") return fulfill(route, options.signedIn === false ? { code: "auth.unauthorized" } : { username: "operator", csrf_token: "test-csrf", expires_at: "2099-01-01T00:00:00Z" }, options.signedIn === false ? 401 : 200);
     if (path === "/api/v1/modules") return fulfill(route, moduleRows.map(([id, title, moduleRoute, order]) => ({ id, title, route: moduleRoute, nav: { label: title, order, icon: id }, capabilities: [] })));
-    if (path === "/api/v1/nodes") return fulfill(route, options.failNodes ? { code: "test.failure", error: "node inventory unavailable" } : nodes, options.failNodes ? 503 : 200);
+    if (path === "/api/v1/nodes") return fulfill(route, options.failNodes ? { code: "test.failure", error: "node inventory unavailable" } : options.fleetScenario ? nodes : [nodes[0]], options.failNodes ? 503 : 200);
     if (path === "/api/v1/fabrics") return fulfill(route, fabrics);
-    if (path === "/api/v1/deployments") return fulfill(route, deployments);
-    if (path === "/api/v1/nodes/telemetry") return fulfill(route, fleetTelemetry);
-    if (path === "/api/v1/deployments/telemetry") return fulfill(route, servingTelemetry);
+    if (path === "/api/v1/deployments") return fulfill(route, options.fleetScenario ? fleetDeployments : sampleDeployments);
+    if (path === "/api/v1/nodes/telemetry") return fulfill(route, options.fleetScenario ? fleetTelemetry : []);
+    if (path === "/api/v1/deployments/telemetry") return fulfill(route, options.fleetScenario ? servingTelemetry : []);
     if (path === "/api/v1/nodes/77777777-7777-7777-8777-777777777777/telemetry") return fulfill(route, nodeHistory);
     if (path === "/api/v1/deployments/33333333-3333-7333-8333-333333333333/telemetry") return fulfill(route, servingHistory);
     if (path === "/api/v1/nodes/77777777-7777-7777-8777-777777777777") return fulfill(route, nodes[1]);
-    if (path === "/api/v1/nodes/55555555-5555-7555-8555-555555555555") return fulfill(route, nodes[1]);
-    if (path === "/api/v1/nodes/66666666-6666-7666-8666-666666666666") return fulfill(route, nodes[2]);
+    if (path === "/api/v1/nodes/55555555-5555-7555-8555-555555555555") return fulfill(route, nodes[2]);
+    if (path === "/api/v1/nodes/66666666-6666-7666-8666-666666666666") return fulfill(route, nodes[3]);
     if (path === "/api/v1/runs") return fulfill(route, { items: [] });
     if (path === "/api/v1/recipes" || path === "/api/v1/artifacts" || path === "/api/v1/transfers" || path === "/api/v1/recipe-drafts" || path === "/api/v1/benchmarks" || path === "/api/v1/benchmark-results" || path === "/api/v1/secrets") return fulfill(route, []);
     if (path === "/api/v1/system/info") return fulfill(route, { version: "test", commit: "abc123", build: "test" });
@@ -163,7 +163,7 @@ test("Workshop renders inventory, topology, and serving instruments", async ({ p
   await expect(page.getByText("RTX Workshop")).toBeVisible();
   await expect(page.getByText("workshop-fabric")).toBeVisible();
   await expect(page.getByText("qwen3.8@rtx6000")).toBeVisible();
-  await expect(page.getByText("288 GiB")).toBeVisible();
+  await expect(page.getByText("96.0 GiB")).toBeVisible();
 });
 
 test("API failures expose a retryable operator state", async ({ page }) => {
@@ -175,7 +175,7 @@ test("API failures expose a retryable operator state", async ({ page }) => {
 });
 
 test("Fleet overview renders live monitoring cards and serving rows", async ({ page }) => {
-  await installAPI(page);
+  await installAPI(page, { fleetScenario: true });
   await page.goto("/fleet/nodes");
   await expect(page.getByText("RTX Workshop")).toBeVisible();
   // Two-GPU rejection: max utilization 72 renders on the card.
@@ -193,7 +193,7 @@ test("Node detail switches range and keeps admin sections", async ({ page }) => 
   page.on("request", (req) => {
     if (req.url().includes("/nodes/77777777-7777-7777-8777-777777777777/telemetry")) requests.push(String(req.url()));
   });
-  await installAPI(page);
+  await installAPI(page, { fleetScenario: true });
   await page.goto("/fleet/nodes/77777777-7777-7777-8777-777777777777");
   await expect(page.getByRole("heading", { name: "gpu-fleet" })).toBeVisible();
   await expect(page.getByRole("img", { name: "cpu utilization" })).toBeVisible();
