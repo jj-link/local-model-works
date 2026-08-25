@@ -43,9 +43,6 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       grouped: true,
       items: [
         { id: "overview", label: "Overview", path: "/", icon: LayoutDashboard },
-        ...(enabledModuleIds.has("workshop")
-          ? [{ id: "topology", label: "Topology", path: "/workshop", icon: Waypoints }]
-          : []),
       ],
     },
   ];
@@ -70,8 +67,6 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
         { id: "recipe-catalog", label: "Catalog", path: "/library/recipes", icon: Library },
         { id: "recipe-builder", label: "Recipe Builder", path: "/library/builder", icon: FileCode2 },
         { id: "profiles-sharing", ...ROADMAP_PAGES.profiles, icon: Library },
-        { id: "artifacts", label: "Artifacts", path: "/library/artifacts", icon: PackageOpen },
-        { id: "transfers", label: "Transfers", path: "/library/transfers", icon: Network },
       ],
     });
   }
@@ -138,14 +133,6 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       items: [{ id: "projects-route", ...ROADMAP_PAGES.projects, icon: PackageOpen }],
     },
   );
-  if (enabledModuleIds.has("runs")) {
-    groups.push({
-      id: "runs",
-      label: "Runs",
-      icon: History,
-      items: [{ id: "runs-route", label: "Runs", path: "/runs", icon: History }],
-    });
-  }
   if (enabledModuleIds.has("chat")) {
     groups.push({
       id: "chat",

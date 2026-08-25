@@ -59,16 +59,16 @@ test("every first-party module route mounts inside the authenticated shell", asy
 test("Sample A navigation exposes real and skeleton destinations on desktop and mobile", async ({ page }) => {
   await installAPI(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/library/artifacts");
+  await page.goto("/library/recipes");
 
   const desktopNav = page.getByRole("navigation", { name: "Primary" });
   await expect(desktopNav).toBeVisible();
   for (const label of [
-    "Topology", "Nodes", "Fabrics", "Catalog", "Recipe Builder", "Profiles & Sharing",
-    "Artifacts", "Transfers", "Knowledge & RAG", "Serving", "Community Leaderboard",
+    "Nodes", "Fabrics", "Catalog", "Recipe Builder", "Profiles & Sharing",
+    "Knowledge & RAG", "Serving", "Community Leaderboard",
     "Autoresearch", "Experiment Builder", "Workflow Builder",
     "Scheduled Tasks & Automations", "Usage & Costs", "Integrated Fine-tuning",
-    "Projects", "Runs", "Chat",
+    "Projects", "Chat",
   ]) {
     await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
@@ -76,11 +76,11 @@ test("Sample A navigation exposes real and skeleton destinations on desktop and 
   for (const group of ["Workshop", "Fleet", "Recipes", "Benchmarks", "Research"]) {
     await expect(desktopNav.getByRole("button", { name: group, exact: true })).toBeVisible();
   }
-  for (const absentLabel of ["Settings", "Modules"]) {
+  for (const absentLabel of ["Settings", "Modules", "Topology", "Artifacts", "Transfers", "Runs"]) {
     await expect(desktopNav.getByText(absentLabel, { exact: true })).toHaveCount(0);
   }
 
-  await expect(page.locator("header.sticky").getByRole("heading", { name: "Artifacts", exact: true })).toBeVisible();
+  await expect(page.locator("header.sticky").getByRole("heading", { name: "Catalog", exact: true })).toBeVisible();
   await expect(page.locator("aside").first()).toHaveCSS("width", "220px");
   const recipesGroup = desktopNav.getByRole("button", { name: "Recipes" });
   await expect(recipesGroup).toHaveAttribute("aria-expanded", "true");
