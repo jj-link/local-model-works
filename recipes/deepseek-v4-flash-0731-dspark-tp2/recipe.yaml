@@ -4,6 +4,8 @@ metadata:
   name: deepseek-v4-flash-0731-dspark-tp2
   version: 1.0.0
   displayName: MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark
+  model: DeepSeek V4 Flash
+  engine: vllm
   description: >-
     Two-node GB10 (DGX Spark) vLLM TP=2 with DSpark speculative decoding for
     deepseek-ai/DeepSeek-V4-Flash-0731. 1M-token ceiling, nvfp4_ds_mla KV cache,

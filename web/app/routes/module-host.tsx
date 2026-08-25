@@ -2,10 +2,12 @@ import { matchPath, useLocation } from "react-router";
 
 import { useModules } from "~/lib/queries";
 import { uiModules } from "~/module-loader";
+import ModulesRoute from "~/routes/modules/index";
 
 export default function ModuleHost() {
   const location = useLocation();
   const modules = useModules();
+  if (location.pathname === "/modules") return <ModulesRoute />;
   const enabled = new Set((modules.data ?? []).map((descriptor) => descriptor.id));
   for (const module of uiModules) {
     if (!enabled.has(module.id)) continue;

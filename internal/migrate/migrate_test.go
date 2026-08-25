@@ -271,6 +271,10 @@ func TestRecipeConversion(t *testing.T) {
 	if err := json.Unmarshal(alpha.Document, &doc); err != nil {
 		t.Fatalf("alpha document: %v", err)
 	}
+	metadata := doc["metadata"].(map[string]any)
+	if metadata["model"] != "alpha" || metadata["engine"] != "vllm" {
+		t.Errorf("alpha metadata: model %v engine %v", metadata["model"], metadata["engine"])
+	}
 	workloads, _ := doc["workloads"].([]any)
 	if len(workloads) != 2 {
 		t.Fatalf("alpha workloads: %d (want one per capability variant)", len(workloads))

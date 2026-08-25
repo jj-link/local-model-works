@@ -121,7 +121,7 @@ export function TrustDialog({
                 type="checkbox"
                 checked={accepted}
                 onChange={(e) => setAccepted(e.target.checked)}
-                className="h-4 w-4 accent-[#ffb000]"
+                className="h-4 w-4 accent-[#225ea8]"
               />
               I accept the permission diff
             </label>

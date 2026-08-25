@@ -53,15 +53,25 @@ const plan = {
 
 const created = { id: "dep-1", recipe_name: recipe.name, profile: "", recipe_digest: D };
 
-function renderDialog(open = true) {
+function renderDialog(open = true, initialRecipeDigest?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  const view = (currentOpen: boolean, digest?: string) => (
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/serving/deployments"]}>
-        <PlanDeploymentDialog open={open} onOpenChange={() => {}} />
+        <PlanDeploymentDialog
+          open={currentOpen}
+          onOpenChange={() => {}}
+          initialRecipeDigest={digest}
+        />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(view(open, initialRecipeDigest));
+  return {
+    ...result,
+    rerenderDialog: (nextOpen: boolean, digest = initialRecipeDigest) =>
+      result.rerender(view(nextOpen, digest)),
+  };
 }
 
 describe("PlanDeploymentDialog", () => {
@@ -71,6 +81,7 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
       http.post("*/api/v1/deployments/plan", async ({ request }) => {
         const body = (await request.json()) as { recipe_digest: string; profile: string; placements?: unknown[] };
         return HttpResponse.json({
@@ -97,7 +108,7 @@ describe("PlanDeploymentDialog", () => {
     await user.selectOptions(recipeSelect, D);
 
     // profile-less recipe: profile control shows "no profiles" but does not block preview
-    expect(await screen.findByText("no profiles")).toBeInTheDocument();
+    expect(await screen.findByText(/no profiles/i)).toBeInTheDocument();
 
     // selecting a 2-node recipe mounts one native rank control per rank (regression for the #185 crash)
     expect((await screen.findAllByLabelText(/Rank 0 node/)).length).toBe(1);
@@ -129,6 +140,7 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
       http.post("*/api/v1/deployments/plan", async ({ request }) => {
         const b = (await request.json()) as { placements?: { rank: number; node_id: string }[] };
         (globalThis as Record<string, unknown>).__planPlacements = b.placements;
@@ -154,5 +166,25 @@ describe("PlanDeploymentDialog", () => {
       expect(p).toBeTruthy();
       expect(p).toEqual([{ rank: 0, node_id: "n-spark3" }]);
     });
+  });
+
+  it("preselects the caller recipe and resets it on every reopen", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
+      http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
+      http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+    );
+
+    const view = renderDialog(true, D);
+    const recipeSelect = await screen.findByLabelText("Recipe");
+    await waitFor(() => expect(recipeSelect).toHaveValue(D));
+    await user.selectOptions(recipeSelect, "");
+    expect(recipeSelect).toHaveValue("");
+
+    view.rerenderDialog(false, D);
+    view.rerenderDialog(true, D);
+    await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(D));
   });
 });

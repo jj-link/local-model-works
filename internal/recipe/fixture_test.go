@@ -385,6 +385,9 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		if rec.TrustState != recipe.TrustVerified {
 			t.Fatalf("signed catalog import must be verified, got %q", rec.TrustState)
 		}
+		if rec.Model != m.Metadata.Model || rec.Engine != m.Metadata.Engine {
+			t.Fatalf("recipe metadata model=%q engine=%q, want model=%q engine=%q", rec.Model, rec.Engine, m.Metadata.Model, m.Metadata.Engine)
+		}
 		for _, artifact := range m.Artifacts {
 			identity, err := artifactidentity.Canonical(
 				artifact.Source.Type, artifact.Source.Identity, artifact.Source.Revision, artifact.Source.Digest,

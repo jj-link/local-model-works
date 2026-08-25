@@ -6,6 +6,7 @@ package modules
 import (
 	"github.com/jj-link/local-model-works/internal/moduleapi"
 	benchmarks "github.com/jj-link/local-model-works/modules/benchmarks/backend"
+	chat "github.com/jj-link/local-model-works/modules/chat/backend"
 	fleet "github.com/jj-link/local-model-works/modules/fleet/backend"
 	library "github.com/jj-link/local-model-works/modules/library/backend"
 	runs "github.com/jj-link/local-model-works/modules/runs/backend"
@@ -18,6 +19,7 @@ import (
 // aligned with the Registry (same order).
 var Constructors = []func(*moduleapi.Env) moduleapi.Module{
 	benchmarks.New,
+	chat.New,
 	fleet.New,
 	library.New,
 	runs.New,

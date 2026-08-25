@@ -70,6 +70,8 @@ type Recipe struct {
 	Name          string          `json:"name"`
 	Version       string          `json:"version"`
 	DisplayName   string          `json:"display_name,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	Engine        string          `json:"engine,omitempty"`
 	Description   string          `json:"description,omitempty"`
 	License       string          `json:"license,omitempty"`
 	Source        json.RawMessage `json:"source"`
@@ -724,6 +726,8 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 		Name:          row.Name,
 		Version:       row.Version,
 		DisplayName:   nullStrValue(row.DisplayName),
+		Model:         m.Metadata.Model,
+		Engine:        m.Metadata.Engine,
 		Description:   nullStrValue(row.Description),
 		License:       nullStrValue(row.License),
 		Source:        json.RawMessage(row.Source),

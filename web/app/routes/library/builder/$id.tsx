@@ -128,7 +128,7 @@ export default function RecipeDraftRoute() {
                 value={manifestText}
                 onChange={(event) => setManifestText(event.target.value)}
                 spellCheck={false}
-                className="min-h-[58vh] w-full resize-y rounded border border-hairline bg-[#090b0c] p-4 font-mono text-xs leading-relaxed text-foreground outline-none focus:border-primary"
+                className="min-h-[58vh] w-full resize-y rounded-md border border-hairline bg-card p-4 font-mono text-xs leading-relaxed text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </div>
           ) : null}

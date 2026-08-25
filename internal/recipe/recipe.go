@@ -53,6 +53,8 @@ type Metadata struct {
 	Name        string  `json:"name"`
 	Version     string  `json:"version"`
 	DisplayName string  `json:"displayName,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	Engine      string  `json:"engine,omitempty"`
 	Description string  `json:"description,omitempty"`
 	License     string  `json:"license,omitempty"`
 	Source      *Source `json:"source,omitempty"`

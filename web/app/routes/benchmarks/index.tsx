@@ -72,7 +72,7 @@ export default function BenchmarksRoute() {
             r.tokens_per_second as number,
           ] as [number, number],
       );
-    return [{ label: `${language} tokens/s`, color: "#8b7cf6", points: pts }];
+    return [{ label: `${language} tokens/s`, color: "#225ea8", points: pts }];
   }, [filtered, language]);
 
   return (

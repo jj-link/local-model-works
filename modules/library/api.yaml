@@ -508,6 +508,10 @@ components:
           type: string
         display_name:
           type: string
+        model:
+          type: string
+        engine:
+          type: string
         description:
           type: string
         license:
@@ -564,7 +568,7 @@ components:
     Compatibility:
       type: object
       properties:
-        node_count:
+        nodeCount:
           type: integer
         accelerator:
           type: object

@@ -281,7 +281,7 @@ type ArtifactKind string
 type Compatibility struct {
 	Accelerator *map[string]interface{} `json:"accelerator,omitempty"`
 	Fabric      *map[string]interface{} `json:"fabric,omitempty"`
-	NodeCount   *int                    `json:"node_count,omitempty"`
+	NodeCount   *int                    `json:"nodeCount,omitempty"`
 }
 
 // Diagnostic defines model for Diagnostic.
@@ -323,9 +323,11 @@ type Recipe struct {
 	Description   *string          `json:"description,omitempty"`
 	Digest        string           `json:"digest"`
 	DisplayName   *string          `json:"display_name,omitempty"`
+	Engine        *string          `json:"engine,omitempty"`
 	HighRisk      *[]string        `json:"high_risk,omitempty"`
 	InstalledAt   time.Time        `json:"installed_at"`
 	License       *string          `json:"license,omitempty"`
+	Model         *string          `json:"model,omitempty"`
 	Name          string           `json:"name"`
 	Permissions   *[]string        `json:"permissions,omitempty"`
 	ProfileCount  *int             `json:"profile_count,omitempty"`
@@ -348,12 +350,14 @@ type RecipeDetail struct {
 	Description   *string        `json:"description,omitempty"`
 	Digest        string         `json:"digest"`
 	DisplayName   *string        `json:"display_name,omitempty"`
+	Engine        *string        `json:"engine,omitempty"`
 	HighRisk      *[]string      `json:"high_risk,omitempty"`
 	InstalledAt   time.Time      `json:"installed_at"`
 	License       *string        `json:"license,omitempty"`
 
 	// Manifest Canonical recipe manifest JSON (localmodelworks/v1alpha1)
 	Manifest     *map[string]interface{} `json:"manifest,omitempty"`
+	Model        *string                 `json:"model,omitempty"`
 	Name         string                  `json:"name"`
 	Permissions  *[]string               `json:"permissions,omitempty"`
 	ProfileCount *int                    `json:"profile_count,omitempty"`

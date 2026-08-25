@@ -53,6 +53,8 @@ export default function DeploymentsRoute() {
                 <TableRow>
                   <TableHead>Deployment</TableHead>
                   <TableHead>Recipe</TableHead>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Engine</TableHead>
                   <TableHead>Profile</TableHead>
                   <TableHead>Endpoint</TableHead>
                   <TableHead>Desired</TableHead>
@@ -76,8 +78,16 @@ export default function DeploymentsRoute() {
                         {shortDigest(d.recipe_digest)}
                       </Link>
                     </TableCell>
+                    <TableCell>{d.endpoint?.model || "Not reported"}</TableCell>
+                    <TableCell>
+                      {d.engine === "vllm"
+                        ? "vLLM"
+                        : d.engine === "sglang"
+                          ? "SGLang"
+                          : d.engine || "Not reported"}
+                    </TableCell>
                     <TableCell className="font-mono text-xs text-muted">{d.profile}</TableCell>
-                    <TableCell className="font-mono text-xs text-accent">
+                    <TableCell className="font-mono text-xs text-primary">
                       {d.endpoint ? endpointLabel(d.endpoint) : "—"}
                     </TableCell>
                     <TableCell>

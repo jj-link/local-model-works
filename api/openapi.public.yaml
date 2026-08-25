@@ -14,6 +14,7 @@ tags:
   - name: enrollment
   - name: migration
   - name: benchmarks
+  - name: chat
   - name: nodes
   - name: fabrics
   - name: artifacts
@@ -129,6 +130,45 @@ paths:
           $ref: '#/components/responses/Unauthorized'
       tags:
         - benchmarks
+  /chat/completions:
+    post:
+      operationId: chatCompletions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+          description: Chat completion
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The deployment endpoint could not complete the request
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The deployment endpoint timed out
+      summary: Generate one non-streaming chat completion from a running deployment
+      tags:
+        - chat
   /deployments:
     get:
       operationId: listDeployments
@@ -1553,6 +1593,93 @@ components:
       required:
         - expires_at
       type: object
+    ChatAssistantMessage:
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+        reasoning_content:
+          type: string
+        role:
+          const: assistant
+          type: string
+      required:
+        - role
+        - content
+      type: object
+    ChatCompletionRequest:
+      additionalProperties: false
+      properties:
+        deployment_id:
+          format: uuid
+          type: string
+        max_tokens:
+          maximum: 32768
+          minimum: 1
+          type: integer
+        messages:
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          maxItems: 64
+          minItems: 1
+          type: array
+        temperature:
+          maximum: 2
+          minimum: 0
+          type: number
+      required:
+        - deployment_id
+        - messages
+      type: object
+    ChatCompletionResponse:
+      additionalProperties: false
+      properties:
+        finish_reason:
+          type: string
+        id:
+          type: string
+        message:
+          $ref: '#/components/schemas/ChatAssistantMessage'
+        model:
+          type: string
+        usage:
+          $ref: '#/components/schemas/ChatUsage'
+      required:
+        - id
+        - model
+        - message
+      type: object
+    ChatMessage:
+      additionalProperties: false
+      properties:
+        content:
+          maxLength: 65536
+          minLength: 1
+          type: string
+        role:
+          enum:
+            - system
+            - user
+            - assistant
+          type: string
+      required:
+        - role
+        - content
+      type: object
+    ChatUsage:
+      additionalProperties: false
+      properties:
+        completion_tokens:
+          type: integer
+        prompt_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+      required:
+        - prompt_tokens
+        - completion_tokens
+        - total_tokens
+      type: object
     Compatibility:
       properties:
         accelerator:
@@ -1561,7 +1688,7 @@ components:
         fabric:
           additionalProperties: true
           type: object
-        node_count:
+        nodeCount:
           type: integer
       type: object
     CreateEnrollmentTokenRequest:
@@ -1623,6 +1750,8 @@ components:
             port:
               type: integer
           type: object
+        engine:
+          type: string
         fabric:
           nullable: true
           type: string
@@ -2312,6 +2441,8 @@ components:
           type: string
         display_name:
           type: string
+        engine:
+          type: string
         high_risk:
           items:
             type: string
@@ -2320,6 +2451,8 @@ components:
           format: date-time
           type: string
         license:
+          type: string
+        model:
           type: string
         name:
           type: string

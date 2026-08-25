@@ -164,10 +164,10 @@ export default function RecipeDetailRoute() {
                 <span className="text-muted">high-risk</span> {recipe.high_risk.join(", ")}
               </p>
             ) : null}
-            {recipe.compatibility?.node_count ? (
+            {recipe.compatibility?.nodeCount ? (
               <p>
                 <span className="text-muted">nodes</span>{" "}
-                <span>{recipe.compatibility.node_count}</span>
+                <span>{recipe.compatibility.nodeCount}</span>
               </p>
             ) : null}
           </div>

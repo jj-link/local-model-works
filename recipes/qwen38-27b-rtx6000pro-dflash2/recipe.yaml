@@ -4,6 +4,8 @@ metadata:
   name: qwen38-27b-rtx6000pro-dflash2
   version: 1.0.0
   displayName: Qwen3.8-27B NVFP4 DFlash2 — RTX PRO 6000
+  model: Qwen3.8-27B
+  engine: sglang
   description: >-
     RadixArk Qwen3.8-27B NVFP4 on one SM120 RTX PRO 6000 with the pinned
     MiaAI-Lab SGLang DFlash2 backport, native 262K context, FP8 KV cache,

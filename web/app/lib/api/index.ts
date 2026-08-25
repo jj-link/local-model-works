@@ -32,6 +32,8 @@ export type Deployment = Schemas["Deployment"];
 export type DeploymentPlan = Schemas["DeploymentPlan"];
 export type DeploymentPlanRequest = Schemas["DeploymentPlanRequest"];
 export type DeploymentCreateRequest = Schemas["DeploymentCreateRequest"];
+export type ChatRequest = Schemas["ChatCompletionRequest"];
+export type ChatResponse = Schemas["ChatCompletionResponse"];
 export type Run = Schemas["Run"];
 export type RunState = Schemas["RunState"];
 export type RunsPage = Schemas["RunsPage"];
@@ -194,6 +196,9 @@ export const startDeployment = (id: string) =>
 
 export const deleteDeployment = (id: string) =>
   http.del<void>(`/deployments/${id}`);
+
+export const chatCompletions = (body: ChatRequest, { signal }: Sig = {}) =>
+  http.post<ChatResponse>("/chat/completions", body, { signal });
 
 /* ------------------------------------------------------------------ */
 /* runs                                                                */

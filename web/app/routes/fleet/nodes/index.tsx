@@ -1,100 +1,133 @@
 import { Link } from "react-router";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
-import { useNodes } from "~/lib/queries";
+import { useDeployments, useNodes } from "~/lib/queries";
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { relativeTime } from "~/lib/format";
 import { useSession } from "~/lib/api/session";
+import type { Deployment, Node } from "~/lib/api";
+
+type DeploymentPlacement = NonNullable<Deployment["placements"]>[number];
+type FleetRow = {
+  node: Node;
+  deployment?: Deployment;
+  placement?: DeploymentPlacement;
+};
 
 export default function NodesRoute() {
-  const { data, isPending, isError, error, refetch } = useNodes();
+  const nodesQuery = useNodes();
+  const deploymentsQuery = useDeployments();
   const session = useSession();
+  const nodes = nodesQuery.data ?? [];
+  const deployments = deploymentsQuery.data ?? [];
 
-  const pendingNodes = (data ?? []).filter((n) => n.status === "pending");
+  const rows = nodes.flatMap<FleetRow>((node) => {
+    const servingRows: FleetRow[] = deployments.flatMap((deployment) =>
+      (deployment.placements ?? [])
+        .filter((placement) => placement.node_id === node.id)
+        .map((placement) => ({ node, deployment, placement })),
+    );
+    return servingRows.length > 0
+      ? servingRows
+      : [{ node, deployment: undefined, placement: undefined }];
+  });
+
+  const pending = nodesQuery.isPending || deploymentsQuery.isPending;
+  const queryError = nodesQuery.error ?? deploymentsQuery.error;
 
   return (
     <div className="grid gap-4">
-      <div className="lmw-panel">
-        <header className="lmw-panel-head">
-          <h1 className="lmw-label">nodes</h1>
-          <span className="font-mono text-[11px] text-faint">{(data ?? []).length} enrolled</span>
+      <section className="lmw-panel overflow-hidden">
+        <header className="lmw-panel-head flex items-center gap-3">
+          <div>
+            <p className="lmw-label">Fleet registry</p>
+            <h1 className="font-display text-2xl font-semibold">Devices and workloads</h1>
+          </div>
+          <span className="font-mono text-[11px] text-muted">{nodes.length} enrolled</span>
         </header>
 
-        {isPending ? (
-          <p className="px-3 py-8 text-center font-mono text-xs text-faint">loading nodes…</p>
-        ) : isError ? (
+        {pending ? (
+          <p className="px-3 py-10 text-center font-mono text-xs text-muted">Loading fleet workloads…</p>
+        ) : queryError ? (
           <EmptyState
             className="m-3"
-            title="Cannot load nodes"
-            detail={error instanceof Error ? error.message : undefined}
-            onRetry={() => void refetch()}
+            title="Cannot load fleet workloads"
+            detail={queryError instanceof Error ? queryError.message : undefined}
+            onRetry={() => {
+              void nodesQuery.refetch();
+              void deploymentsQuery.refetch();
+            }}
           />
-        ) : (data ?? []).length === 0 ? (
+        ) : nodes.length === 0 ? (
           <EmptyState
             className="m-3"
             title="No nodes enrolled"
-            hint="Create an enrollment token from the rail (Enroll node) and run the printed lmw-agent install command on each host."
+            hint="Create an enrollment token and run the generated lmw-agent install command on each host."
           />
         ) : (
           <div className="overflow-x-auto">
-            <Table aria-label="Nodes">
+            <Table aria-label="Fleet workloads">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Node</TableHead>
-                  <TableHead>State</TableHead>
-                  <TableHead>Accelerators</TableHead>
-                  <TableHead>Host</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Last seen</TableHead>
-                  <TableHead aria-label="Actions" />
+                  <TableHead>Device</TableHead>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Recipe</TableHead>
+                  <TableHead>Engine</TableHead>
+                  <TableHead>Workload</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(data ?? []).map((n) => {
-                  const accels = n.inventory?.accelerators ?? [];
+                {rows.map(({ node, deployment, placement }) => {
+                  const accelerators = node.inventory?.accelerators ?? [];
+                  const engine = deployment?.engine === "vllm"
+                    ? "vLLM"
+                    : deployment?.engine === "sglang"
+                      ? "SGLang"
+                      : deployment?.engine || "Not reported";
                   return (
-                    <TableRow key={n.id}>
+                    <TableRow key={`${node.id}-${deployment?.id ?? "idle"}-${placement?.rank ?? "idle"}`}>
+                      <TableCell className="min-w-64">
+                        <div className="flex items-start gap-2">
+                          <StatusDot state={node.status} pulse={node.status === "online"} />
+                          <div className="min-w-0">
+                            <Link to={`/fleet/nodes/${node.id}`} className="lmw-link font-medium">
+                              {node.display_name}
+                            </Link>
+                            <p className="mt-0.5 font-mono text-[10px] text-muted">
+                              {accelerators.length > 0
+                                ? `${accelerators.length}× ${accelerators[0].name}`
+                                : "No accelerator reported"}
+                              {placement ? ` · rank ${placement.rank}` : ""}
+                            </p>
+                            <p className="font-mono text-[10px] text-muted">
+                              {node.status} · last seen {relativeTime(node.last_heartbeat)}
+                            </p>
+                            {node.status === "pending" && session ? (
+                              <Link
+                                to={`/fleet/nodes/${node.id}`}
+                                className="control mt-1 inline-flex rounded border border-warn/50 bg-warn/10 px-2 py-0.5 font-mono text-[10px] text-warn hover:bg-warn/20"
+                              >
+                                Review
+                              </Link>
+                            ) : null}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>{deployment?.endpoint?.model || "Not reported"}</TableCell>
                       <TableCell>
-                        <Link
-                          to={`/fleet/nodes/${n.id}`}
-                          className="font-mono text-xs font-medium text-foreground hover:text-primary"
-                        >
-                          {n.display_name}
-                        </Link>
-                        {n.inventory?.hostname ? (
-                          <span className="ml-2 font-mono text-[10px] text-faint">{n.inventory.hostname}</span>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>
-                        <StatusDot state={n.status} pulse={n.status === "online"} />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted">
-                        {accels.length > 0
-                          ? `${accels.length}× ${accels[0].vendor ?? "?"} ${accels[0].name ?? ""}`
-                          : <span className="text-faint">none</span>}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted">
-                        {n.inventory?.hostname ?? <span className="text-faint">—</span>}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted">
-                        {n.agent_version ? (
-                          <>
-                            <span className="text-faint">v</span>
-                            {n.agent_version}
-                          </>
+                        {deployment ? (
+                          <Link to={`/library/recipes/${deployment.recipe_digest}`} className="lmw-link">
+                            {deployment.recipe_name || deployment.recipe_digest}
+                          </Link>
                         ) : (
-                          <span className="text-faint">—</span>
+                          "Not reported"
                         )}
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted">
-                        {relativeTime(n.last_heartbeat)}
-                      </TableCell>
+                      <TableCell>{deployment ? engine : "Not reported"}</TableCell>
                       <TableCell>
-                        {n.status === "pending" && session ? (
-                          <Link to={`/fleet/nodes/${n.id}`} className="control rounded border border-warn/60 bg-warn/10 px-2 py-0.5 font-mono text-[11px] text-warn hover:bg-warn/20">
-                            review →
-                          </Link>
-                        ) : null}
+                        <span className={deployment ? "font-medium text-foreground" : "text-muted"}>
+                          {deployment?.observed_state ?? "idle"}
+                        </span>
                       </TableCell>
                     </TableRow>
                   );
@@ -103,14 +136,7 @@ export default function NodesRoute() {
             </Table>
           </div>
         )}
-      </div>
-
-      {pendingNodes.length > 0 ? (
-        <p className="font-mono text-[11px] text-warn">
-          {pendingNodes.length} node{pendingNodes.length === 1 ? "" : "s"} awaiting approval — review their
-          reported inventory before they join the schedulable fleet.
-        </p>
-      ) : null}
+      </section>
     </div>
   );
 }

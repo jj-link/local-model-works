@@ -69,6 +69,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate one non-streaming chat completion from a running deployment */
+        post: operations["chatCompletions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deployments": {
         parameters: {
             query?: never;
@@ -860,6 +877,36 @@ export interface components {
             not_before?: string;
             serial?: string;
         };
+        ChatAssistantMessage: {
+            content: string;
+            reasoning_content?: string;
+            /** @constant */
+            role: "assistant";
+        };
+        ChatCompletionRequest: {
+            /** Format: uuid */
+            deployment_id: string;
+            max_tokens?: number;
+            messages: components["schemas"]["ChatMessage"][];
+            temperature?: number;
+        };
+        ChatCompletionResponse: {
+            finish_reason?: string;
+            id: string;
+            message: components["schemas"]["ChatAssistantMessage"];
+            model: string;
+            usage?: components["schemas"]["ChatUsage"];
+        };
+        ChatMessage: {
+            content: string;
+            /** @enum {string} */
+            role: "system" | "user" | "assistant";
+        };
+        ChatUsage: {
+            completion_tokens: number;
+            prompt_tokens: number;
+            total_tokens: number;
+        };
         Compatibility: {
             accelerator?: {
                 [key: string]: unknown;
@@ -867,7 +914,7 @@ export interface components {
             fabric?: {
                 [key: string]: unknown;
             };
-            node_count?: number;
+            nodeCount?: number;
         };
         CreateEnrollmentTokenRequest: {
             description?: string;
@@ -895,6 +942,7 @@ export interface components {
                 path?: string;
                 port?: number;
             } | null;
+            engine?: string;
             fabric?: string | null;
             /** Format: uuid */
             id: string;
@@ -1187,10 +1235,12 @@ export interface components {
             description?: string;
             digest: string;
             display_name?: string;
+            engine?: string;
             high_risk?: string[];
             /** Format: date-time */
             installed_at: string;
             license?: string;
+            model?: string;
             name: string;
             permissions?: string[];
             profile_count?: number;
@@ -1561,6 +1611,52 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    chatCompletions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatCompletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Chat completion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatCompletionResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            /** @description The deployment endpoint could not complete the request */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The deployment endpoint timed out */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listDeployments: {

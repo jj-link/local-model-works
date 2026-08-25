@@ -1,0 +1,12 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Module
+id: chat
+title: Chat
+route: /chat
+nav:
+  label: Chat
+  order: 55
+  icon: chat
+apiFragment: api.yaml
+capabilities:
+  - deployments.read

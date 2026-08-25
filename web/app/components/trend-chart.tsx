@@ -73,17 +73,17 @@ export function TrendChart({
         },
         axes: [
           {
-            stroke: "#919a9d",
+            stroke: "#5b6368",
             font: "10px 'Commit Mono', monospace",
-            grid: { stroke: "#313a3e", width: 0.5 },
+            grid: { stroke: "#e0d8c8", width: 0.5 },
             ticks: { width: 0 },
             values: (_self: uPlot, vals: (number | null)[]) =>
               vals.map((v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(11, 16))),
           },
           {
-            stroke: "#919a9d",
+            stroke: "#5b6368",
             font: "10px 'Commit Mono', monospace",
-            grid: { stroke: "#313a3e", width: 0.5 },
+            grid: { stroke: "#e0d8c8", width: 0.5 },
             ticks: { width: 0 },
             label: yLabel ?? "",
             values: (_self: uPlot, vals: (number | null)[]) =>

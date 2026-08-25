@@ -262,6 +262,83 @@ const artifactManifest = `{
 	}]
 }`
 
+func TestDeploymentModelAndEngineViews(t *testing.T) {
+	tests := []struct {
+		name          string
+		profile       string
+		manifest      string
+		expectedModel string
+	}{
+		{
+			name: "metadata fallback",
+			manifest: strings.Replace(
+				noArtifactManifest,
+				`"metadata": {"name": "test-serve", "version": "1"}`,
+				`"metadata": {"name": "test-serve", "version": "1", "model": "metadata-model", "engine": "vllm"}`,
+				1,
+			),
+			expectedModel: "metadata-model",
+		},
+		{
+			name:    "profile override",
+			profile: "fast",
+			manifest: strings.Replace(
+				strings.Replace(
+					noArtifactManifest,
+					`"metadata": {"name": "test-serve", "version": "1"}`,
+					`"metadata": {"name": "test-serve", "version": "1", "model": "metadata-model", "engine": "vllm"}`,
+					1,
+				),
+				`"workloads":`,
+				`"parameters": [{"name": "model", "type": "string"}], "profiles": {"fast": {"model": "profile-model"}}, "workloads":`,
+				1,
+			),
+			expectedModel: "profile-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedNode(t, "node-1", nil, "")
+			h.seedRecipe(t, "recipe-model", tt.manifest)
+
+			plan, err := h.svc.Plan(context.Background(), PlanRequest{
+				RecipeDigest: "recipe-model",
+				Profile:      tt.profile,
+			})
+			if err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+			if plan.Endpoint.Model != tt.expectedModel {
+				t.Fatalf("plan endpoint model = %q, want %q", plan.Endpoint.Model, tt.expectedModel)
+			}
+
+			deployment, err := h.svc.Create(context.Background(), CreateRequest{
+				RecipeDigest: "recipe-model",
+				Profile:      tt.profile,
+			})
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			if deployment.Engine != "vllm" {
+				t.Fatalf("deployment engine = %q, want vllm", deployment.Engine)
+			}
+			if deployment.Endpoint == nil || deployment.Endpoint.Model != tt.expectedModel {
+				t.Fatalf("deployment endpoint = %+v, want model %q", deployment.Endpoint, tt.expectedModel)
+			}
+
+			view, err := h.svc.Get(context.Background(), deployment.ID)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if view.Engine != "vllm" || view.Endpoint == nil || view.Endpoint.Model != tt.expectedModel {
+				t.Fatalf("deployment view = %+v, want engine vllm and model %q", view, tt.expectedModel)
+			}
+		})
+	}
+}
+
 func (h *harness) createDeployment(t *testing.T, digest string, overrides ...PlacementOverride) *Deployment {
 	t.Helper()
 	dep, err := h.svc.Create(context.Background(), CreateRequest{
@@ -897,4 +974,3 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 		t.Fatalf("runs remaining = %d, want 0", nr)
 	}
 }
-

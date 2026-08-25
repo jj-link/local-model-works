@@ -4,7 +4,7 @@ const moduleRows = [
   ["fleet", "Fleet", "/fleet", 10], ["library", "Library", "/library", 20],
   ["serving", "Serving", "/serving", 30], ["benchmarks", "Benchmarks", "/benchmarks", 40],
   ["workshop", "Workshop", "/workshop", 45], ["runs", "Runs", "/runs", 50],
-  ["settings", "Settings", "/settings", 60],
+  ["chat", "Chat", "/chat", 55], ["settings", "Settings", "/settings", 60],
 ] as const;
 
 const nodes = [{
@@ -14,7 +14,7 @@ const nodes = [{
     network_interfaces: [], rdma_devices: [] },
 }];
 const fabrics = [{ id: "22222222-2222-7222-8222-222222222222", name: "workshop-fabric", transport: "tcp", members: [nodes[0].id], state: "ok", version: "1" }];
-const deployments = [{ id: "33333333-3333-7333-8333-333333333333", recipe_name: "qwen3.8", profile: "rtx6000", desired_state: "running", observed_state: "healthy", updated_at: "2026-08-20T12:00:00Z", endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } }];
+const deployments = [{ id: "33333333-3333-7333-8333-333333333333", recipe_digest: "sha256:qwen", recipe_name: "qwen3.8", engine: "sglang", profile: "rtx6000", placements: [{ node_id: nodes[0].id, node_name: "RTX Workshop", rank: 0 }], desired_state: "running", observed_state: "healthy", created_at: "2026-08-20T11:00:00Z", updated_at: "2026-08-20T12:00:00Z", endpoint: { host: "127.0.0.1", port: 8000, model: "Qwen3.8-27B" } }];
 
 async function fulfill(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -31,7 +31,7 @@ async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?:
     if (path === "/api/v1/deployments") return fulfill(route, deployments);
     if (path === "/api/v1/runs") return fulfill(route, { items: [] });
     if (path === "/api/v1/recipes" || path === "/api/v1/artifacts" || path === "/api/v1/transfers" || path === "/api/v1/recipe-drafts" || path === "/api/v1/benchmarks" || path === "/api/v1/benchmark-results" || path === "/api/v1/secrets") return fulfill(route, []);
-    if (path === "/api/v1/system/info") return fulfill(route, { version: "test", build: "test" });
+    if (path === "/api/v1/system/info") return fulfill(route, { version: "test", commit: "abc123", build: "test" });
     if (path.startsWith("/api/v1/module-settings/")) return fulfill(route, { module: path.split("/").pop(), settings: {}, version: "1" });
     return fulfill(route, request.method() === "GET" ? [] : {});
   });
@@ -47,13 +47,56 @@ test("unauthenticated navigation lands on the operator login", async ({ page }) 
 
 test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
   await installAPI(page);
-  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/settings", "/modules"];
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/chat", "/settings", "/modules"];
   for (const path of routes) {
     await page.goto(path);
     await expect(page.getByRole("navigation")).toBeVisible();
     await expect(page.locator("body")).not.toContainText("Application Error");
     await expect(page.locator("main").first()).toBeVisible();
   }
+});
+
+test("grouped navigation exposes only functional routes on desktop and mobile", async ({ page }) => {
+  await installAPI(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/library/artifacts");
+
+  const desktopNav = page.getByRole("navigation", { name: "Primary" });
+  await expect(desktopNav).toBeVisible();
+  for (const label of [
+    "Overview", "Topology", "Nodes", "Fabrics", "Catalog", "Recipe Builder",
+    "Artifacts", "Transfers", "Serving", "Benchmarks", "Runs", "Chat",
+    "Settings", "Modules",
+  ]) {
+    await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  for (const roadmapLabel of [
+    "Profiles", "Sharing", "Knowledge & RAG", "Research", "Scheduled Automations",
+    "Usage & Costs", "Fine-tuning", "Projects", "Community Leaderboard",
+  ]) {
+    await expect(desktopNav.getByText(roadmapLabel, { exact: true })).toHaveCount(0);
+  }
+
+  await expect(page.locator("header.sticky").getByRole("heading", { name: "Artifacts", exact: true })).toBeVisible();
+  await expect(page.locator("aside").first()).toHaveCSS("width", "220px");
+  const recipesGroup = desktopNav.getByRole("button", { name: "Recipes" });
+  await expect(recipesGroup).toHaveAttribute("aria-expanded", "true");
+  await recipesGroup.click();
+  await expect(recipesGroup).toHaveAttribute("aria-expanded", "false");
+  await expect(desktopNav.getByRole("link", { name: "Catalog", exact: true })).toHaveCount(0);
+  await recipesGroup.click();
+  await expect(desktopNav.getByRole("link", { name: "Catalog", exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/chat");
+  await expect(page.locator("aside").first()).toBeHidden();
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const mobileNav = page.getByRole("dialog").getByRole("navigation", { name: "Primary" });
+  await expect(mobileNav).toBeVisible();
+  await expect(mobileNav.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
+  await mobileNav.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {

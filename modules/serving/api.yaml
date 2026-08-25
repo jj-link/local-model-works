@@ -395,6 +395,8 @@ components:
           type: string
         recipe_version:
           type: string
+        engine:
+          type: string
         profile:
           type: string
         placements:

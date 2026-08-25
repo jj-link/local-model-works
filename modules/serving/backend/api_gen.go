@@ -100,6 +100,7 @@ type Deployment struct {
 		Path  *string `json:"path,omitempty"`
 		Port  *int    `json:"port,omitempty"`
 	} `json:"endpoint,omitempty"`
+	Engine            *string                 `json:"engine,omitempty"`
 	Fabric            *string                 `json:"fabric,omitempty"`
 	Id                openapi_types.UUID      `json:"id"`
 	ModelCapabilities *map[string]interface{} `json:"model_capabilities,omitempty"`

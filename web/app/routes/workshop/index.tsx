@@ -43,7 +43,7 @@ export default function WorkshopRoute() {
         <div className="lmw-panel min-h-[30rem] overflow-hidden">
           <header className="lmw-panel-head"><Network className="size-3.5 text-info" /><h2 className="lmw-label">physical topology</h2><span className="ml-auto font-mono text-[11px] text-faint">{fabrics.length} fabrics</span></header>
           {nodes.length === 0 ? <EmptyState className="m-3" title="No topology to render" hint="Enroll a node agent, then connect nodes with a fabric." /> : (
-            <div className="relative grid min-h-[27rem] place-items-center overflow-auto bg-[radial-gradient(circle_at_center,rgba(74,222,128,0.06),transparent_58%)] p-6">
+            <div className="relative grid min-h-[27rem] place-items-center overflow-auto bg-[radial-gradient(circle_at_center,rgba(77,107,69,0.08),transparent_58%)] p-6">
               <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
                 {fabrics.flatMap((fabric, fabricIndex) => fabric.members.slice(1).map((member, memberIndex) => {
                   const from = nodes.findIndex((node) => node.id === fabric.members[memberIndex]);
@@ -51,7 +51,7 @@ export default function WorkshopRoute() {
                   if (from < 0 || to < 0) return null;
                   const x1 = 15 + ((from * 29) % 70); const y1 = 20 + ((from * 37) % 65);
                   const x2 = 15 + ((to * 29) % 70); const y2 = 20 + ((to * 37) % 65);
-                  return <line key={`${fabric.id}-${member}`} x1={`${x1}%`} y1={`${y1}%`} x2={`${x2}%`} y2={`${y2}%`} stroke={fabric.state === "ok" ? "rgb(34 197 94 / .6)" : "rgb(245 158 11 / .5)"} strokeWidth="2" strokeDasharray={fabricIndex % 2 ? "5 5" : undefined} />;
+                  return <line key={`${fabric.id}-${member}`} x1={`${x1}%`} y1={`${y1}%`} x2={`${x2}%`} y2={`${y2}%`} stroke={fabric.state === "ok" ? "rgb(77 107 69 / .65)" : "rgb(170 115 39 / .6)"} strokeWidth="2" strokeDasharray={fabricIndex % 2 ? "5 5" : undefined} />;
                 }))}
               </svg>
               <div className="relative h-[25rem] min-w-[42rem] w-full">

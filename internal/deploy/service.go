@@ -562,10 +562,14 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 			if base == 0 {
 				base = first.Container
 			}
+			model := profileString(values, "model")
+			if model == "" {
+				model = m.Metadata.Model
+			}
 			ep := Endpoint{
 				Host:  addr,
 				Port:  int32(base + int(r0.Rank)),
-				Model: profileString(values, "model"),
+				Model: model,
 			}
 			if w.Readiness != nil && w.Readiness.HTTPGet != nil && w.Readiness.HTTPGet.Path != "" {
 				ep.Path = w.Readiness.HTTPGet.Path
@@ -2600,6 +2604,7 @@ type Deployment struct {
 	RecipeName        string            `json:"recipe_name,omitempty"`
 	RecipeVersion     string            `json:"recipe_version,omitempty"`
 	Profile           string            `json:"profile"`
+	Engine            string            `json:"engine,omitempty"`
 	Placements        []Placement       `json:"placements"`
 	Fabric            *string           `json:"fabric,omitempty"`
 	DesiredState      string            `json:"desired_state"`
@@ -2687,9 +2692,23 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 		CreatedAt:     row.CreatedAt,
 		UpdatedAt:     row.UpdatedAt,
 	}
+	var endpointModel string
 	if recipeRow, err := s.q.GetRecipe(ctx, row.RecipeDigest); err == nil {
 		v.RecipeName = recipeRow.Name
 		v.RecipeVersion = recipeRow.Version
+		manifest, parseErr := recipe.Parse([]byte(recipeRow.Manifest))
+		if parseErr != nil {
+			return nil, fmt.Errorf("recipe manifest: %w", parseErr)
+		}
+		v.Engine = manifest.Metadata.Engine
+		values, profileErr := manifest.ProfileValues(row.Profile)
+		if profileErr != nil {
+			return nil, fmt.Errorf("recipe profile: %w", profileErr)
+		}
+		endpointModel = profileString(values, "model")
+		if endpointModel == "" {
+			endpointModel = manifest.Metadata.Model
+		}
 	}
 	if row.Fabric.Valid {
 		v.Fabric = &row.Fabric.String
@@ -2705,7 +2724,7 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 		if len(parts) == 2 {
 			var port int32
 			if _, err := fmt.Sscanf(parts[1], "%d", &port); err == nil {
-				v.Endpoint = &Endpoint{Host: parts[0], Port: port}
+				v.Endpoint = &Endpoint{Host: parts[0], Port: port, Model: endpointModel}
 			}
 		}
 	}

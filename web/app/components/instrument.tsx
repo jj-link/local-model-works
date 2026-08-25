@@ -1,12 +1,12 @@
 import type { Tone } from "~/lib/format";
 
 const TONE_STROKE: Record<Tone, string> = {
-  ok: "#76c66b",
-  warn: "#ffb000",
-  fault: "#ef635d",
-  info: "#5ed6d0",
-  muted: "#919a9d",
-  violet: "#a78bfa",
+  ok: "#4d6b45",
+  warn: "#aa7327",
+  fault: "#8f2d2d",
+  info: "#225ea8",
+  muted: "#5b6368",
+  violet: "#225ea8",
 };
 
 /**
@@ -50,7 +50,7 @@ export function Instrument({
             cy="64"
             r={r}
             fill="none"
-            stroke="#313a3e"
+            stroke="#e0d8c8"
             strokeWidth="7"
             strokeDasharray={`${arc} ${c}`}
             strokeLinecap="butt"
@@ -72,7 +72,7 @@ export function Instrument({
           y="60"
           textAnchor="middle"
           className="tnum"
-          fill="#e9e4d9"
+          fill="#20272b"
           fontSize="20"
           fontFamily="Commit Mono, monospace"
           fontWeight="500"
@@ -80,7 +80,7 @@ export function Instrument({
           {display ?? String(value)}
         </text>
         {unit ? (
-          <text x="64" y="78" textAnchor="middle" fill="#919a9d" fontSize="10" fontFamily="Commit Mono, monospace">
+          <text x="64" y="78" textAnchor="middle" fill="#5b6368" fontSize="10" fontFamily="Commit Mono, monospace">
             {unit}
           </text>
         ) : null}

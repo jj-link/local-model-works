@@ -185,6 +185,19 @@ function invalidates(...keys: ReadonlyArray<readonly unknown[]>) {
   };
 }
 
+export function useChatCompletions() {
+  return useMutation({
+    mutationFn: ({
+      body,
+      signal,
+    }: {
+      body: api.ChatRequest;
+      signal: AbortSignal;
+      threadId: string;
+    }) => api.chatCompletions(body, { signal }),
+  });
+}
+
 export function useApproveNode() {
   const qc = useQueryClient();
   return useMutation({
