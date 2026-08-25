@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LMW — AutoResearch Factory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #17262a;
+      --muted: #687074;
+      --faint: #929895;
+      --paper: #f3f0e7;
+      --sheet: #fbfaf5;
+      --line: #d9d4c7;
+      --line-dark: #bdb7aa;
+      --oxblood: #8e2928;
+      --moss: #4f6c4f;
+      --moss-soft: #dce5d4;
+      --ochre: #a87822;
+      --ochre-soft: #eee2bf;
+      --blue: #44667b;
+      --blue-soft: #d9e6eb;
+      --rose: #8a4c4e;
+      --rose-soft: #ecd9d5;
+      --deep: #16252a;
+      --live: #c87135;
+      --shadow: 0 18px 60px rgba(35, 39, 34, .09);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 80% 0%, rgba(255,255,255,.75), transparent 34rem),
+        linear-gradient(90deg, rgba(23,38,42,.025) 1px, transparent 1px),
+        var(--paper);
+      background-size: auto, 72px 72px, auto;
+      font-family: "Public Sans", sans-serif;
+    }
+
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 16px 18px;
+      color: #e6e4da;
+      background:
+        radial-gradient(circle at 18% 5%, rgba(129,157,142,.15), transparent 25rem),
+        linear-gradient(180deg, #18292e 0%, #122126 100%);
+      border-right: 1px solid #314247;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 10px 27px;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: #f3f0e7;
+      color: var(--deep);
+      border-radius: 3px;
+      font: 600 17px "Newsreader", serif;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.45);
+    }
+    .brand-name { font: 500 20px "Newsreader", serif; letter-spacing: .01em; }
+    .brand-meta { color: #839398; font: 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
+
+    .nav-label {
+      padding: 0 12px 8px;
+      color: #71858a;
+      font: 500 10px "DM Mono", monospace;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+    .nav { display: grid; gap: 4px; }
+    .nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      min-height: 42px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      color: #aeb9b8;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: color .16s ease, background .16s ease, border-color .16s ease;
+    }
+    .nav-item:hover { color: #fff; background: rgba(255,255,255,.04); }
+    .nav-item.active {
+      color: #fff;
+      background: rgba(255,255,255,.075);
+      border-color: #405358;
+    }
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: -17px;
+      width: 3px;
+      height: 22px;
+      background: #d9d0af;
+    }
+    .nav-icon {
+      width: 19px;
+      text-align: center;
+      color: #899c9e;
+      font: 15px "DM Mono", monospace;
+    }
+    .nav-item.active .nav-icon { color: #e9dfbc; }
+    .nav-text { font-size: 13px; }
+    .nav-badge {
+      margin-left: auto;
+      padding: 2px 6px;
+      color: #acbbb9;
+      background: rgba(255,255,255,.06);
+      border: 1px solid #43555a;
+      border-radius: 10px;
+      font: 9px "DM Mono", monospace;
+    }
+
+    .sidebar-spacer { flex: 1; }
+    .worker {
+      padding: 14px 12px;
+      border-top: 1px solid #34464b;
+    }
+    .worker-head { display: flex; align-items: center; gap: 9px; }
+    .worker-light {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #8ba379;
+      box-shadow: 0 0 0 4px rgba(139,163,121,.1);
+    }
+    .worker-name { color: #d8dfda; font-size: 12px; }
+    .worker-detail { margin: 7px 0 0 16px; color: #73878a; font: 10px/1.5 "DM Mono", monospace; }
+
+    .main { min-width: 0; padding: 0 30px 36px; }
+    .topbar {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+    }
+    .crumbs { color: var(--muted); font: 11px "DM Mono", monospace; }
+    .crumbs b { color: var(--ink); font-weight: 500; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      color: #4d5c5c;
+      background: rgba(251,250,245,.72);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      font: 10px "DM Mono", monospace;
+    }
+    .status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #738e6a; }
+    .icon-button {
+      width: 31px;
+      height: 31px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--sheet);
+      cursor: pointer;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 30px;
+      align-items: end;
+      padding: 34px 0 25px;
+    }
+    .eyebrow { margin-bottom: 8px; color: var(--oxblood); font: 500 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 7px; font: 500 clamp(36px, 4vw, 55px)/.98 "Newsreader", serif; letter-spacing: -.025em; }
+    .hero p { margin-bottom: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .hero-stats { display: grid; grid-template-columns: repeat(3, auto); gap: 0; border: 1px solid var(--line); background: rgba(251,250,245,.68); }
+    .stat { min-width: 98px; padding: 13px 15px; border-left: 1px solid var(--line); }
+    .stat:first-child { border-left: 0; }
+    .stat-label { color: var(--faint); font: 9px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .06em; }
+    .stat-value { margin-top: 5px; font: 500 18px "Newsreader", serif; }
+
+    .composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 15px;
+      background: var(--sheet);
+      border: 1px solid var(--line-dark);
+      box-shadow: 0 5px 24px rgba(44,44,38,.045);
+    }
+    .composer-input { min-width: 0; }
+    .composer label { display: block; margin-bottom: 7px; color: var(--faint); font: 500 9px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
+    .composer textarea {
+      width: 100%;
+      height: 54px;
+      resize: none;
+      padding: 0;
+      color: var(--ink);
+      background: transparent;
+      border: 0;
+      outline: 0;
+      font: 500 19px/1.35 "Newsreader", serif;
+    }
+    .composer-controls { display: flex; align-items: flex-end; gap: 8px; }
+    .select-wrap select {
+      height: 38px;
+      padding: 0 31px 0 11px;
+      color: #536063;
+      background: #f6f4ed;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      font: 10px "DM Mono", monospace;
+    }
+    .run-button {
+      height: 38px;
+      min-width: 128px;
+      padding: 0 16px;
+      color: #f7f3e8;
+      background: var(--deep);
+      border: 1px solid var(--deep);
+      border-radius: 2px;
+      cursor: pointer;
+      font: 500 11px "DM Mono", monospace;
+      transition: transform .15s ease, background .15s ease;
+    }
+    .run-button:hover { background: #243b41; transform: translateY(-1px); }
+    .run-button.running { color: var(--deep); background: #e7debf; border-color: #bcae80; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+      align-items: start;
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .panel { background: rgba(251,250,245,.92); border: 1px solid var(--line); box-shadow: 0 8px 35px rgba(44,44,38,.035); }
+    .panel-head {
+      height: 49px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-title { display: flex; align-items: baseline; gap: 10px; }
+    .panel-title h2 { margin: 0; font: 500 17px "Newsreader", serif; }
+    .panel-kicker { color: var(--faint); font: 9px "DM Mono", monospace; text-transform: uppercase; }
+    .legend { display: flex; gap: 12px; color: var(--faint); font: 9px "DM Mono", monospace; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { width: 6px; height: 6px; display: inline-block; border-radius: 50%; background: #99a09c; }
+    .legend i.live { background: var(--live); box-shadow: 0 0 0 3px rgba(200,113,53,.14); }
+
+    .flow-canvas {
+      padding: 12px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .chart-reference {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 2347 / 1343;
+      background: #fff;
+      line-height: 0;
+    }
+    .chart-reference > img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .chart-node {
+      --stage: #60767a;
+      --stage-soft: rgba(96,118,122,.14);
+      position: absolute;
+      z-index: 3;
+      left: var(--x);
+      top: var(--y);
+      width: var(--size, 7%);
+      aspect-ratio: 1;
+      container-type: inline-size;
+      padding: 0;
+      color: var(--ink);
+      background: transparent;
+      border: 0;
+      border-radius: 50%;
+      outline: 0;
+      cursor: pointer;
+      transform: translate(-50%, -50%);
+    }
+    .chart-node.stage-idea { --stage: #7168bb; --stage-soft: rgba(113,104,187,.16); --panel: #f4f2fb; }
+    .chart-node.stage-proposal { --stage: #a47824; --stage-soft: rgba(164,120,36,.16); --panel: #fef6ea; }
+    .chart-node.stage-experiment { --stage: #397b9e; --stage-soft: rgba(57,123,158,.16); --panel: #f0f5fd; }
+    .chart-node.stage-paper { --stage: #a85352; --stage-soft: rgba(168,83,82,.15); --panel: #fdf0ef; }
+    .chart-node.stage-literature { --stage: #5d8455; --stage-soft: rgba(93,132,85,.16); --panel: #e2f0d9; }
+    .node-shell {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: visible;
+      background: var(--panel, #fff);
+      border: 0;
+      border-radius: 50%;
+    }
+    .node-shell::before {
+      content: "";
+      position: absolute;
+      inset: 13.5%;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.98), rgba(244,243,236,.97)),
+        var(--stage-soft);
+      border: 1px solid var(--stage);
+      border-radius: 50%;
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,.85),
+        inset 0 -8px 18px var(--stage-soft),
+        0 3px 10px rgba(23,38,42,.12);
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+    .node-shell::after {
+      content: "";
+      position: absolute;
+      inset: 22%;
+      border-top: 1px solid color-mix(in srgb, var(--stage) 35%, transparent);
+      border-bottom: 1px solid color-mix(in srgb, var(--stage) 25%, transparent);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .node-avatar {
+      position: absolute;
+      z-index: 2;
+      top: 3%;
+      left: 3%;
+      min-width: 28%;
+      padding: 2px 3px;
+      color: #fff;
+      background: var(--stage);
+      border: 1px solid rgba(255,255,255,.68);
+      border-radius: 2px;
+      box-shadow: 0 2px 5px color-mix(in srgb, var(--stage) 35%, transparent);
+      font: 700 clamp(8px, 22cqw, 11px)/1 "DM Mono", monospace;
+      letter-spacing: .03em;
+    }
+    .node-avatar::after {
+      content: "";
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      width: 3px;
+      height: 3px;
+      background: #85918d;
+      border: 1px solid #fff;
+      border-radius: 50%;
+    }
+    .node-role {
+      position: relative;
+      z-index: 2;
+      display: -webkit-box;
+      max-width: 86%;
+      overflow: hidden;
+      color: #26373b;
+      font: 800 clamp(8px, 20cqw, 11px)/0.9 "Public Sans", sans-serif;
+      letter-spacing: -.01em;
+      text-align: center;
+      white-space: normal;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .node-model {
+      position: absolute;
+      z-index: 2;
+      left: 50%;
+      bottom: 3%;
+      max-width: 110%;
+      padding: 1px 3px;
+      overflow: hidden;
+      color: color-mix(in srgb, var(--stage) 80%, #17262a);
+      background: color-mix(in srgb, var(--stage-soft) 70%, #fff);
+      border: 1px solid color-mix(in srgb, var(--stage) 35%, transparent);
+      border-radius: 5px;
+      font: 600 clamp(7px, 15cqw, 9px)/1 "DM Mono", monospace;
+      letter-spacing: -.015em;
+      text-overflow: ellipsis;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .chart-node:hover .node-shell::before,
+    .chart-node:focus-visible .node-shell::before {
+      transform: scale(1.08);
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,.9),
+        inset 0 -8px 18px var(--stage-soft),
+        0 0 0 4px var(--stage-soft),
+        0 8px 20px rgba(23,38,42,.2);
+    }
+    .chart-node.live { --stage: var(--live); --stage-soft: rgba(200,113,53,.18); z-index: 6; }
+    .chart-node.live .node-shell::before {
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,.9),
+        inset 0 -8px 20px rgba(200,113,53,.18),
+        0 0 0 5px rgba(200,113,53,.13),
+        0 0 28px rgba(200,113,53,.58);
+      animation: referenceNodePulse 1.75s ease-in-out infinite;
+    }
+    .chart-node.live .node-shell::after {
+      border-style: solid;
+      animation: nodeOrbit 4s linear infinite;
+    }
+    .chart-node.live .node-avatar::after {
+      width: 6px;
+      height: 6px;
+      background: #ffb36e;
+      box-shadow: 0 0 8px rgba(255,155,74,.9);
+    }
+    @keyframes nodeOrbit { to { transform: rotate(374deg); } }
+    .chart-attribution {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 13px 10px;
+      color: var(--faint);
+      background: #fff;
+      border-top: 1px solid #ebe8df;
+      font: 8px "DM Mono", monospace;
+    }
+    .chart-attribution a { color: var(--oxblood); text-decoration: none; }
+    @keyframes referenceNodePulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.055); }
+    }
+
+    .stream-panel { display: flex; flex-direction: column; min-height: 490px; }
+    .stream-head-status { display: flex; align-items: center; gap: 7px; color: #7a5038; font: 9px "DM Mono", monospace; }
+    .stream-head-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: blink 1s step-end infinite; }
+    .stream-summary { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+    .stream-metric { padding: 13px 12px; border-left: 1px solid var(--line); }
+    .stream-metric:first-child { border-left: 0; }
+    .stream-metric label { display: block; margin-bottom: 5px; color: var(--faint); font: 8px "DM Mono", monospace; text-transform: uppercase; }
+    .stream-metric strong { font: 500 15px "Newsreader", serif; }
+    .sparkline { width: 100%; height: 30px; margin-top: 2px; }
+    .stream-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .active-agent {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 14px 15px;
+      background: #f7f2e8;
+      border-bottom: 1px solid var(--line);
+    }
+    .agent-glyph { width: 31px; height: 31px; display: grid; place-items: center; color: #fff9ed; background: var(--oxblood); transform: rotate(45deg); }
+    .agent-glyph span { transform: rotate(-45deg); font: 12px "DM Mono", monospace; }
+    .active-agent h3 { margin: 0 0 3px; font: 500 15px "Newsreader", serif; }
+    .active-agent p { margin: 0; color: var(--muted); font: 8px "DM Mono", monospace; }
+    .token-rate { color: #7f4c2b; font: 500 9px "DM Mono", monospace; }
+    .transcript {
+      flex: 1;
+      min-height: 240px;
+      overflow: hidden;
+      padding: 15px;
+      color: #3f4a4b;
+      background: #1d2a2e;
+      font: 10px/1.75 "DM Mono", monospace;
+    }
+    .line { opacity: 0; transform: translateY(6px); animation: lineIn .4s ease forwards; }
+    .line.meta { color: #71898a; }
+    .line.tool { color: #d1be82; }
+    .line.output { color: #d7dfd6; }
+    .line.accent { color: #e2a879; }
+    .cursor { display: inline-block; width: 6px; height: 12px; margin-left: 2px; vertical-align: -2px; background: #d9bd75; animation: blink .8s step-end infinite; }
+    .timeline { padding: 14px 15px 6px; border-top: 1px solid #314247; background: #1d2a2e; }
+    .timeline-row { display: grid; grid-template-columns: 49px 1fr auto; gap: 8px; padding: 7px 0; color: #839293; border-top: 1px solid rgba(255,255,255,.05); font: 8px "DM Mono", monospace; }
+    .timeline-row b { color: #d8dbd1; font-weight: 400; }
+    .timeline-row em { color: #a9bfa3; font-style: normal; }
+    .stream-footer { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); background: #f7f5ee; color: var(--muted); font: 8px "DM Mono", monospace; }
+    .stop-button { padding: 6px 9px; color: var(--oxblood); background: transparent; border: 1px solid #c8aca7; border-radius: 2px; cursor: pointer; font: inherit; }
+
+    .toast {
+      position: fixed;
+      right: 28px;
+      bottom: 24px;
+      z-index: 20;
+      padding: 11px 14px;
+      color: #f5f0e4;
+      background: var(--deep);
+      border: 1px solid #3b5056;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      font: 9px "DM Mono", monospace;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @keyframes livePulse {
+      0%, 100% { box-shadow: 0 0 0 5px rgba(200,113,53,.10), 0 0 16px rgba(200,113,53,.22); }
+      50% { box-shadow: 0 0 0 8px rgba(200,113,53,.16), 0 0 30px rgba(200,113,53,.45); }
+    }
+    @keyframes blink { 50% { opacity: .25; } }
+    @keyframes lineIn { to { opacity: 1; transform: translateY(0); } }
+
+    @media (max-width: 1180px) {
+      .app { grid-template-columns: 72px minmax(0,1fr); }
+      .sidebar { padding-inline: 9px; }
+      .brand { padding-inline: 10px; }
+      .brand-name, .brand-meta, .nav-label, .nav-text, .nav-badge, .worker { display: none; }
+      .nav-item { justify-content: center; padding: 0; }
+      .nav-item.active::before { left: -10px; }
+      .workspace { grid-template-columns: 1fr; }
+      .stream-panel { min-height: 590px; }
+    }
+    @media (max-width: 800px) {
+      .app { display: block; }
+      .sidebar { position: static; width: 100%; height: auto; flex-direction: row; align-items: center; padding: 8px 10px; }
+      .brand { padding: 0 8px 0 0; }
+      .nav { display: flex; overflow-x: auto; }
+      .nav-item { width: 42px; }
+      .nav-item.active::before { display: none; }
+      .sidebar-spacer, .nav-label { display: none; }
+      .main { padding: 0 15px 24px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-stats { width: 100%; }
+      .composer { grid-template-columns: 1fr; }
+      .composer-controls { justify-content: space-between; }
+      .workspace { display: block; }
+      .flow-panel { overflow-x: auto; margin-bottom: 16px; }
+      .flow-canvas { min-width: 720px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">L</div>
+        <div><div class="brand-name">Local Model Works</div><div class="brand-meta">control room</div></div>
+      </div>
+      <div class="nav-label">Workspace</div>
+      <nav class="nav" aria-label="Primary navigation">
+        <button class="nav-item"><span class="nav-icon">⌂</span><span class="nav-text">Overview</span></button>
+        <button class="nav-item"><span class="nav-icon">◇</span><span class="nav-text">Models</span><span class="nav-badge">4</span></button>
+        <button class="nav-item"><span class="nav-icon">⌘</span><span class="nav-text">Workers</span><span class="nav-badge">2</span></button>
+        <button class="nav-item"><span class="nav-icon">▱</span><span class="nav-text">Recipes</span></button>
+        <button class="nav-item active"><span class="nav-icon">✣</span><span class="nav-text">AutoResearch</span><span class="nav-badge">live</span></button>
+        <button class="nav-item"><span class="nav-icon">◷</span><span class="nav-text">Run history</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="nav">
+        <button class="nav-item"><span class="nav-icon">⚙</span><span class="nav-text">Settings</span></button>
+      </div>
+      <div class="worker">
+        <div class="worker-head"><span class="worker-light"></span><span class="worker-name">Spark fabric healthy</span></div>
+        <p class="worker-detail">2 nodes · RDMA linked<br>312 GB available</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumbs">LMW / WORKSPACES / <b>AUTO-RESEARCH-FACTORY</b></div>
+        <div class="top-actions">
+          <span class="status-pill">Agon · pinned 7a82c1d</span>
+          <button class="icon-button" aria-label="Notifications">◌</button>
+          <button class="icon-button" aria-label="More options">···</button>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Autonomous research workspace</div>
+          <h1>AutoResearch Factory</h1>
+          <p>Take a research question from topic radar to experiments, with every agent handoff visible.</p>
+        </div>
+        <div class="hero-stats" aria-label="Run summary">
+          <div class="stat"><div class="stat-label">Run</div><div class="stat-value">#018</div></div>
+          <div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value" id="elapsed">08:42</div></div>
+          <div class="stat"><div class="stat-label">Cost</div><div class="stat-value" id="cost">$1.84</div></div>
+        </div>
+      </section>
+
+      <section class="composer" aria-label="Start a research run">
+        <div class="composer-input">
+          <label for="topic">Research topic</label>
+          <textarea id="topic">Can sparse latent world models improve long-horizon robotic planning?</textarea>
+        </div>
+        <div class="composer-controls">
+          <div class="select-wrap">
+            <label for="entry">Start at</label>
+            <select id="entry"><option>Idea factory</option><option>Proposal factory</option><option>Experiment factory</option><option>Deep literature</option></select>
+          </div>
+          <button class="run-button running" id="runButton">Pause run</button>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <section class="panel flow-panel">
+          <header class="panel-head">
+            <div class="panel-title"><h2>Research topology</h2><span class="panel-kicker">Live execution graph</span></div>
+            <div class="legend"><span><i></i> waiting</span><span><i class="live"></i> generating</span></div>
+          </header>
+          <div class="flow-canvas">
+            <div class="chart-reference" id="chartReference">
+              <img src="assets/agon-workflow.png" alt="Agon workflow from topic radar through idea, proposal, experiment, deep literature, and paper factories">
+
+              <button class="chart-node stage-idea" style="--x:10.1%;--y:54.8%" aria-label="Idea creator — Qwen 3.5"><span class="node-shell"><span class="node-avatar">IC</span><span class="node-role">creator</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-idea" style="--x:17.8%;--y:54.8%" aria-label="Idea reviewer — DeepSeek V4"><span class="node-shell"><span class="node-avatar">IR</span><span class="node-role">reviewer</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-idea" style="--x:13.4%;--y:42.1%" aria-label="Idea refiner — Qwen 3.5"><span class="node-shell"><span class="node-avatar">IF</span><span class="node-role">refiner</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-literature" style="--x:21.5%;--y:41.5%" aria-label="Idea deep literature — DeepSeek V4"><span class="node-shell"><span class="node-avatar">DL</span><span class="node-role">deep-lit</span><span class="node-model">DS-V4</span></span></button>
+
+              <button class="chart-node stage-literature" style="--x:35.2%;--y:40%" aria-label="Proposal deep literature — DeepSeek V4"><span class="node-shell"><span class="node-avatar">DL</span><span class="node-role">deep-lit</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-proposal" style="--x:30.8%;--y:54.8%" aria-label="Proposal refiner — DeepSeek V4"><span class="node-shell"><span class="node-avatar">PF</span><span class="node-role">refiner</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-proposal" style="--x:39.4%;--y:54.8%" aria-label="Proposal reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">PR</span><span class="node-role">reviewer</span><span class="node-model">QWEN-3.5</span></span></button>
+
+              <button class="chart-node stage-literature" style="--x:55.3%;--y:34.6%" aria-label="Experiment deep literature — DeepSeek V4"><span class="node-shell"><span class="node-avatar">DL</span><span class="node-role">deep-lit</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-experiment" style="--x:53.7%;--y:44%" aria-label="Experiment auditor — DeepSeek V4"><span class="node-shell"><span class="node-avatar">EA</span><span class="node-role">auditor</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-experiment" style="--x:47.2%;--y:55%" aria-label="Experiment scientist — DeepSeek V4"><span class="node-shell"><span class="node-avatar">ES</span><span class="node-role">scientist</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-experiment live" id="liveNode" style="--x:56.9%;--y:51.3%" aria-label="Experiment coder — Qwen 3.5 Coder — generating"><span class="node-shell"><span class="node-avatar">EC</span><span class="node-role">coder</span><span class="node-model">QWEN-CODE</span></span></button>
+              <button class="chart-node stage-experiment" style="--x:62.8%;--y:55.2%" aria-label="Experiment reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">ER</span><span class="node-role">reviewer</span><span class="node-model">QWEN-3.5</span></span></button>
+
+              <button class="chart-node stage-paper" style="--x:81.7%;--y:36.3%;--size:5.2%" aria-label="Paper area chair — Qwen 3.5"><span class="node-shell"><span class="node-avatar">AC</span><span class="node-role">area-chair</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-paper" style="--x:78.3%;--y:46%;--size:5.2%" aria-label="Rhetorician — DeepSeek V4"><span class="node-shell"><span class="node-avatar">RH</span><span class="node-role">rhetorician</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-paper" style="--x:85.4%;--y:45.6%;--size:5.2%" aria-label="Paper killer reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">KR</span><span class="node-role">killer-review</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-paper" style="--x:81.7%;--y:57.7%;--size:5.2%" aria-label="Paper writer — DeepSeek V4"><span class="node-shell"><span class="node-avatar">PW</span><span class="node-role">writer</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-paper" style="--x:75.39%;--y:72.15%;--size:5.2%" aria-label="Paper auditor 1 — DeepSeek V4"><span class="node-shell"><span class="node-avatar">A1</span><span class="node-role">auditor-1</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-paper" style="--x:72.86%;--y:79.08%;--size:5.2%" aria-label="Paper auditor 2 — Qwen 3.5"><span class="node-shell"><span class="node-avatar">A2</span><span class="node-role">auditor-2</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-paper" style="--x:77.95%;--y:79.08%;--size:5.2%" aria-label="Paper auditor 3 — DeepSeek V4"><span class="node-shell"><span class="node-avatar">A3</span><span class="node-role">auditor-3</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-paper" style="--x:88.96%;--y:74.53%;--size:5.2%" aria-label="Paper reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">RV</span><span class="node-role">reviewer</span><span class="node-model">QWEN-3.5</span></span></button>
+
+              <button class="chart-node stage-idea" style="--x:20.9%;--y:71.5%;--size:5.2%" aria-label="Deep literature idea reviewer — DeepSeek V4"><span class="node-shell"><span class="node-avatar">IR</span><span class="node-role">idea-review</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-proposal" style="--x:17.9%;--y:78.8%;--size:5.2%" aria-label="Deep literature proposal reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">PR</span><span class="node-role">proposal-review</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-experiment" style="--x:23.3%;--y:78.8%;--size:5.2%" aria-label="Deep literature experiment reviewer — Qwen 3.5"><span class="node-shell"><span class="node-avatar">ER</span><span class="node-role">experiment-review</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-literature" style="--x:36.4%;--y:68.8%;--size:5.2%" aria-label="Multiple deep literature readers — DeepSeek V4"><span class="node-shell"><span class="node-avatar">N×</span><span class="node-role">lit-readers</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-literature" style="--x:36.4%;--y:79%;--size:5.2%" aria-label="Deep literature coordinator — DeepSeek V4"><span class="node-shell"><span class="node-avatar">DL</span><span class="node-role">deep-lit</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-idea" style="--x:52.4%;--y:71.5%;--size:5.2%" aria-label="Deep literature idea refiner — Qwen 3.5"><span class="node-shell"><span class="node-avatar">IF</span><span class="node-role">idea-refine</span><span class="node-model">QWEN-3.5</span></span></button>
+              <button class="chart-node stage-proposal" style="--x:49.5%;--y:79%;--size:5.2%" aria-label="Deep literature proposal refiner — DeepSeek V4"><span class="node-shell"><span class="node-avatar">PF</span><span class="node-role">proposal-refine</span><span class="node-model">DS-V4</span></span></button>
+              <button class="chart-node stage-experiment" style="--x:54.5%;--y:79%;--size:5.2%" aria-label="Deep literature experiment scientist — DeepSeek V4"><span class="node-shell"><span class="node-avatar">ES</span><span class="node-role">scientist</span><span class="node-model">DS-V4</span></span></button>
+            </div>
+          </div>
+          <div class="chart-attribution"><span>Exact Agon workflow · interactive model/status overlay</span><a href="https://github.com/AutoResearch-Factory/Agon" target="_blank" rel="noreferrer">Source: AutoResearch-Factory/Agon</a></div>
+        </section>
+
+        <aside class="panel stream-panel">
+          <header class="panel-head">
+            <div class="panel-title"><h2>Generation stream</h2><span class="panel-kicker">Tokens</span></div>
+            <div class="stream-head-status" id="streamStatus"><i></i><span>LIVE</span></div>
+          </header>
+          <div class="stream-summary">
+            <div class="stream-metric"><label>Total tokens</label><strong id="tokens">48,291</strong></div>
+            <div class="stream-metric"><label>Output rate</label><strong id="rate">76.4 t/s</strong></div>
+            <div class="stream-metric"><label>Context</label><strong id="context">32%</strong></div>
+          </div>
+          <div class="stream-body">
+            <div class="active-agent">
+              <div class="agent-glyph"><span>⌁</span></div>
+              <div><h3>Experiment coder</h3><p>QWEN3.5-CODER · SPARK2</p></div>
+              <div class="token-rate" id="tokenDelta">+18,402</div>
+            </div>
+            <div class="transcript" id="transcript" aria-live="polite">
+              <div class="line meta" style="animation-delay:.05s">[experiment-coder] implementing trial 04</div>
+              <div class="line tool" style="animation-delay:.16s">→ read workspace/proposal.md</div>
+              <div class="line tool" style="animation-delay:.27s">→ inspect baselines/world_model.py</div>
+              <div class="line output" style="animation-delay:.38s">The evaluation needs to separate prediction quality from downstream planning performance. I’ll add an ablation over latent sparsity while holding planner budget constant.</div>
+              <div class="line tool" style="animation-delay:.49s">→ write experiments/sparse_latent_ablation.py</div>
+              <div class="line accent" style="animation-delay:.60s">Generating implementation and launch manifest<span class="cursor"></span></div>
+            </div>
+            <div class="timeline">
+              <div class="timeline-row"><span>10:41:08</span><b>experiment scientist</b><em>complete</em></div>
+              <div class="timeline-row"><span>10:43:26</span><b>experiment coder</b><em id="timelineState">generating</em></div>
+              <div class="timeline-row"><span>—</span><b>experiment auditor</b><span>queued</span></div>
+            </div>
+          </div>
+          <footer class="stream-footer"><span>Events retained in run-018/events.jsonl</span><button class="stop-button" id="stopButton">Stop run</button></footer>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast">Run paused. State persisted.</div>
+
+  <script>
+    const state = { running: true, tokens: 48291, elapsed: 522, cost: 1.84, tick: 0 };
+    const tokens = document.querySelector('#tokens');
+    const rate = document.querySelector('#rate');
+    const context = document.querySelector('#context');
+    const elapsed = document.querySelector('#elapsed');
+    const cost = document.querySelector('#cost');
+    const runButton = document.querySelector('#runButton');
+    const stopButton = document.querySelector('#stopButton');
+    const liveNode = document.querySelector('#liveNode');
+    const streamStatus = document.querySelector('#streamStatus');
+    const timelineState = document.querySelector('#timelineState');
+    const toast = document.querySelector('#toast');
+    const chartReference = document.querySelector('#chartReference');
+
+    const formatElapsed = (value) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+    const showToast = (message) => {
+      toast.textContent = message;
+      toast.classList.add('show');
+      window.clearTimeout(showToast.timeout);
+      showToast.timeout = window.setTimeout(() => toast.classList.remove('show'), 1800);
+    };
+    const renderRunState = () => {
+      runButton.textContent = state.running ? 'Pause run' : 'Resume run';
+      runButton.classList.toggle('running', state.running);
+      liveNode.classList.toggle('live', state.running);
+      streamStatus.innerHTML = state.running ? '<i></i><span>LIVE</span>' : '<span>PAUSED</span>';
+      timelineState.textContent = state.running ? 'generating' : 'paused';
+      chartReference.classList.toggle('paused', !state.running);
+    };
+
+    runButton.addEventListener('click', () => {
+      state.running = !state.running;
+      renderRunState();
+      showToast(state.running ? 'Run resumed. Token stream connected.' : 'Run paused. State persisted.');
+    });
+    stopButton.addEventListener('click', () => {
+      state.running = false;
+      renderRunState();
+      showToast('Mock run stopped. No worker process was changed.');
+    });
+
+    window.setInterval(() => {
+      if (!state.running) return;
+      state.tick += 1;
+      const delta = 15 + Math.floor(Math.random() * 11);
+      state.tokens += delta;
+      state.elapsed += 1;
+      state.cost += delta * .0000018;
+      tokens.textContent = state.tokens.toLocaleString();
+      rate.textContent = `${(72 + Math.sin(state.tick / 3) * 7.5).toFixed(1)} t/s`;
+      context.textContent = `${Math.min(99, Math.floor(state.tokens / 1500))}%`;
+      elapsed.textContent = formatElapsed(state.elapsed);
+      cost.textContent = `$${state.cost.toFixed(2)}`;
+    }, 1000);
+  </script>
+</body>
+</html>
