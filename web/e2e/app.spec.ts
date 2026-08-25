@@ -47,7 +47,7 @@ test("unauthenticated navigation lands on the operator login", async ({ page }) 
 
 test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
   await installAPI(page);
-  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/chat"];
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/profiles", "/knowledge", "/serving", "/serving/deployments", "/benchmarks", "/benchmarks/leaderboard", "/research/autoresearch", "/research/experiments", "/research/workflows", "/scheduled", "/usage", "/fine-tuning", "/projects", "/workshop", "/runs", "/chat"];
   for (const path of routes) {
     await page.goto(path);
     await expect(page.getByRole("navigation")).toBeVisible();
@@ -56,7 +56,7 @@ test("every first-party module route mounts inside the authenticated shell", asy
   }
 });
 
-test("grouped navigation exposes only functional routes on desktop and mobile", async ({ page }) => {
+test("Sample A navigation exposes real and skeleton destinations on desktop and mobile", async ({ page }) => {
   await installAPI(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/library/artifacts");
@@ -64,16 +64,19 @@ test("grouped navigation exposes only functional routes on desktop and mobile", 
   const desktopNav = page.getByRole("navigation", { name: "Primary" });
   await expect(desktopNav).toBeVisible();
   for (const label of [
-    "Overview", "Topology", "Nodes", "Fabrics", "Catalog", "Recipe Builder",
-    "Artifacts", "Transfers", "Serving", "Benchmarks", "Runs", "Chat",
+    "Topology", "Nodes", "Fabrics", "Catalog", "Recipe Builder", "Profiles & Sharing",
+    "Artifacts", "Transfers", "Knowledge & RAG", "Serving", "Community Leaderboard",
+    "Autoresearch", "Experiment Builder", "Workflow Builder",
+    "Scheduled Tasks & Automations", "Usage & Costs", "Integrated Fine-tuning",
+    "Projects", "Runs", "Chat",
   ]) {
     await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
-  for (const absentLabel of [
-    "Settings", "Modules", "Profiles", "Sharing", "Knowledge & RAG", "Research",
-    "Scheduled Automations", "Usage & Costs", "Fine-tuning", "Projects",
-    "Community Leaderboard",
-  ]) {
+  await expect(desktopNav.getByRole("link", { name: "Overview", exact: true })).toHaveCount(2);
+  for (const group of ["Workshop", "Fleet", "Recipes", "Benchmarks", "Research"]) {
+    await expect(desktopNav.getByRole("button", { name: group, exact: true })).toBeVisible();
+  }
+  for (const absentLabel of ["Settings", "Modules"]) {
     await expect(desktopNav.getByText(absentLabel, { exact: true })).toHaveCount(0);
   }
 
@@ -86,6 +89,10 @@ test("grouped navigation exposes only functional routes on desktop and mobile", 
   await expect(desktopNav.getByRole("link", { name: "Catalog", exact: true })).toHaveCount(0);
   await recipesGroup.click();
   await expect(desktopNav.getByRole("link", { name: "Catalog", exact: true })).toBeVisible();
+  await page.goto("/profiles");
+  await expect(page.locator("#main-content").getByRole("heading", { name: "Profiles & Sharing" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Section skeleton" })).toBeVisible();
+  await expect(page.getByText(/does not claim data or actions/i)).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/chat");
@@ -94,7 +101,7 @@ test("grouped navigation exposes only functional routes on desktop and mobile", 
   const mobileNav = page.getByRole("dialog").getByRole("navigation", { name: "Primary" });
   await expect(mobileNav).toBeVisible();
   await expect(mobileNav.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
-  await mobileNav.getByRole("link", { name: "Overview", exact: true }).click();
+  await mobileNav.getByRole("link", { name: "Overview", exact: true }).first().click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });

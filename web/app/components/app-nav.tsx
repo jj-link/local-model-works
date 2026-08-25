@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { ROADMAP_PAGES } from "~/roadmap-pages";
 
 export type AppNavItem = {
   id: string;
@@ -68,11 +69,18 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       items: [
         { id: "recipe-catalog", label: "Catalog", path: "/library/recipes", icon: Library },
         { id: "recipe-builder", label: "Recipe Builder", path: "/library/builder", icon: FileCode2 },
+        { id: "profiles-sharing", ...ROADMAP_PAGES.profiles, icon: Library },
         { id: "artifacts", label: "Artifacts", path: "/library/artifacts", icon: PackageOpen },
         { id: "transfers", label: "Transfers", path: "/library/transfers", icon: Network },
       ],
     });
   }
+  groups.push({
+    id: "knowledge",
+    label: ROADMAP_PAGES.knowledge.label,
+    icon: PackageOpen,
+    items: [{ id: "knowledge-route", ...ROADMAP_PAGES.knowledge, icon: PackageOpen }],
+  });
   if (enabledModuleIds.has("serving")) {
     groups.push({
       id: "serving",
@@ -81,14 +89,55 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       items: [{ id: "deployments", label: "Serving", path: "/serving/deployments", icon: Radio }],
     });
   }
-  if (enabledModuleIds.has("benchmarks")) {
-    groups.push({
-      id: "benchmarks",
-      label: "Benchmarks",
+  groups.push({
+    id: "benchmarks",
+    label: "Benchmarks",
+    icon: Gauge,
+    grouped: true,
+    items: [
+      ...(enabledModuleIds.has("benchmarks")
+        ? [{ id: "benchmarks-overview", label: "Overview", path: "/benchmarks", icon: ChartNoAxesCombined }]
+        : []),
+      { id: "community-leaderboard", ...ROADMAP_PAGES.leaderboard, icon: Gauge },
+    ],
+  });
+  groups.push({
+    id: "research",
+    label: "Research",
+    icon: ChartNoAxesCombined,
+    grouped: true,
+    items: [
+      { id: "autoresearch", ...ROADMAP_PAGES.autoresearch, icon: ChartNoAxesCombined },
+      { id: "experiment-builder", ...ROADMAP_PAGES.experiments, icon: FileCode2 },
+      { id: "workflow-builder", ...ROADMAP_PAGES.workflows, icon: Waypoints },
+    ],
+  });
+  groups.push(
+    {
+      id: "scheduled",
+      label: ROADMAP_PAGES.scheduled.label,
+      icon: History,
+      items: [{ id: "scheduled-route", ...ROADMAP_PAGES.scheduled, icon: History }],
+    },
+    {
+      id: "usage",
+      label: ROADMAP_PAGES.usage.label,
       icon: Gauge,
-      items: [{ id: "benchmarks-route", label: "Benchmarks", path: "/benchmarks", icon: ChartNoAxesCombined }],
-    });
-  }
+      items: [{ id: "usage-route", ...ROADMAP_PAGES.usage, icon: Gauge }],
+    },
+    {
+      id: "fine-tuning",
+      label: ROADMAP_PAGES.fineTuning.label,
+      icon: Server,
+      items: [{ id: "fine-tuning-route", ...ROADMAP_PAGES.fineTuning, icon: Server }],
+    },
+    {
+      id: "projects",
+      label: ROADMAP_PAGES.projects.label,
+      icon: PackageOpen,
+      items: [{ id: "projects-route", ...ROADMAP_PAGES.projects, icon: PackageOpen }],
+    },
+  );
   if (enabledModuleIds.has("runs")) {
     groups.push({
       id: "runs",

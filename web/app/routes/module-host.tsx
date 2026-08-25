@@ -2,10 +2,14 @@ import { matchPath, useLocation } from "react-router";
 
 import { useModules } from "~/lib/queries";
 import { uiModules } from "~/module-loader";
+import { roadmapPageForPath } from "~/roadmap-pages";
+import { RoadmapSkeleton } from "~/routes/roadmap-skeleton";
 
 export default function ModuleHost() {
   const location = useLocation();
   const modules = useModules();
+  const roadmapPage = roadmapPageForPath(location.pathname);
+  if (roadmapPage) return <RoadmapSkeleton page={roadmapPage} />;
   const enabled = new Set((modules.data ?? []).map((descriptor) => descriptor.id));
   for (const module of uiModules) {
     if (!enabled.has(module.id)) continue;

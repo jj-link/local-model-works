@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import RecipesRoute from "~/routes/library/recipes/index";
@@ -34,6 +34,8 @@ const recipes = [
     name: "beta-recipe",
     display_name: "Beta Model",
     version: "1.0.0",
+    description: "A local single-node recipe.",
+    license: "Apache-2.0",
     trust_state: "local",
     source: { type: "git", remote: "https://git.example/beta" },
     compatibility: { nodeCount: 1 },
@@ -44,6 +46,8 @@ const recipes = [
     name: "gamma-recipe",
     display_name: "Gamma Model",
     version: "1.5.0",
+    description: "An untrusted local recipe.",
+    license: "BSD-3-Clause",
     trust_state: "untrusted",
     source: { type: "local", remote: "/srv/gamma" },
     compatibility: { nodeCount: 2 },
@@ -51,9 +55,19 @@ const recipes = [
   },
 ] as const;
 
-function LocationProbe() {
-  return <output aria-label="Current path">{useLocation().pathname}</output>;
-}
+const deployments = [
+  {
+    id: "11111111-1111-4111-8111-111111111111",
+    recipe_digest: alphaDigest,
+    profile: "",
+    placements: [
+      { node_id: "node-1", node_name: "spark1", rank: 0 },
+      { node_id: "node-2", node_name: "spark2", rank: 1 },
+    ],
+    desired_state: "running",
+    observed_state: "healthy",
+  },
+];
 
 function renderCatalog() {
   const client = new QueryClient({
@@ -63,7 +77,6 @@ function renderCatalog() {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/library/recipes"]}>
         <RecipesRoute />
-        <LocationProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -75,63 +88,45 @@ function installCatalogHandlers(rows: readonly unknown[] = recipes) {
     http.get(`*/api/v1/recipes/${alphaDigest}`, () =>
       HttpResponse.json({ ...recipes[0], manifest: { artifacts: [], workloads: [] } }),
     ),
+    http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
     http.get("*/api/v1/nodes", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
   );
 }
 
-describe("RecipesRoute", () => {
-  it("renders real card fields, deterministic filters, sorting, and digest navigation", async () => {
+describe("RecipesRoute Sample A catalog", () => {
+  it("matches the Sample A hierarchy while using real recipe and deployment data", async () => {
     installCatalogHandlers();
     const user = userEvent.setup();
     renderCatalog();
 
-    const alphaLink = await screen.findByRole("link", { name: "Alpha Model" });
-    const alphaCard = alphaLink.closest("article");
-    expect(alphaCard).not.toBeNull();
-    expect(within(alphaCard as HTMLElement).getByText("Alpha 27B")).toBeInTheDocument();
-    expect(within(alphaCard as HTMLElement).getByText("vLLM")).toBeInTheDocument();
-    expect(within(alphaCard as HTMLElement).getByText(/roce/i)).toBeInTheDocument();
-    expect(within(alphaCard as HTMLElement).getByText("MIT")).toBeInTheDocument();
-    expect(within(alphaCard as HTMLElement).getByText("2.0.0 · 2 installed")).toBeInTheDocument();
-    expect(within(alphaCard as HTMLElement).getByTitle(alphaDigest)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sample A" })).toBeInTheDocument();
+    expect(screen.getByText("A curated catalog of models, workers, and workloads for your hardware.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "All recipes" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Trust verified" }));
-    expect(screen.getByRole("link", { name: "Alpha Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Beta Model" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Trust local" }));
-    expect(screen.getByRole("link", { name: "Beta Model" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Source git" }));
-    expect(screen.queryByRole("link", { name: "Alpha Model" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Beta Model" })).toBeInTheDocument();
+    const alphaCard = screen.getByRole("button", {
+      name: "Choose installation hardware for Alpha Model",
+    });
+    expect(within(alphaCard).getByText("Alpha Model")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("A verified two-node recipe.")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Installed on 2 devices")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Choose installation hardware →")).toBeInTheDocument();
+    expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
+    expect(within(alphaCard).getByLabelText("catalog source")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Trust verified" }));
-    await user.click(screen.getByRole("button", { name: "Trust local" }));
-    await user.click(screen.getByRole("button", { name: "Source git" }));
-    await user.selectOptions(screen.getByLabelText("Node count"), "2");
-    expect(screen.getByRole("link", { name: "Alpha Model" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Gamma Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Beta Model" })).not.toBeInTheDocument();
-
-    await user.selectOptions(screen.getByLabelText("Node count"), "");
-    await user.selectOptions(screen.getByLabelText("Sort recipes"), "newest");
-    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Alpha Model",
-      "Gamma Model",
-      "Beta Model",
+    expect(screen.getAllByRole("button", { name: /Choose installation hardware for/ }).map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Choose installation hardware for Alpha Model",
+      "Choose installation hardware for Beta Model",
+      "Choose installation hardware for Gamma Model",
     ]);
 
-    await user.clear(screen.getByLabelText("Search recipes"));
-    await user.type(screen.getByLabelText("Search recipes"), gammaDigest);
-    expect(screen.getByRole("link", { name: "Gamma Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Alpha Model" })).not.toBeInTheDocument();
-    await user.clear(screen.getByLabelText("Search recipes"));
-    await user.type(screen.getByLabelText("Search recipes"), "does-not-exist");
+    await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
+    expect(screen.getByRole("button", { name: "Choose installation hardware for Gamma Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Choose installation hardware for Alpha Model" })).not.toBeInTheDocument();
+    await user.clear(screen.getByRole("searchbox", { name: "Search recipes" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), "does-not-exist");
     expect(screen.getByText("No recipes match")).toBeInTheDocument();
-
-    await user.clear(screen.getByLabelText("Search recipes"));
-    await user.click(await screen.findByRole("link", { name: "Alpha Model" }));
-    expect(screen.getByLabelText("Current path")).toHaveTextContent(`/library/recipes/${alphaDigest}`);
   });
 
   it("opens the real import and recipe-preselected hardware dialogs", async () => {
@@ -143,8 +138,9 @@ describe("RecipesRoute", () => {
     expect(await screen.findByRole("heading", { name: "Install recipe" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
 
-    const alphaCard = (await screen.findByRole("link", { name: "Alpha Model" })).closest("article");
-    await user.click(within(alphaCard as HTMLElement).getByRole("button", { name: "Choose hardware" }));
+    await user.click(screen.getByRole("button", {
+      name: "Choose installation hardware for Alpha Model",
+    }));
     expect(await screen.findByRole("heading", { name: "Choose hardware" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
   });
@@ -156,11 +152,12 @@ describe("RecipesRoute", () => {
         await new Promise<void>((resolve) => { release = resolve; });
         return HttpResponse.json([]);
       }),
+      http.get("*/api/v1/deployments", () => HttpResponse.json([])),
       http.get("*/api/v1/nodes", () => HttpResponse.json([])),
       http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
     );
     const loadingView = renderCatalog();
-    expect(await screen.findByText("Loading recipes…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading recipes")).toBeInTheDocument();
     release?.();
     expect(await screen.findByText("No recipes installed")).toBeInTheDocument();
     loadingView.unmount();
@@ -173,6 +170,7 @@ describe("RecipesRoute", () => {
           ? HttpResponse.json({ code: "test.failure", message: "Catalog unavailable" }, { status: 503 })
           : HttpResponse.json([]);
       }),
+      http.get("*/api/v1/deployments", () => HttpResponse.json([])),
       http.get("*/api/v1/nodes", () => HttpResponse.json([])),
       http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
     );
@@ -180,7 +178,7 @@ describe("RecipesRoute", () => {
     renderCatalog();
     expect(await screen.findByText("Cannot load recipes")).toBeInTheDocument();
     expect(screen.getByText("Catalog unavailable")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "retry" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("No recipes installed")).toBeInTheDocument();
   });
 });
