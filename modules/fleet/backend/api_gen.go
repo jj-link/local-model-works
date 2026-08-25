@@ -247,8 +247,61 @@ type Node struct {
 	Status               NodeStatus         `json:"status"`
 }
 
+// NodePayload defines model for NodePayload.
+type NodePayload struct {
+	Accelerators *[]struct {
+		Index            *int   `json:"index,omitempty"`
+		MemoryTotalBytes *int64 `json:"memory_total_bytes,omitempty"`
+		MemoryUsedBytes  *int64 `json:"memory_used_bytes,omitempty"`
+		PowerLimitMw     *int64 `json:"power_limit_mw,omitempty"`
+		PowerMw          *int64 `json:"power_mw,omitempty"`
+		Processes        *[]struct {
+			Name               *string `json:"name,omitempty"`
+			Pid                *int64  `json:"pid,omitempty"`
+			UsedGpuMemoryBytes *int64  `json:"used_gpu_memory_bytes,omitempty"`
+		} `json:"processes,omitempty"`
+		TemperatureC       *int64    `json:"temperature_c,omitempty"`
+		ThrottleReasons    *[]string `json:"throttle_reasons,omitempty"`
+		UtilizationPercent *int64    `json:"utilization_percent,omitempty"`
+	} `json:"accelerators,omitempty"`
+	Cpu *struct {
+		Cores        *int64 `json:"cores,omitempty"`
+		Load1        *int64 `json:"load1,omitempty"`
+		UsagePercent *int64 `json:"usage_percent,omitempty"`
+	} `json:"cpu,omitempty"`
+	Filesystems *[]struct {
+		MountPath  *string `json:"mount_path,omitempty"`
+		TotalBytes *int64  `json:"total_bytes,omitempty"`
+		UsedBytes  *int64  `json:"used_bytes,omitempty"`
+	} `json:"filesystems,omitempty"`
+	Memory *struct {
+		SwapUsedBytes *int64 `json:"swap_used_bytes,omitempty"`
+		TotalBytes    *int64 `json:"total_bytes,omitempty"`
+		UsedBytes     *int64 `json:"used_bytes,omitempty"`
+	} `json:"memory,omitempty"`
+	Network *struct {
+		Interfaces *[]struct {
+			Name             *string `json:"name,omitempty"`
+			RxBytesPerSecond *int64  `json:"rx_bytes_per_second,omitempty"`
+			TxBytesPerSecond *int64  `json:"tx_bytes_per_second,omitempty"`
+		} `json:"interfaces,omitempty"`
+		RxBytes          *int64 `json:"rx_bytes,omitempty"`
+		RxBytesPerSecond *int64 `json:"rx_bytes_per_second,omitempty"`
+		TxBytes          *int64 `json:"tx_bytes,omitempty"`
+		TxBytesPerSecond *int64 `json:"tx_bytes_per_second,omitempty"`
+	} `json:"network,omitempty"`
+	UptimeSeconds *int64 `json:"uptime_seconds,omitempty"`
+}
+
 // NodeStatus defines model for NodeStatus.
 type NodeStatus string
+
+// NodeTelemetrySample defines model for NodeTelemetrySample.
+type NodeTelemetrySample struct {
+	NodeId  openapi_types.UUID `json:"node_id"`
+	Payload NodePayload        `json:"payload"`
+	Ts      int64              `json:"ts"`
+}
 
 // RdmaDevice defines model for RdmaDevice.
 type RdmaDevice struct {
@@ -259,13 +312,6 @@ type RdmaDevice struct {
 		State        *string `json:"state,omitempty"`
 	} `json:"ports"`
 	Vendor *string `json:"vendor,omitempty"`
-}
-
-// TelemetrySample defines model for TelemetrySample.
-type TelemetrySample struct {
-	NodeId  openapi_types.UUID     `json:"node_id"`
-	Payload map[string]interface{} `json:"payload"`
-	Ts      int64                  `json:"ts"`
 }
 
 // UpdateNodeRequest defines model for UpdateNodeRequest.
@@ -344,6 +390,9 @@ type ServerInterface interface {
 
 	// (GET /nodes)
 	ListNodes(w http.ResponseWriter, r *http.Request)
+	// ListNodeTelemetry Latest typed telemetry sample per node
+	// (GET /nodes/telemetry)
+	ListNodeTelemetry(w http.ResponseWriter, r *http.Request)
 
 	// (GET /nodes/{id})
 	GetNode(w http.ResponseWriter, r *http.Request, id ID)
@@ -392,6 +441,12 @@ func (_ Unimplemented) UpdateFabric(w http.ResponseWriter, r *http.Request, id I
 
 // (GET /nodes)
 func (_ Unimplemented) ListNodes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListNodeTelemetry Latest typed telemetry sample per node
+// (GET /nodes/telemetry)
+func (_ Unimplemented) ListNodeTelemetry(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -626,6 +681,20 @@ func (siw *ServerInterfaceWrapper) ListNodes(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListNodes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNodeTelemetry operation middleware
+func (siw *ServerInterfaceWrapper) ListNodeTelemetry(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNodeTelemetry(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -965,6 +1034,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/nodes/{id}/telemetry", wrapper.GetNodeTelemetry)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/nodes/telemetry", wrapper.ListNodeTelemetry)
 	})
 
 	return r

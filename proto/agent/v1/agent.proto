@@ -165,6 +165,9 @@ message Telemetry {
   MemoryTelemetry memory = 3;
   repeated AcceleratorTelemetry accelerators = 4;
   NetworkTelemetry network = 5;
+  // Host uptime in whole seconds since boot.
+  uint64 uptime_seconds = 6;
+  repeated FilesystemTelemetry filesystems = 7;
 }
 
 message CpuTelemetry {
@@ -186,11 +189,37 @@ message AcceleratorTelemetry {
   uint64 memory_total_bytes = 4;
   uint32 temperature_c = 5;
   uint32 power_mw = 6;
+  // Enforced power limit in milliwatts.
+  uint32 power_limit_mw = 7;
+  // Meaningful active clock-throttle causes: thermal | power | hardware.
+  repeated string throttle_reasons = 8;
+  repeated AcceleratorProcess processes = 9;
+}
+
+message AcceleratorProcess {
+  int32 pid = 1;
+  string name = 2;
+  uint64 used_gpu_memory_bytes = 3;
+}
+
+message FilesystemTelemetry {
+  string mount_path = 1;
+  uint64 used_bytes = 2;
+  uint64 total_bytes = 3;
 }
 
 message NetworkTelemetry {
   uint64 rx_bytes = 1;
   uint64 tx_bytes = 2;
+  uint64 rx_bytes_per_second = 3;
+  uint64 tx_bytes_per_second = 4;
+  repeated NetworkInterfaceTelemetry interfaces = 5;
+}
+
+message NetworkInterfaceTelemetry {
+  string name = 1;
+  uint64 rx_bytes_per_second = 2;
+  uint64 tx_bytes_per_second = 3;
 }
 
 message CommandResult {

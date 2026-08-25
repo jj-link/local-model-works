@@ -130,6 +130,7 @@ func (a *Agent) sendLoop(ctx context.Context, stream bidi) error {
 			if err != nil {
 				t = hardware.Telemetry{}
 			}
+			t.Filesystems = hardware.SampleFilesystems(append([]string{"/"}, a.cfg.CacheRoots...))
 			a.sendTelemetry(t)
 		case m := <-a.sendQ:
 			if err := stream.Send(m); err != nil {

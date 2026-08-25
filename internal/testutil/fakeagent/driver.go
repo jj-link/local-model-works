@@ -69,12 +69,23 @@ func (d *NVIDIADriver) Probe(ctx context.Context) (hardware.Inventory, error) {
 }
 
 // Sample implements hardware.Driver with a deterministic, lightweight sample.
+// Uptime, filesystem, power-limit, and process fields populate the extended
+// telemetry surface so downstream Fleet fixtures render non-empty values.
 func (d *NVIDIADriver) Sample(ctx context.Context) (hardware.Telemetry, error) {
 	t := hardware.Telemetry{
 		CPUUsagePercent:  7,
 		CPUCores:         10,
 		MemoryUsedBytes:  4 << 30,
 		MemoryTotalBytes: 128 << 30,
+		UptimeSeconds:    3600,
+		NetRxBytesPerSec: 1200,
+		NetTxBytesPerSec: 800,
+		NetworkInterfaces: []hardware.NetworkInterfaceTelemetry{
+			{Name: "lmw-eth0", RxBytesPerSec: 1200, TxBytesPerSec: 800},
+		},
+		Filesystems: []hardware.FilesystemTelemetry{
+			{MountPath: "/", UsedBytes: 256 << 30, TotalBytes: 512 << 30},
+		},
 	}
 	for _, g := range d.GPUs {
 		t.Accelerators = append(t.Accelerators, hardware.AcceleratorTelemetry{
@@ -84,6 +95,10 @@ func (d *NVIDIADriver) Sample(ctx context.Context) (hardware.Telemetry, error) {
 			MemTotalBytes:  uint64(g.MemoryBytes),
 			TemperatureC:   42,
 			PowerMW:        60000,
+			PowerLimitMW:   200000,
+			Processes: []hardware.AcceleratorProcess{
+				{PID: 1234, Name: "python", UsedGpuMem: 256 << 20},
+			},
 		})
 	}
 	return t, nil

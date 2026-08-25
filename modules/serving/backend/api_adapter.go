@@ -15,3 +15,7 @@ func (m *Module) StopDeployment(w http.ResponseWriter, r *http.Request, _ ID)   
 func (m *Module) StartDeployment(w http.ResponseWriter, r *http.Request, _ ID)  { m.start(w, r) }
 func (m *Module) DeleteDeployment(w http.ResponseWriter, r *http.Request, _ ID) { m.deleteDeployment(w, r) }
 func (m *Module) VerifyDeployment(w http.ResponseWriter, r *http.Request, _ ID) { m.verify(w, r) }
+func (m *Module) ListDeploymentTelemetry(w http.ResponseWriter, r *http.Request) { m.listDeploymentTelemetry(w, r) }
+func (m *Module) GetDeploymentTelemetry(w http.ResponseWriter, r *http.Request, _ ID, _ GetDeploymentTelemetryParams) {
+	m.deploymentTelemetry(w, r)
+}

@@ -494,6 +494,24 @@ func (q *Queries) DeleteSecret(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteServingTelemetry1mOlder = `-- name: DeleteServingTelemetry1mOlder :exec
+DELETE FROM serving_telemetry_1m WHERE ts < ?
+`
+
+func (q *Queries) DeleteServingTelemetry1mOlder(ctx context.Context, ts int64) error {
+	_, err := q.db.ExecContext(ctx, deleteServingTelemetry1mOlder, ts)
+	return err
+}
+
+const deleteServingTelemetry5sOlder = `-- name: DeleteServingTelemetry5sOlder :exec
+DELETE FROM serving_telemetry_5s WHERE ts < ?
+`
+
+func (q *Queries) DeleteServingTelemetry5sOlder(ctx context.Context, ts int64) error {
+	_, err := q.db.ExecContext(ctx, deleteServingTelemetry5sOlder, ts)
+	return err
+}
+
 const deleteSessionByTokenHash = `-- name: DeleteSessionByTokenHash :exec
 DELETE FROM sessions WHERE token_hash = ?
 `
@@ -565,7 +583,8 @@ func (q *Queries) GetArtifactByIdentity(ctx context.Context, identity string) (A
 
 const getDeployment = `-- name: GetDeployment :one
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE id = ?
 `
@@ -579,6 +598,8 @@ type GetDeploymentRow struct {
 	DesiredState      string         `json:"desired_state"`
 	ObservedState     string         `json:"observed_state"`
 	Endpoint          sql.NullString `json:"endpoint"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
 	ModelCapabilities sql.NullString `json:"model_capabilities"`
 	Diagnostics       string         `json:"diagnostics"`
 	RunID             sql.NullString `json:"run_id"`
@@ -599,6 +620,8 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (GetDeploymentRo
 		&i.DesiredState,
 		&i.ObservedState,
 		&i.Endpoint,
+		&i.EndpointModel,
+		&i.EndpointPath,
 		&i.ModelCapabilities,
 		&i.Diagnostics,
 		&i.RunID,
@@ -1023,6 +1046,36 @@ func (q *Queries) InsertBenchmarkResult(ctx context.Context, arg InsertBenchmark
 	return err
 }
 
+const insertServingTelemetry1m = `-- name: InsertServingTelemetry1m :exec
+INSERT OR REPLACE INTO serving_telemetry_1m (deployment_id, ts, payload) VALUES (?, ?, ?)
+`
+
+type InsertServingTelemetry1mParams struct {
+	DeploymentID string `json:"deployment_id"`
+	Ts           int64  `json:"ts"`
+	Payload      string `json:"payload"`
+}
+
+func (q *Queries) InsertServingTelemetry1m(ctx context.Context, arg InsertServingTelemetry1mParams) error {
+	_, err := q.db.ExecContext(ctx, insertServingTelemetry1m, arg.DeploymentID, arg.Ts, arg.Payload)
+	return err
+}
+
+const insertServingTelemetry5s = `-- name: InsertServingTelemetry5s :exec
+INSERT OR REPLACE INTO serving_telemetry_5s (deployment_id, ts, payload) VALUES (?, ?, ?)
+`
+
+type InsertServingTelemetry5sParams struct {
+	DeploymentID string `json:"deployment_id"`
+	Ts           int64  `json:"ts"`
+	Payload      string `json:"payload"`
+}
+
+func (q *Queries) InsertServingTelemetry5s(ctx context.Context, arg InsertServingTelemetry5sParams) error {
+	_, err := q.db.ExecContext(ctx, insertServingTelemetry5s, arg.DeploymentID, arg.Ts, arg.Payload)
+	return err
+}
+
 const insertTelemetry1m = `-- name: InsertTelemetry1m :exec
 INSERT OR REPLACE INTO telemetry_1m (node_id, ts, payload) VALUES (?, ?, ?)
 `
@@ -1053,6 +1106,36 @@ func (q *Queries) InsertTelemetry5s(ctx context.Context, arg InsertTelemetry5sPa
 	return err
 }
 
+const latestServingTelemetryAll = `-- name: LatestServingTelemetryAll :many
+SELECT s.deployment_id, s.ts, s.payload FROM serving_telemetry_5s s
+JOIN (SELECT deployment_id, MAX(ts) ts FROM serving_telemetry_5s GROUP BY deployment_id) latest
+  ON latest.deployment_id = s.deployment_id AND latest.ts = s.ts
+ORDER BY s.deployment_id
+`
+
+func (q *Queries) LatestServingTelemetryAll(ctx context.Context) ([]ServingTelemetry5, error) {
+	rows, err := q.db.QueryContext(ctx, latestServingTelemetryAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ServingTelemetry5
+	for rows.Next() {
+		var i ServingTelemetry5
+		if err := rows.Scan(&i.DeploymentID, &i.Ts, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestTelemetry5s = `-- name: LatestTelemetry5s :one
 SELECT ts, payload FROM telemetry_5s WHERE node_id = ?
 ORDER BY ts DESC LIMIT 1
@@ -1068,6 +1151,36 @@ func (q *Queries) LatestTelemetry5s(ctx context.Context, nodeID string) (LatestT
 	var i LatestTelemetry5sRow
 	err := row.Scan(&i.Ts, &i.Payload)
 	return i, err
+}
+
+const latestTelemetryAll = `-- name: LatestTelemetryAll :many
+SELECT t.node_id, t.ts, t.payload FROM telemetry_5s t
+JOIN (SELECT node_id, MAX(ts) ts FROM telemetry_5s GROUP BY node_id) latest
+  ON latest.node_id = t.node_id AND latest.ts = t.ts
+ORDER BY t.node_id
+`
+
+func (q *Queries) LatestTelemetryAll(ctx context.Context) ([]Telemetry5, error) {
+	rows, err := q.db.QueryContext(ctx, latestTelemetryAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Telemetry5
+	for rows.Next() {
+		var i Telemetry5
+		if err := rows.Scan(&i.NodeID, &i.Ts, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const leasesForOwner = `-- name: LeasesForOwner :many
@@ -1111,7 +1224,8 @@ func (q *Queries) LeasesForOwner(ctx context.Context, arg LeasesForOwnerParams) 
 
 const listActiveDeployments = `-- name: ListActiveDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE desired_state = 'running'
 `
@@ -1125,6 +1239,8 @@ type ListActiveDeploymentsRow struct {
 	DesiredState      string         `json:"desired_state"`
 	ObservedState     string         `json:"observed_state"`
 	Endpoint          sql.NullString `json:"endpoint"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
 	ModelCapabilities sql.NullString `json:"model_capabilities"`
 	Diagnostics       string         `json:"diagnostics"`
 	RunID             sql.NullString `json:"run_id"`
@@ -1151,6 +1267,8 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]ListActiveDeploy
 			&i.DesiredState,
 			&i.ObservedState,
 			&i.Endpoint,
+			&i.EndpointModel,
+			&i.EndpointPath,
 			&i.ModelCapabilities,
 			&i.Diagnostics,
 			&i.RunID,
@@ -1354,9 +1472,57 @@ func (q *Queries) ListBenchmarkResultsByRun(ctx context.Context, runID string) (
 	return items, nil
 }
 
+const listDeploymentMonitorTargets = `-- name: ListDeploymentMonitorTargets :many
+SELECT id, desired_state, observed_state, endpoint, endpoint_model, endpoint_path
+FROM deployments
+WHERE desired_state = 'running'
+  AND observed_state IN ('healthy', 'degraded')
+  AND endpoint IS NOT NULL AND endpoint != ''
+`
+
+type ListDeploymentMonitorTargetsRow struct {
+	ID            string         `json:"id"`
+	DesiredState  string         `json:"desired_state"`
+	ObservedState string         `json:"observed_state"`
+	Endpoint      sql.NullString `json:"endpoint"`
+	EndpointModel sql.NullString `json:"endpoint_model"`
+	EndpointPath  sql.NullString `json:"endpoint_path"`
+}
+
+func (q *Queries) ListDeploymentMonitorTargets(ctx context.Context) ([]ListDeploymentMonitorTargetsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDeploymentMonitorTargets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentMonitorTargetsRow
+	for rows.Next() {
+		var i ListDeploymentMonitorTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.Endpoint,
+			&i.EndpointModel,
+			&i.EndpointPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeployments = `-- name: ListDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
-       observed_state, endpoint, model_capabilities, diagnostics, run_id,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments ORDER BY created_at DESC
 `
@@ -1370,6 +1536,8 @@ type ListDeploymentsRow struct {
 	DesiredState      string         `json:"desired_state"`
 	ObservedState     string         `json:"observed_state"`
 	Endpoint          sql.NullString `json:"endpoint"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
 	ModelCapabilities sql.NullString `json:"model_capabilities"`
 	Diagnostics       string         `json:"diagnostics"`
 	RunID             sql.NullString `json:"run_id"`
@@ -1396,6 +1564,8 @@ func (q *Queries) ListDeployments(ctx context.Context) ([]ListDeploymentsRow, er
 			&i.DesiredState,
 			&i.ObservedState,
 			&i.Endpoint,
+			&i.EndpointModel,
+			&i.EndpointPath,
 			&i.ModelCapabilities,
 			&i.Diagnostics,
 			&i.RunID,
@@ -2145,6 +2315,23 @@ type SetRunOutputParams struct {
 
 func (q *Queries) SetRunOutput(ctx context.Context, arg SetRunOutputParams) error {
 	_, err := q.db.ExecContext(ctx, setRunOutput, arg.Output, arg.ID)
+	return err
+}
+
+const updateDeploymentEndpointMetadata = `-- name: UpdateDeploymentEndpointMetadata :exec
+UPDATE deployments SET endpoint_model = ?, endpoint_path = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type UpdateDeploymentEndpointMetadataParams struct {
+	EndpointModel sql.NullString `json:"endpoint_model"`
+	EndpointPath  sql.NullString `json:"endpoint_path"`
+	ID            string         `json:"id"`
+}
+
+func (q *Queries) UpdateDeploymentEndpointMetadata(ctx context.Context, arg UpdateDeploymentEndpointMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, updateDeploymentEndpointMetadata, arg.EndpointModel, arg.EndpointPath, arg.ID)
 	return err
 }
 

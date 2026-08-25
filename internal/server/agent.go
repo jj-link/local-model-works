@@ -30,6 +30,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/nodes"
+	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	agentv1connect "github.com/jj-link/local-model-works/proto/agent/v1/agentv1connect"
 )
@@ -382,11 +383,8 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 				}
 			}
 		case *agentv1.AgentMessage_Telemetry:
-			t := body.Telemetry
-			data, err := json.Marshal(t)
-			if err == nil {
-				_ = s.telemetry.Ingest(ctx, nodeID, t.GetAt().AsTime(), data)
-			}
+			payload := telemetry.NodePayloadFromProto(body.Telemetry)
+			_ = s.telemetry.IngestNode(ctx, nodeID, body.Telemetry.GetAt().AsTime(), payload)
 		case *agentv1.AgentMessage_CommandResult:
 			s.bus.Publish(ctx, "run.command_result", nodeID, mustJSON(body.CommandResult))
 			s.commands.Deliver(body.CommandResult)

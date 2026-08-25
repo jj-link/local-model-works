@@ -987,6 +987,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 			return nil, err
 		}
 	}
+	if endpoint != "" {
+		if err := qtx.UpdateDeploymentEndpointMetadata(ctx, db.UpdateDeploymentEndpointMetadataParams{
+			EndpointModel: sql.NullString{String: plan.Endpoint.Model, Valid: plan.Endpoint.Model != ""},
+			EndpointPath:  sql.NullString{String: plan.Endpoint.Path, Valid: plan.Endpoint.Path != ""},
+			ID:            depID,
+		}); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
 	if err := s.runs.AcquireLeases(ctx, qtx, "deployment", depID, plan.LeaseResources()); err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("%w: %v", ErrConflict, err)
@@ -2398,6 +2408,16 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 			return nil, err
 		}
 	}
+	if endpoint != "" {
+		if err := qtx.UpdateDeploymentEndpointMetadata(ctx, db.UpdateDeploymentEndpointMetadataParams{
+			EndpointModel: sql.NullString{String: plan.Endpoint.Model, Valid: plan.Endpoint.Model != ""},
+			EndpointPath:  sql.NullString{String: plan.Endpoint.Path, Valid: plan.Endpoint.Path != ""},
+			ID:            depID,
+		}); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
 	// Desired running plus an empty dispatch document restarts the state
 	// machine from PhaseNone for every rank.
 	if err := qtx.UpdateDeploymentState(ctx, db.UpdateDeploymentStateParams{
@@ -2641,6 +2661,54 @@ func (s *Service) List(ctx context.Context) ([]Deployment, error) {
 	return out, nil
 }
 
+// MonitorTarget is the narrow view the serving poller consumes: only the
+// persisted endpoint metadata needed to probe a running deployment. It avoids
+// the recipe re-parsing that Service.List performs for operator rendering.
+type MonitorTarget struct {
+	ID            string
+	DesiredState  string
+	ObservedState string
+	Endpoint      Endpoint
+	// EndpointModel/EndpointPath are the persisted identity; empty for
+	// pre-migration rows that fell back to recipe/profile metadata.
+	EndpointModel string
+	EndpointPath  string
+}
+
+// ListMonitoringTargets returns the desired-running healthy/degraded
+// deployments that carry a recorded endpoint, for the serving poller.
+func (s *Service) ListMonitoringTargets(ctx context.Context) ([]MonitorTarget, error) {
+	rows, err := s.q.ListDeploymentMonitorTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MonitorTarget, 0, len(rows))
+	for _, r := range rows {
+		t := MonitorTarget{
+			ID:            r.ID,
+			DesiredState:  r.DesiredState,
+			ObservedState: r.ObservedState,
+		}
+		if r.Endpoint.Valid && r.Endpoint.String != "" {
+			parts := strings.SplitN(r.Endpoint.String, ":", 2)
+			if len(parts) == 2 {
+				var port int32
+				if _, err := fmt.Sscanf(parts[1], "%d", &port); err == nil {
+					t.Endpoint = Endpoint{Host: parts[0], Port: port}
+				}
+			}
+		}
+		if r.EndpointModel.Valid {
+			t.EndpointModel = r.EndpointModel.String
+		}
+		if r.EndpointPath.Valid {
+			t.EndpointPath = r.EndpointPath.String
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
 // rowToDeployment projects sqlc deployment rows onto the canonical model.
 func rowToDeployment(r db.GetDeploymentRow) db.Deployment {
 	return db.Deployment{
@@ -2652,6 +2720,8 @@ func rowToDeployment(r db.GetDeploymentRow) db.Deployment {
 		DesiredState:      r.DesiredState,
 		ObservedState:     r.ObservedState,
 		Endpoint:          r.Endpoint,
+		EndpointModel:     r.EndpointModel,
+		EndpointPath:      r.EndpointPath,
 		ModelCapabilities: r.ModelCapabilities,
 		Diagnostics:       r.Diagnostics,
 		RunID:             r.RunID,
@@ -2671,6 +2741,8 @@ func listRowToDeployment(r db.ListDeploymentsRow) db.Deployment {
 		DesiredState:      r.DesiredState,
 		ObservedState:     r.ObservedState,
 		Endpoint:          r.Endpoint,
+		EndpointModel:     r.EndpointModel,
+		EndpointPath:      r.EndpointPath,
 		ModelCapabilities: r.ModelCapabilities,
 		Diagnostics:       r.Diagnostics,
 		RunID:             r.RunID,
@@ -2726,6 +2798,19 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 			if _, err := fmt.Sscanf(parts[1], "%d", &port); err == nil {
 				v.Endpoint = &Endpoint{Host: parts[0], Port: port, Model: endpointModel}
 			}
+		}
+	}
+	// Endpoint metadata (model/path) is persisted at create so it survives
+	// restart; older deployments carry null and fall back at probe time.
+	if row.EndpointModel.Valid || row.EndpointPath.Valid {
+		if v.Endpoint == nil {
+			v.Endpoint = &Endpoint{}
+		}
+		if row.EndpointModel.Valid {
+			v.Endpoint.Model = row.EndpointModel.String
+		}
+		if row.EndpointPath.Valid {
+			v.Endpoint.Path = row.EndpointPath.String
 		}
 	}
 	return v, nil

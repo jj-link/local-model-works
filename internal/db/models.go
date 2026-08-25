@@ -67,6 +67,8 @@ type Deployment struct {
 	CreatedAt         string         `json:"created_at"`
 	UpdatedAt         string         `json:"updated_at"`
 	Dispatch          string         `json:"dispatch"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
 }
 
 type EnrollmentToken struct {
@@ -205,6 +207,18 @@ type Secret struct {
 	Ciphertext []byte `json:"ciphertext"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
+}
+
+type ServingTelemetry1m struct {
+	DeploymentID string `json:"deployment_id"`
+	Ts           int64  `json:"ts"`
+	Payload      string `json:"payload"`
+}
+
+type ServingTelemetry5 struct {
+	DeploymentID string `json:"deployment_id"`
+	Ts           int64  `json:"ts"`
+	Payload      string `json:"payload"`
 }
 
 type Session struct {

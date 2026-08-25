@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -65,12 +67,31 @@ func (m *Module) nodeTelemetry(w http.ResponseWriter, r *http.Request) {
 	if value, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
 		limit = value
 	}
-	samples, err := m.env.Telemetry.History(r.Context(), chi.URLParam(r, "id"), resolution, from, to, limit)
+	samples, err := m.env.Telemetry.NodeHistory(r.Context(), chi.URLParam(r, "id"), resolution, from, to, limit)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "telemetry.query", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, samples)
+}
+
+// listNodeTelemetry — GET /nodes/telemetry: newest full sample per node.
+func (m *Module) listNodeTelemetry(w http.ResponseWriter, r *http.Request) {
+	samples, err := m.env.Telemetry.LatestNodes(r.Context())
+	if err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "telemetry.query", err.Error())
+		return
+	}
+	ids := make([]string, 0, len(samples))
+	for id := range samples {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]telemetry.NodeSample, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, samples[id])
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // listNodes — GET /nodes.

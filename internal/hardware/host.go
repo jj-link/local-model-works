@@ -8,59 +8,153 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
-// hostSample reads CPU, memory, and network counters from /proc.
-func hostSample(ctx context.Context) Telemetry {
-	var t Telemetry
-	t.CPUCores = uint32(runtime.NumCPU())
-	if stat, err := os.ReadFile("/proc/stat"); err == nil {
-		t.CPUUsagePercent, t.Load1x100 = cpuUsage(stat)
-	}
-	if meminfo, err := os.ReadFile("/proc/meminfo"); err == nil {
-		parseMeminfo(meminfo, &t)
-	}
-	if netdev, err := os.ReadFile("/proc/net/dev"); err == nil {
-		t.NetRxBytes, t.NetTxBytes = netCounters(netdev)
-	}
+// hostSampler computes CPU utilization and network byte rates from counter
+// deltas between successive samples rather than since-boot totals, so a busy
+// node reports live utilization instead of a lifetime average. It is not
+// safe for concurrent use by multiple samplers; the NVML driver owns exactly
+// one instance for the process.
+type hostSampler struct {
+	mu      sync.Mutex
+	last    time.Time
+	cpuTotal uint64
+	cpuIdle  uint64
+	aggRx   uint64
+	aggTx   uint64
+	ifaces  map[string][2]uint64 // interface -> [rx, tx] cumulative
+}
+
+func newHostSampler() *hostSampler {
+	return &hostSampler{ifaces: map[string][2]uint64{}}
+}
+
+// Sample reads the current /proc counters and derives interval values from
+// the previous sample. The first sample, counter rollback, and an invalid
+// elapsed interval all yield zero rather than a spike.
+func (s *hostSampler) Sample(ctx context.Context) Telemetry {
+	t := Telemetry{CPUCores: uint32(runtime.NumCPU())}
+	t.MemoryUsedBytes, t.MemoryTotalBytes, t.SwapUsedBytes = readMeminfo()
+	t.UptimeSeconds = readUptimeSeconds()
+	t.Load1x100 = readLoad1x100()
+
+	total, idle := readCPUCumulative()
+	net := readNetCounters()
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apply(&t, now, total, idle, net)
 	return t
 }
 
-func cpuUsage(stat []byte) (usagePct uint32, load1x100 uint64) {
-	sc := bufio.NewScanner(strings.NewReader(string(stat)))
-	var idle, total uint64
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.HasPrefix(line, "cpu ") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
-			continue
-		}
-		for i, f := range fields[1:] {
-			v, _ := strconv.ParseUint(f, 10, 64)
-			total += v
-			if i == 3 || i == 4 { // idle + iowait
-				idle += v
+// apply derives interval CPU/network values from deltas against the previous
+// sample. The first sample, counter rollback, an invalid elapsed interval, and
+// a zero delta all yield zero rather than a spike. Callers hold s.mu.
+func (s *hostSampler) apply(t *Telemetry, now time.Time, total, idle uint64, net []netCounter) {
+	var aggRx, aggTx uint64
+	cur := make(map[string][2]uint64, len(net))
+	for _, c := range net {
+		cur[c.name] = [2]uint64{c.rx, c.tx}
+		aggRx += c.rx
+		aggTx += c.tx
+	}
+
+	if !s.last.IsZero() {
+		dt := now.Sub(s.last).Seconds()
+		if dt > 0 {
+			// CPU utilization as a fraction of the busy jiffies delta.
+			if total > s.cpuTotal && idle >= s.cpuIdle {
+				dtTotal := total - s.cpuTotal
+				dtIdle := idle - s.cpuIdle
+				if dtIdle <= dtTotal {
+					t.CPUUsagePercent = uint32((dtTotal - dtIdle) * 100 / dtTotal)
+				}
+			}
+			t.NetRxBytes = aggRx
+			t.NetTxBytes = aggTx
+			if aggRx >= s.aggRx {
+				t.NetRxBytesPerSec = byteRate(aggRx-s.aggRx, dt)
+			}
+			if aggTx >= s.aggTx {
+				t.NetTxBytesPerSec = byteRate(aggTx-s.aggTx, dt)
+			}
+			for _, c := range net {
+				if prev, ok := s.ifaces[c.name]; ok && c.rx >= prev[0] {
+					t.NetworkInterfaces = append(t.NetworkInterfaces, NetworkInterfaceTelemetry{
+						Name:          c.name,
+						RxBytesPerSec: byteRate(c.rx-prev[0], dt),
+						TxBytesPerSec: byteRate(c.tx-prev[1], dt),
+					})
+				}
 			}
 		}
-		break
 	}
-	if total == 0 {
-		return 0, 0
+
+	s.last = now
+	s.cpuTotal, s.cpuIdle = total, idle
+	s.aggRx, s.aggTx = aggRx, aggTx
+	s.ifaces = cur
+}
+
+// byteRate converts a byte delta and a wall-clock delta to whole bytes/sec.
+// A zero delta (or degenerate interval) yields zero.
+func byteRate(delta uint64, dt float64) uint64 {
+	if delta == 0 || dt <= 0 {
+		return 0
 	}
-	busy := total - idle
-	usagePct = uint32(busy * 100 / total)
-	if loadavg, err := os.ReadFile("/proc/loadavg"); err == nil {
-		parts := strings.Fields(string(loadavg))
-		if len(parts) >= 1 {
-			if f, err := strconv.ParseFloat(parts[0], 64); err == nil {
-				load1x100 = uint64(f * 100)
-			}
-		}
+	return uint64(float64(delta) / dt)
+}
+
+// hostMemoryTotal is a stateless memory snapshot used by inventory probes.
+func hostMemoryTotal() uint64 {
+	_, total, _ := readMeminfo()
+	return total
+}
+
+// readMeminfo returns used, total, swap bytes from /proc/meminfo.
+func readMeminfo() (used, total, swap uint64) {
+	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
+		var tm Telemetry
+		parseMeminfo(raw, &tm)
+		return tm.MemoryUsedBytes, tm.MemoryTotalBytes, tm.SwapUsedBytes
 	}
-	return usagePct, load1x100
+	return 0, 0, 0
+}
+
+// readUptimeSeconds returns host uptime from /proc/uptime.
+func readUptimeSeconds() uint64 {
+	raw, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return 0
+	}
+	f, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return uint64(f)
+}
+
+// readLoad1x100 returns the 1-minute load average scaled by 100.
+func readLoad1x100() uint64 {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0
+	}
+	parts := strings.Fields(string(raw))
+	if len(parts) == 0 {
+		return 0
+	}
+	if f, err := strconv.ParseFloat(parts[0], 64); err == nil {
+		return uint64(f * 100)
+	}
+	return 0
 }
 
 func parseMeminfo(raw []byte, t *Telemetry) {
@@ -107,28 +201,89 @@ type errValue struct{}
 
 func (errValue) Error() string { return "no value" }
 
-func netCounters(raw []byte) (rx, tx uint64) {
+// readCPUCumulative returns total and idle jiffies from /proc/stat.
+func readCPUCumulative() (total, idle uint64) {
+	if stat, err := os.ReadFile("/proc/stat"); err == nil {
+		return cpuCumulative(stat)
+	}
+	return 0, 0
+}
+
+func cpuCumulative(stat []byte) (total, idle uint64) {
+	sc := bufio.NewScanner(strings.NewReader(string(stat)))
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			return 0, 0
+		}
+		for i, f := range fields[1:] {
+			v, _ := strconv.ParseUint(f, 10, 64)
+			total += v
+			if i == 3 || i == 4 { // idle + iowait
+				idle += v
+			}
+		}
+		return total, idle
+	}
+	return 0, 0
+}
+
+// netCounter is one interface's cumulative byte counters.
+type netCounter struct {
+	name  string
+	rx, tx uint64
+}
+
+// readNetCounters returns cumulative per-interface counters from
+// /proc/net/dev, excluding loopback.
+func readNetCounters() []netCounter {
+	raw, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		return nil
+	}
+	return parseNetCounters(raw)
+}
+
+func parseNetCounters(raw []byte) []netCounter {
 	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	var out []netCounter
 	for sc.Scan() {
 		line := sc.Text()
 		idx := strings.Index(line, ":")
 		if idx < 0 {
 			continue
 		}
-		ifage := strings.TrimSpace(line[:idx])
-		if ifage == "lo" {
+		iface := strings.TrimSpace(line[:idx])
+		if iface == "lo" {
 			continue
 		}
 		fields := strings.Fields(line[idx+1:])
 		if len(fields) < 9 {
 			continue
 		}
+		var c netCounter
+		c.name = iface
 		if v, err := strconv.ParseUint(fields[0], 10, 64); err == nil {
-			rx += v
+			c.rx = v
 		}
 		if v, err := strconv.ParseUint(fields[8], 10, 64); err == nil {
-			tx += v
+			c.tx = v
 		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// netCounters aggregates cumulative rx/tx across interfaces (loopback
+// excluded). Retained for callers that only need the sum.
+func netCounters(raw []byte) (rx, tx uint64) {
+	for _, c := range parseNetCounters(raw) {
+		rx += c.rx
+		tx += c.tx
 	}
 	return rx, tx
 }
@@ -205,12 +360,7 @@ type Fake struct {
 	ValidateFn func(ctx context.Context, req Requirement) []Diagnostic
 }
 
-func (f *Fake) ID() string {
-	if f.Inventory.Arch == "" {
-		return "fake"
-	}
-	return "fake"
-}
+func (f *Fake) ID() string { return "fake" }
 
 func (f *Fake) Probe(ctx context.Context) (Inventory, error)  { return f.Inventory, nil }
 func (f *Fake) Sample(ctx context.Context) (Telemetry, error) { return f.Telem, nil }

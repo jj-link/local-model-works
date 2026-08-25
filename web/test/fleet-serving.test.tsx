@@ -50,7 +50,7 @@ const deployments = [
     recipe_digest: "sha256:recipe-b",
     recipe_name: "Recipe B",
     profile: "",
-    placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 1 }],
+    placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 0 }],
     desired_state: "running",
     observed_state: "degraded",
     endpoint: { host: "busy", port: 8889 },
@@ -71,39 +71,46 @@ function renderRoute(component: React.ReactNode, path: string) {
 function installHandlers() {
   server.use(
     http.get("*/api/v1/nodes", () => HttpResponse.json([idleNode, busyNode])),
+    http.get("*/api/v1/nodes/telemetry", () => HttpResponse.json([])),
     http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
+    http.get("*/api/v1/deployments/telemetry", () => HttpResponse.json([])),
     http.get("*/api/v1/recipes", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
   );
 }
 
 describe("Fleet and Serving workload views", () => {
-  it("emits idle and one row per node deployment placement with truthful joins", async () => {
+  it("renders card rows with truthful joins, engine/model fallback, recipe link, degraded missing metadata, and visible idle node", async () => {
     installHandlers();
     renderRoute(<NodesRoute />, "/fleet/nodes");
 
-    const table = await screen.findByRole("table", { name: "Fleet workloads" });
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(3);
+    // Idle node card is visible and explicitly reports no managed deployments.
+    expect(await screen.findByText("Idle Device")).toBeInTheDocument();
+    expect(await screen.findByText("No managed deployments")).toBeInTheDocument();
 
-    const modelARow = rows.find((row) => row.textContent?.includes("Model A"));
-    expect(modelARow).toBeDefined();
-    expect(modelARow).toHaveTextContent("Busy Device");
-    expect(modelARow).toHaveTextContent("Recipe A");
-    expect(modelARow).toHaveTextContent("vLLM");
-    expect(modelARow).toHaveTextContent("healthy");
-    expect(within(modelARow as HTMLElement).getByRole("link", { name: "Recipe A" })).toHaveAttribute("href", "/library/recipes/sha256:recipe-a");
+    // Busy node joins its two deployments truthfully.
+    expect(screen.getByText("Busy Device")).toBeInTheDocument();
+    expect(screen.getByText("healthy")).toBeInTheDocument();
 
-    const missingMetadataRow = rows.find((row) => row.textContent?.includes("Recipe B"));
-    expect(missingMetadataRow).toBeDefined();
-    expect(missingMetadataRow).toHaveTextContent("Busy Device");
-    expect(missingMetadataRow).toHaveTextContent("Not reported");
-    expect(missingMetadataRow).toHaveTextContent("degraded");
+    // Recipe A: no live serving telemetry, so the row falls back to the
+    // persisted deployment engine + endpoint model.
+    expect(screen.getByText("vllm · Model A")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Recipe A" })).toHaveAttribute(
+      "href",
+      "/serving/deployments/33333333-3333-4333-8333-333333333333",
+    );
 
-    const idleRow = rows.find((row) => row.textContent?.includes("Idle Device"));
-    expect(idleRow).toBeDefined();
-    expect(idleRow).toHaveTextContent("idle");
-    expect(idleRow).toHaveTextContent("Not reported");
+    // The recipe catalog link is separate from the deployment detail link.
+    const recipeLinks = screen.getAllByRole("link", { name: /recipe →/ });
+    expect(recipeLinks.some((l) => l.getAttribute("href") === "/library/recipes/sha256:recipe-a")).toBe(true);
+
+    // Recipe B is degraded with neither engine nor endpoint model -> Not reported.
+    expect(screen.getByRole("link", { name: "Recipe B" })).toHaveAttribute(
+      "href",
+      "/serving/deployments/44444444-4444-4444-8444-444444444444",
+    );
+    expect(screen.getByText("Not reported")).toBeInTheDocument();
+    expect(screen.getByText("degraded")).toBeInTheDocument();
   });
 
   it("shows model and engine alongside the existing Serving fields", async () => {

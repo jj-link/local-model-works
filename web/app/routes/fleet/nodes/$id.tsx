@@ -24,6 +24,7 @@ import {
 import { eventsForNode, useEventFeed } from "~/lib/events";
 import { useSession } from "~/lib/api/session";
 import { cn } from "~/lib/utils";
+import { NodeMonitor } from "~/components/fleet/node-monitor";
 
 function Section({
   title,
@@ -141,6 +142,7 @@ export default function NodeDetailRoute() {
         </div>
       </div>
 
+      <NodeMonitor node={node} />
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2 grid gap-4 content-start">
           <Section

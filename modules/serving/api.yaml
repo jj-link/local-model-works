@@ -202,6 +202,55 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /deployments/telemetry:
+    get:
+      tags: [deployments]
+      operationId: listDeploymentTelemetry
+      summary: Latest typed serving telemetry sample per deployment
+      responses:
+        '200':
+          description: Latest serving samples sorted by deployment_id
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServingTelemetrySample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /deployments/{id}/telemetry:
+    get:
+      tags: [deployments]
+      operationId: getDeploymentTelemetry
+      summary: Ranged serving telemetry history for one deployment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: resolution
+          in: query
+          schema: { type: string, enum: [5s, 1m], default: 5s }
+        - name: from
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: to
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100000, default: 2000 }
+      responses:
+        '200':
+          description: Ordered serving samples (empty for an unknown deployment)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServingTelemetrySample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+
 components:
   schemas:
     DeploymentPlanRequest:
@@ -456,3 +505,34 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    ServingTelemetrySample:
+      type: object
+      required: [deployment_id, ts, payload]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        ts: { type: integer, format: int64 }
+        payload:
+          $ref: '#/components/schemas/ServingPayload'
+    ServingPayload:
+      type: object
+      properties:
+        available: { type: boolean }
+        backend: { type: string }
+        model_id: { type: string }
+        generation_tps: { type: number, format: double, nullable: true }
+        prefill_tps: { type: number, format: double, nullable: true }
+        requests_running: { type: integer, format: int64 }
+        requests_waiting: { type: integer, format: int64 }
+        slots_active: { type: integer, format: int64 }
+        slots_total: { type: integer, format: int64 }
+        kv_cache_usage_ratio: { type: number, format: double, nullable: true }
+        prefix_cache_hit_ratio: { type: number, format: double, nullable: true }
+        ttft_p95_seconds: { type: number, format: double, nullable: true }
+        e2e_p95_seconds: { type: number, format: double, nullable: true }
+        itl_p95_seconds: { type: number, format: double, nullable: true }
+        preemptions_total: { type: integer, format: int64 }
+        spec_acceptance_ratio: { type: number, format: double, nullable: true }
+        context_length: { type: integer, format: int64 }
+        error_code: { type: string, nullable: true }
+        error: { type: string, nullable: true }

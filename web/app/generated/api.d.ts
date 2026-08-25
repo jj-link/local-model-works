@@ -171,6 +171,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deployments/{id}/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ranged serving telemetry history for one deployment */
+        get: operations["getDeploymentTelemetry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deployments/{id}/verify": {
         parameters: {
             query?: never;
@@ -199,6 +216,23 @@ export interface paths {
         put?: never;
         /** Preview a deployment: placement, artifact preparation, ports, risks, conflicts */
         post: operations["planDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deployments/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest typed serving telemetry sample per deployment */
+        get: operations["listDeploymentTelemetry"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -482,6 +516,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getNodeTelemetry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest typed telemetry sample per node */
+        get: operations["listNodeTelemetry"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1206,8 +1257,82 @@ export interface components {
             last_heartbeat?: string | null;
             status: components["schemas"]["NodeStatus"];
         };
+        NodePayload: {
+            accelerators?: {
+                index?: number;
+                /** Format: int64 */
+                memory_total_bytes?: number;
+                /** Format: int64 */
+                memory_used_bytes?: number;
+                /** Format: int64 */
+                power_limit_mw?: number;
+                /** Format: int64 */
+                power_mw?: number;
+                processes?: {
+                    name?: string;
+                    /** Format: int64 */
+                    pid?: number;
+                    /** Format: int64 */
+                    used_gpu_memory_bytes?: number;
+                }[];
+                /** Format: int64 */
+                temperature_c?: number;
+                throttle_reasons?: string[];
+                /** Format: int64 */
+                utilization_percent?: number;
+            }[];
+            cpu?: {
+                /** Format: int64 */
+                cores?: number;
+                /** Format: int64 */
+                load1?: number;
+                /** Format: int64 */
+                usage_percent?: number;
+            };
+            filesystems?: {
+                mount_path?: string;
+                /** Format: int64 */
+                total_bytes?: number;
+                /** Format: int64 */
+                used_bytes?: number;
+            }[];
+            memory?: {
+                /** Format: int64 */
+                swap_used_bytes?: number;
+                /** Format: int64 */
+                total_bytes?: number;
+                /** Format: int64 */
+                used_bytes?: number;
+            };
+            network?: {
+                interfaces?: {
+                    name?: string;
+                    /** Format: int64 */
+                    rx_bytes_per_second?: number;
+                    /** Format: int64 */
+                    tx_bytes_per_second?: number;
+                }[];
+                /** Format: int64 */
+                rx_bytes?: number;
+                /** Format: int64 */
+                rx_bytes_per_second?: number;
+                /** Format: int64 */
+                tx_bytes?: number;
+                /** Format: int64 */
+                tx_bytes_per_second?: number;
+            };
+            /** Format: int64 */
+            uptime_seconds?: number;
+        };
         /** @enum {string} */
         NodeStatus: "pending" | "online" | "offline" | "degraded";
+        NodeTelemetrySample: {
+            /** Format: uuid */
+            node_id: string;
+            payload: components["schemas"]["NodePayload"];
+            /** Format: int64 */
+            ts: number;
+        };
         Placement: {
             /** Format: uuid */
             artifact_id: string;
@@ -1358,6 +1483,48 @@ export interface components {
             /** @enum {string} */
             purpose: "huggingface" | "github" | "registry";
             value: string;
+        };
+        ServingPayload: {
+            available?: boolean;
+            backend?: string;
+            /** Format: int64 */
+            context_length?: number;
+            /** Format: double */
+            e2e_p95_seconds?: number | null;
+            error?: string | null;
+            error_code?: string | null;
+            /** Format: double */
+            generation_tps?: number | null;
+            /** Format: double */
+            itl_p95_seconds?: number | null;
+            /** Format: double */
+            kv_cache_usage_ratio?: number | null;
+            model_id?: string;
+            /** Format: int64 */
+            preemptions_total?: number;
+            /** Format: double */
+            prefill_tps?: number | null;
+            /** Format: double */
+            prefix_cache_hit_ratio?: number | null;
+            /** Format: int64 */
+            requests_running?: number;
+            /** Format: int64 */
+            requests_waiting?: number;
+            /** Format: int64 */
+            slots_active?: number;
+            /** Format: int64 */
+            slots_total?: number;
+            /** Format: double */
+            spec_acceptance_ratio?: number | null;
+            /** Format: double */
+            ttft_p95_seconds?: number | null;
+        };
+        ServingTelemetrySample: {
+            /** Format: uuid */
+            deployment_id: string;
+            payload: components["schemas"]["ServingPayload"];
+            /** Format: int64 */
+            ts: number;
         };
         Session: {
             csrf_token: string;
@@ -1833,6 +2000,34 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getDeploymentTelemetry: {
+        parameters: {
+            query?: {
+                resolution?: "5s" | "1m";
+                from?: number;
+                to?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ordered serving samples (empty for an unknown deployment) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServingTelemetrySample"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     verifyDeployment: {
         parameters: {
             query?: never;
@@ -1886,6 +2081,27 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["Unprocessable"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listDeploymentTelemetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest serving samples sorted by deployment_id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServingTelemetrySample"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     listEnrollmentTokens: {
@@ -2451,7 +2667,28 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TelemetrySample"][];
+                    "application/json": components["schemas"]["NodeTelemetrySample"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listNodeTelemetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest node samples sorted by node_id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeTelemetrySample"][];
                 };
             };
             401: components["responses"]["Unauthorized"];

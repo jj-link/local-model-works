@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/moduleapi"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/internal/telemetry"
 )
 
 // Module is the serving backend.
@@ -307,6 +309,50 @@ func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 		case <-poll.C:
 		}
 	}
+}
+
+// listDeploymentTelemetry — GET /deployments/telemetry: newest sample per dep.
+func (m *Module) listDeploymentTelemetry(w http.ResponseWriter, r *http.Request) {
+	samples, err := m.env.Telemetry.LatestServing(r.Context())
+	if err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "telemetry.query", err.Error())
+		return
+	}
+	ids := make([]string, 0, len(samples))
+	for id := range samples {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]telemetry.ServingSample, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, samples[id])
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// deploymentTelemetry — GET /deployments/{id}/telemetry: ranged history.
+func (m *Module) deploymentTelemetry(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().Unix()
+	from, to, limit := now-3600, now, 2000
+	resolution := r.URL.Query().Get("resolution")
+	if resolution == "" {
+		resolution = "5s"
+	}
+	if value, err := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64); err == nil {
+		from = value
+	}
+	if value, err := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64); err == nil {
+		to = value
+	}
+	if value, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
+		limit = value
+	}
+	samples, err := m.env.Telemetry.ServingHistory(r.Context(), chi.URLParam(r, "id"), resolution, from, to, limit)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "telemetry.query", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, samples)
 }
 
 // deploymentIDFromInput extracts the job input's deployment reference.
