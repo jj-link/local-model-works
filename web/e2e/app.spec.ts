@@ -47,7 +47,7 @@ test("unauthenticated navigation lands on the operator login", async ({ page }) 
 
 test("every first-party module route mounts inside the authenticated shell", async ({ page }) => {
   await installAPI(page);
-  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/chat", "/settings", "/modules"];
+  const routes = ["/", "/fleet", "/fleet/nodes", "/fleet/fabrics", "/library", "/library/recipes", "/library/artifacts", "/library/transfers", "/library/builder", "/serving", "/serving/deployments", "/benchmarks", "/workshop", "/runs", "/chat"];
   for (const path of routes) {
     await page.goto(path);
     await expect(page.getByRole("navigation")).toBeVisible();
@@ -66,15 +66,15 @@ test("grouped navigation exposes only functional routes on desktop and mobile", 
   for (const label of [
     "Overview", "Topology", "Nodes", "Fabrics", "Catalog", "Recipe Builder",
     "Artifacts", "Transfers", "Serving", "Benchmarks", "Runs", "Chat",
-    "Settings", "Modules",
   ]) {
     await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
-  for (const roadmapLabel of [
-    "Profiles", "Sharing", "Knowledge & RAG", "Research", "Scheduled Automations",
-    "Usage & Costs", "Fine-tuning", "Projects", "Community Leaderboard",
+  for (const absentLabel of [
+    "Settings", "Modules", "Profiles", "Sharing", "Knowledge & RAG", "Research",
+    "Scheduled Automations", "Usage & Costs", "Fine-tuning", "Projects",
+    "Community Leaderboard",
   ]) {
-    await expect(desktopNav.getByText(roadmapLabel, { exact: true })).toHaveCount(0);
+    await expect(desktopNav.getByText(absentLabel, { exact: true })).toHaveCount(0);
   }
 
   await expect(page.locator("header.sticky").getByRole("heading", { name: "Artifacts", exact: true })).toBeVisible();

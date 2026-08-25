@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router";
 import {
-  Boxes,
   ChartNoAxesCombined,
   ChevronDown,
-  Cpu,
   FileCode2,
   Gauge,
   History,
@@ -15,7 +13,6 @@ import {
   PackageOpen,
   Radio,
   Server,
-  Settings2,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
@@ -108,20 +105,6 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       items: [{ id: "chat-route", label: "Chat", path: "/chat", icon: MessageSquare }],
     });
   }
-  if (enabledModuleIds.has("settings")) {
-    groups.push({
-      id: "settings",
-      label: "Settings",
-      icon: Settings2,
-      items: [{ id: "settings-route", label: "Settings", path: "/settings", icon: Settings2 }],
-    });
-  }
-  groups.push({
-    id: "modules",
-    label: "Modules",
-    icon: Boxes,
-    items: [{ id: "modules-route", label: "Modules", path: "/modules", icon: Cpu }],
-  });
   return groups;
 }
 
