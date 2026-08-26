@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
@@ -39,6 +40,67 @@ type sourceResolution struct {
 	Metadata map[string]any
 	Status   string
 	Error    string
+}
+
+type arxivFeed struct {
+	Entries []struct {
+		ID        string `xml:"id"`
+		Updated   string `xml:"updated"`
+		Published string `xml:"published"`
+		Title     string `xml:"title"`
+		Summary   string `xml:"summary"`
+		Authors   []struct {
+			Name string `xml:"name"`
+		} `xml:"author"`
+		Links []struct {
+			Href  string `xml:"href,attr"`
+			Rel   string `xml:"rel,attr"`
+			Title string `xml:"title,attr"`
+			Type  string `xml:"type,attr"`
+		} `xml:"link"`
+	} `xml:"entry"`
+}
+
+func parseArxivFeed(contents []byte, arxivID string) (sourceResolution, error) {
+	feed := arxivFeed{}
+	if err := xml.Unmarshal(contents, &feed); err != nil {
+		return sourceResolution{}, fmt.Errorf("autoresearch.source_arxiv_metadata_invalid: %w", err)
+	}
+	if len(feed.Entries) != 1 {
+		return sourceResolution{}, errors.New("autoresearch.source_arxiv_not_found")
+	}
+	entry := feed.Entries[0]
+	canonical := "https://arxiv.org/abs/" + arxivID
+	pdfURL := "https://arxiv.org/pdf/" + arxivID + ".pdf"
+	for _, link := range entry.Links {
+		switch {
+		case link.Rel == "alternate" && link.Href != "":
+			canonical = link.Href
+		case (link.Title == "pdf" || link.Type == "application/pdf") && link.Href != "":
+			pdfURL = link.Href
+		}
+	}
+	authors := make([]string, 0, len(entry.Authors))
+	for _, author := range entry.Authors {
+		if name := strings.Join(strings.Fields(author.Name), " "); name != "" {
+			authors = append(authors, name)
+		}
+	}
+	title := strings.Join(strings.Fields(entry.Title), " ")
+	return sourceResolution{
+		Locator: canonical,
+		Title:   title,
+		Metadata: map[string]any{
+			"arxiv_id":      arxivID,
+			"canonical_url": canonical,
+			"pdf_url":       pdfURL,
+			"authors":       authors,
+			"summary":       strings.Join(strings.Fields(entry.Summary), " "),
+			"published":     entry.Published,
+			"updated":       entry.Updated,
+		},
+		Status: "ready",
+	}, nil
 }
 
 func isPublicIP(ip netip.Addr) bool {
@@ -160,10 +222,22 @@ func resolveSource(ctx context.Context, kind AutoResearchSourceKind, locator str
 			return result
 		}
 		arxivID := match[1]
-		result.Locator = "https://arxiv.org/abs/" + arxivID
-		result.Metadata = map[string]any{"arxiv_id": arxivID, "canonical_url": result.Locator}
-		result.Status = "ready"
-		return result
+		endpoint, _ := url.Parse("https://export.arxiv.org/api/query?id_list=" + url.QueryEscape(arxivID))
+		response, body, err := fetchPublicSource(ctx, endpoint, "application/atom+xml")
+		if err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			result.Error = fmt.Sprintf("autoresearch.source_http_%d", response.StatusCode)
+			return result
+		}
+		resolved, err := parseArxivFeed(body, arxivID)
+		if err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		return resolved
 	case "doi":
 		doi := strings.TrimPrefix(strings.TrimPrefix(locator, "https://doi.org/"), "http://doi.org/")
 		doi = strings.TrimSpace(doi)

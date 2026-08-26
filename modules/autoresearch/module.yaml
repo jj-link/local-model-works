@@ -1,10 +1,10 @@
 apiVersion: localmodelworks/v1alpha1
 kind: Module
 id: autoresearch
-title: AutoResearch
+title: AutoResearch Factory
 route: /autoresearch
 nav:
-  label: AutoResearch
+  label: AutoResearch Factory
   order: 45
   icon: autoresearch
 settingsSchema:

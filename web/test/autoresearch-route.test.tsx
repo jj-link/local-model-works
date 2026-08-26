@@ -32,7 +32,7 @@ describe("AutoResearchRoute", () => {
     server.use(http.get("*/api/v1/nodes", () => HttpResponse.json([])));
     const user = userEvent.setup();
     renderRoute();
-    const ideasButton = await screen.findByRole("button", { name: "ideas" });
+    const ideasButton = await screen.findByRole("button", { name: "Ideas & sources" });
     await user.click(ideasButton);
     expect(await screen.findByRole("tab", { name: /01/ })).toBeVisible();
     expect(screen.getByLabelText("candidate title")).toHaveValue("Candidate one");

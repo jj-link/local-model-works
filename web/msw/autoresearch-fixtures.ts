@@ -37,7 +37,7 @@ export const autoResearchEvents = [
 ] as const;
 
 export const autoResearchHandlers = [
-  http.get("*/api/v1/modules", () => HttpResponse.json([{ id: "autoresearch", title: "AutoResearch", enabled: true, route: "/autoresearch", nav: { label: "AutoResearch", order: 45, icon: "autoresearch" } }])),
+  http.get("*/api/v1/modules", () => HttpResponse.json([{ id: "autoresearch", title: "AutoResearch Factory", enabled: true, route: "/autoresearch", nav: { label: "AutoResearch Factory", order: 45, icon: "autoresearch" } }])),
   http.get("*/api/v1/autoresearch/projects", () => HttpResponse.json(autoResearchProjects)),
   http.get("*/api/v1/autoresearch/projects/:projectId", ({ params }) => HttpResponse.json(autoResearchProjects.find((project) => project.id === params.projectId) ?? null)),
   http.get("*/api/v1/autoresearch/projects/:projectId/ideas", ({ params }) => HttpResponse.json(params.projectId === autoResearchProjects[0].id ? [{ id: "20000000-0000-4000-8000-000000000001", project_id: params.projectId, ordinal: 1, source: "generated", title: "Candidate one", body: "## Research question\nDoes the fixture work?", selected: false, version: 1, created_at: now, updated_at: now }] : [])),

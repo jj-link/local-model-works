@@ -108,9 +108,9 @@ export function PaperStudio({ projectId, files, runs }: { projectId: string; fil
                 </button>
               ))}
             </nav>
-            <div className="min-w-0 bg-[#11191c]">
-              {current.isPending ? <p className="p-4 font-mono text-xs text-[#71817c]">loading source…</p> : current.isError ? <p className="p-4 font-mono text-xs text-[#e79078]">{current.error.message}</p> : (
-                <CodeMirror value={draft} height="620px" theme="dark" extensions={fileLanguage(activePath)} onChange={setDraft} basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true }} aria-label={`Editor for ${activePath}`} />
+            <div className="min-w-0 bg-panel">
+              {current.isPending ? <p className="p-4 font-mono text-xs text-muted">loading source…</p> : current.isError ? <p className="p-4 font-mono text-xs text-fault">{current.error.message}</p> : (
+                <CodeMirror value={draft} height="620px" theme="light" extensions={fileLanguage(activePath)} onChange={setDraft} basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true }} aria-label={`Editor for ${activePath}`} />
               )}
             </div>
           </div>
@@ -151,7 +151,7 @@ export function PaperStudio({ projectId, files, runs }: { projectId: string; fil
             <textarea value={chat} onChange={(event) => setChat(event.target.value)} className="min-h-28 w-full resize-y rounded border border-hairline bg-background px-3 py-2 font-mono text-xs" placeholder="Ask the paper writer for a scoped edit to the open source…" />
             <Button size="sm" className="mt-2 w-full" disabled={pending || chat.trim() === "" || !current.data} onClick={() => current.data && writer.mutate({ message: chat, base_etags: { [activePath]: current.data.etag } }, { onSuccess: () => setChat("") })}><Send aria-hidden /> apply writer edit</Button>
             {writer.data ? <p className="mt-2 font-mono text-[10px] text-ok">changed {writer.data.changed_paths.length} file{writer.data.changed_paths.length === 1 ? "" : "s"}</p> : null}
-            {(writer.error || compile.error || release.error || continueRounds.error) ? <p className="mt-2 font-mono text-[10px] text-danger">{(writer.error ?? compile.error ?? release.error ?? continueRounds.error)?.message}</p> : null}
+            {(writer.error || compile.error || release.error || continueRounds.error) ? <p className="mt-2 font-mono text-[10px] text-fault">{(writer.error ?? compile.error ?? release.error ?? continueRounds.error)?.message}</p> : null}
           </div>
         </div>
       </div>

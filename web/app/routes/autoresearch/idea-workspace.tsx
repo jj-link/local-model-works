@@ -88,7 +88,7 @@ export function IdeaWorkspace({
           <ul className="mt-2 grid gap-1" aria-label="Attached sources">
             {sources.length === 0 ? <li className="font-mono text-[10px] text-faint">No sources attached. Topic-only intake is allowed.</li> : sources.map((source) => (
               <li key={source.id} className="rounded border border-hairline bg-raised/40 px-2 py-1.5">
-                <div className="flex items-center gap-1.5"><Link2 className="h-3 w-3 text-faint" aria-hidden /><span className="min-w-0 flex-1 truncate font-mono text-[10px]">{source.title ?? source.locator}</span><span className={cn("font-mono text-[9px]", source.status === "ready" ? "text-ok" : source.status === "blocked" ? "text-warn" : source.status === "failed" ? "text-danger" : "text-faint")}>{source.status}</span></div>
+                <div className="flex items-center gap-1.5"><Link2 className="h-3 w-3 text-faint" aria-hidden /><span className="min-w-0 flex-1 truncate font-mono text-[10px]">{source.title ?? source.locator}</span><span className={cn("font-mono text-[9px]", source.status === "ready" ? "text-ok" : source.status === "blocked" ? "text-warn" : source.status === "failed" ? "text-fault" : "text-faint")}>{source.status}</span></div>
                 {source.error ? <p className="mt-1 font-mono text-[9px] text-warn">{source.error}</p> : null}
               </li>
             ))}
@@ -118,7 +118,7 @@ export function IdeaWorkspace({
           ) : <div className="grid min-h-[460px] place-items-center p-6 text-center"><div><p className="font-display text-lg">No candidate document</p><p className="mt-1 max-w-sm font-mono text-xs text-faint">Write a direct idea when creating the project or generate one to open the selection gate.</p></div></div>}
         </div>
       </div>
-      {(generate.error || updateIdea.error || selectIdea.error || createSource.error || uploadSource.error || createRun.error) ? <p className="border-t border-hairline px-3 py-2 font-mono text-[10px] text-danger">{String((generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) instanceof Error ? (generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) : "Action failed")}</p> : null}
+      {(generate.error || updateIdea.error || selectIdea.error || createSource.error || uploadSource.error || createRun.error) ? <p className="border-t border-hairline px-3 py-2 font-mono text-[10px] text-fault">{String((generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) instanceof Error ? (generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) : "Action failed")}</p> : null}
     </section>
   );
 }

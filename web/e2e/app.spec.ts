@@ -58,12 +58,43 @@ const servingHistory = [{
   deployment_id: "33333333-3333-7333-8333-333333333333", ts: nowSec,
   payload: { available: true, backend: "vllm", model_id: "Qwen3.8-27B", generation_tps: 10, prefill_tps: 4, requests_running: 2 },
 }];
+const autoResearchProject = {
+  id: "88888888-8888-4888-8888-888888888888",
+  name: "Sparse world models",
+  status: "running",
+  runner_node_id: nodes[0].id,
+  idea_prompt: "Can sparse latent world models improve long-horizon robotic planning?",
+  config: { candidate_count: 1, paper_max_rounds: 5, human_gates: { idea_selection: true, paper_post_edit: true }, roles: {}, fallbacks: {}, advisors: {} },
+  version: 1,
+  created_at: "2026-08-24T20:00:00Z",
+  updated_at: "2026-08-24T20:10:00Z",
+};
+const autoResearchRun = {
+  id: "99999999-9999-4999-8999-999999999999",
+  module: "autoresearch",
+  kind: "autoresearch-factory",
+  state: "running",
+  created_at: "2026-08-24T20:10:00Z",
+  started_at: "2026-08-24T20:11:00Z",
+};
+const autoResearchIdea = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  project_id: autoResearchProject.id,
+  ordinal: 1,
+  source: "generated",
+  title: "Sparse latent world models for long-horizon planning",
+  body: "## Research question\nCan sparse state improve planning?",
+  selected: true,
+  version: 2,
+  created_at: "2026-08-24T20:02:00Z",
+  updated_at: "2026-08-24T20:05:00Z",
+};
 
 async function fulfill(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean; fleetScenario?: boolean } = {}) {
+async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean; fleetScenario?: boolean; autoResearchScenario?: boolean } = {}) {
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -82,6 +113,14 @@ async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?:
     if (path === "/api/v1/runs") return fulfill(route, { items: [] });
     if (path === "/api/v1/recipes" || path === "/api/v1/artifacts" || path === "/api/v1/transfers" || path === "/api/v1/recipe-drafts" || path === "/api/v1/benchmarks" || path === "/api/v1/benchmark-results" || path === "/api/v1/secrets") return fulfill(route, []);
     if (path === "/api/v1/system/info") return fulfill(route, { version: "test", commit: "abc123", build: "test" });
+    if (options.autoResearchScenario) {
+      if (path === "/api/v1/autoresearch/projects") return fulfill(route, [autoResearchProject]);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}`) return fulfill(route, autoResearchProject);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/ideas`) return fulfill(route, [autoResearchIdea]);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/sources`) return fulfill(route, []);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/runs`) return fulfill(route, [autoResearchRun]);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/paper/files`) return fulfill(route, []);
+    }
     if (path.startsWith("/api/v1/module-settings/")) return fulfill(route, { module: path.split("/").pop(), settings: {}, version: "1" });
     return fulfill(route, request.method() === "GET" ? [] : {});
   });
@@ -106,7 +145,7 @@ test("every first-party module route mounts inside the authenticated shell", asy
   }
 });
 
-test("Sample A navigation exposes real and skeleton destinations on desktop and mobile", async ({ page }) => {
+test("current navigation exposes real and skeleton destinations on desktop and mobile", async ({ page }) => {
   await installAPI(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/library/recipes");
@@ -116,7 +155,7 @@ test("Sample A navigation exposes real and skeleton destinations on desktop and 
   for (const label of [
     "Nodes", "Fabrics", "Catalog", "Recipe Builder", "Profiles & Sharing",
     "Knowledge & RAG", "Serving", "Community Leaderboard",
-    "Autoresearch", "Experiment Builder", "Workflow Builder",
+    "AutoResearch Factory", "Experiment Builder", "Workflow Builder",
     "Scheduled Tasks & Automations", "Usage & Costs", "Integrated Fine-tuning",
     "Projects", "Chat",
   ]) {
@@ -173,6 +212,24 @@ test("AutoResearch Factory mounts its empty and project-composer states without 
   await expect(page.getByLabel("project name")).toBeVisible();
   await expect(page.getByLabel("direct idea (optional)")).toBeVisible();
   await expect(page.getByLabel("runner node")).toBeVisible();
+});
+
+test("AutoResearch Factory renders the approved live workspace with real project data", async ({ page }) => {
+  await installAPI(page, { autoResearchScenario: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/autoresearch");
+
+  const primaryNav = page.getByRole("navigation", { name: "Primary" });
+  await expect(primaryNav.getByRole("link", { name: "AutoResearch Factory", exact: true })).toBeVisible();
+  await expect(page.locator("#main-content").getByRole("heading", { name: "AutoResearch Factory", exact: true })).toBeVisible();
+  await expect(page.getByText("Sparse latent world models for long-horizon planning", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "generation stream", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 1440);
+
+  await page.getByRole("button", { name: "Ideas & sources", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "idea workspace", exact: true })).toBeVisible();
+  await expect(page.getByLabel("candidate title")).toHaveValue("Sparse latent world models for long-horizon planning");
 });
 
 test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {

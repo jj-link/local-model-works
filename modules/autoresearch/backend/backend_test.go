@@ -56,6 +56,38 @@ func TestPublicAddressPolicy(t *testing.T) {
 	}
 }
 
+func TestParseArxivFeed(t *testing.T) {
+	feed := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>https://arxiv.org/abs/2608.12345v2</id>
+    <updated>2026-08-20T12:00:00Z</updated>
+    <published>2026-08-18T12:00:00Z</published>
+    <title>  Sparse latent
+      world models  </title>
+    <summary> Long-horizon planning with sparse state. </summary>
+    <author><name>Ada Researcher</name></author>
+    <author><name>Grace Scientist</name></author>
+    <link href="https://arxiv.org/abs/2608.12345v2" rel="alternate" type="text/html"/>
+    <link title="pdf" href="https://arxiv.org/pdf/2608.12345v2" rel="related" type="application/pdf"/>
+  </entry>
+</feed>`)
+	resolved, err := parseArxivFeed(feed, "2608.12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Title != "Sparse latent world models" || resolved.Status != "ready" {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	authors, ok := resolved.Metadata["authors"].([]string)
+	if !ok || len(authors) != 2 || authors[1] != "Grace Scientist" {
+		t.Fatalf("authors = %#v", resolved.Metadata["authors"])
+	}
+	if resolved.Metadata["pdf_url"] != "https://arxiv.org/pdf/2608.12345v2" {
+		t.Fatalf("pdf_url = %#v", resolved.Metadata["pdf_url"])
+	}
+}
+
 func TestPaperPathRejectsTraversalAndSymlinks(t *testing.T) {
 	root := t.TempDir()
 	sections := filepath.Join(root, "sections")

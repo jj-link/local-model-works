@@ -4,6 +4,7 @@ import {
   ChartNoAxesCombined,
   ChevronDown,
   FileCode2,
+  FlaskConical,
   Gauge,
   History,
   LayoutDashboard,
@@ -102,7 +103,9 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
     icon: ChartNoAxesCombined,
     grouped: true,
     items: [
-      { id: "autoresearch", ...ROADMAP_PAGES.autoresearch, icon: ChartNoAxesCombined },
+      ...(enabledModuleIds.has("autoresearch")
+        ? [{ id: "autoresearch", label: "AutoResearch Factory", path: "/autoresearch", icon: FlaskConical }]
+        : [{ id: "autoresearch", ...ROADMAP_PAGES.autoresearch, icon: ChartNoAxesCombined }]),
       { id: "experiment-builder", ...ROADMAP_PAGES.experiments, icon: FileCode2 },
       { id: "workflow-builder", ...ROADMAP_PAGES.workflows, icon: Waypoints },
     ],

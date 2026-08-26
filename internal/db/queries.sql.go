@@ -1046,6 +1046,26 @@ func (q *Queries) InsertBenchmarkResult(ctx context.Context, arg InsertBenchmark
 	return err
 }
 
+const insertModuleSettings = `-- name: InsertModuleSettings :execrows
+INSERT INTO module_settings (module, settings, version)
+VALUES (?, ?, ?)
+ON CONFLICT (module) DO NOTHING
+`
+
+type InsertModuleSettingsParams struct {
+	Module   string `json:"module"`
+	Settings string `json:"settings"`
+	Version  string `json:"version"`
+}
+
+func (q *Queries) InsertModuleSettings(ctx context.Context, arg InsertModuleSettingsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertModuleSettings, arg.Module, arg.Settings, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertServingTelemetry1m = `-- name: InsertServingTelemetry1m :exec
 INSERT OR REPLACE INTO serving_telemetry_1m (deployment_id, ts, payload) VALUES (?, ?, ?)
 `
@@ -1074,24 +1094,6 @@ type InsertServingTelemetry5sParams struct {
 func (q *Queries) InsertServingTelemetry5s(ctx context.Context, arg InsertServingTelemetry5sParams) error {
 	_, err := q.db.ExecContext(ctx, insertServingTelemetry5s, arg.DeploymentID, arg.Ts, arg.Payload)
 	return err
-const insertModuleSettings = `-- name: InsertModuleSettings :execrows
-INSERT INTO module_settings (module, settings, version)
-VALUES (?, ?, ?)
-ON CONFLICT (module) DO NOTHING
-`
-
-type InsertModuleSettingsParams struct {
-	Module   string `json:"module"`
-	Settings string `json:"settings"`
-	Version  string `json:"version"`
-}
-
-func (q *Queries) InsertModuleSettings(ctx context.Context, arg InsertModuleSettingsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertModuleSettings, arg.Module, arg.Settings, arg.Version)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const insertTelemetry1m = `-- name: InsertTelemetry1m :exec
