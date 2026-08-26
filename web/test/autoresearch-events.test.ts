@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NDJSONEventDecoder,
   reconstructActiveInvocations,
+  summarizeAutoResearchUsage,
   type AutoResearchEvent,
 } from "~/routes/autoresearch/events";
 
@@ -48,5 +49,46 @@ describe("NDJSONEventDecoder", () => {
 
     events.push(event("e4", "agent.finished", "primary-1", "experiment.coder", {}));
     expect(reconstructActiveInvocations(events).map((item) => item.id)).toEqual(["primary-2", "advisor-1"]);
+  });
+});
+
+describe("summarizeAutoResearchUsage", () => {
+  it("uses cumulative invocation totals without double-counting repeated frames", () => {
+    const events = [
+      event("u1", "agent.usage", "primary-1", "experiment.coder", { input_tokens: 100, output_tokens: 20, cost_usd: 0.1 }),
+      event("u2", "agent.usage", "primary-1", "experiment.coder", { input_tokens: 100, output_tokens: 20, cost_usd: 0.1 }),
+      event("u3", "agent.usage", "primary-1", "experiment.coder", { input_tokens: 120, output_tokens: 35, cost_usd: 0.16, output_rate: 18.5 }),
+      event("u4", "agent.usage", "primary-2", "paper.writer", { input_tokens: 50, output_tokens: 10, cost_usd: 0.04, context_percent: 42 }),
+    ];
+
+    expect(summarizeAutoResearchUsage(events)).toEqual({
+      inputTokens: 170,
+      outputTokens: 45,
+      totalTokens: 215,
+      costUsd: 0.2,
+      outputRate: 18.5,
+      contextPercent: 42,
+    });
+  });
+
+  it("keeps unavailable values null and ignores malformed numeric payloads", () => {
+    const events = [
+      event("u1", "agent.usage", "primary-1", "experiment.coder", {
+        input_tokens: "100",
+        output_tokens: Number.NaN,
+        cost_usd: "free",
+        output_rate: Infinity,
+        context_percent: null,
+      }),
+    ];
+
+    expect(summarizeAutoResearchUsage(events)).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: null,
+      outputRate: null,
+      contextPercent: null,
+    });
   });
 });

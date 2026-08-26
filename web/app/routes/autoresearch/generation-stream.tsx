@@ -1,7 +1,10 @@
-import { AlertTriangle, CirclePause, CirclePlay, OctagonX, RotateCw } from "lucide-react";
-import { Button } from "~/components/ui/button";
+import { AlertTriangle, RotateCw } from "lucide-react";
 import type { Run } from "~/lib/api";
-import type { ActiveInvocation, AutoResearchEvent } from "./events";
+import type {
+  ActiveInvocation,
+  AutoResearchEvent,
+  AutoResearchUsageSummary,
+} from "./events";
 
 function eventText(event: AutoResearchEvent): string {
   if (event.type === "agent.text.delta") return String(event.payload.delta ?? event.payload.text ?? "");
@@ -14,75 +17,136 @@ function eventText(event: AutoResearchEvent): string {
   return "";
 }
 
+interface TimelineEntry {
+  id: string;
+  role: string;
+  timestamp: string;
+  state: "queued" | "running" | "completed" | "failed";
+}
+
+function invocationTimeline(events: AutoResearchEvent[]): TimelineEntry[] {
+  const entries = new Map<string, TimelineEntry>();
+  for (const event of events) {
+    const id = event.invocation_id;
+    if (!id || event.type.startsWith("advisor.")) continue;
+    const previous = entries.get(id);
+    if (event.type === "agent.started") {
+      entries.set(id, {
+        id,
+        role: String(event.payload.role ?? previous?.role ?? event.node_id ?? "auxiliary"),
+        timestamp: event.timestamp,
+        state: event.payload.state === "queued" ? "queued" : "running",
+      });
+    } else if (event.type === "agent.finished") {
+      entries.set(id, {
+        id,
+        role: String(event.payload.role ?? previous?.role ?? event.node_id ?? "auxiliary"),
+        timestamp: event.timestamp,
+        state: event.payload.state === "failed" || event.payload.error ? "failed" : "completed",
+      });
+    } else if (event.type === "error" && previous) {
+      entries.set(id, { ...previous, timestamp: event.timestamp, state: "failed" });
+    }
+  }
+  return [...entries.values()]
+    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .slice(0, 3);
+}
+
+function metric(value: number | null, suffix = ""): string {
+  return value === null ? "—" : `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`;
+}
+
 export function GenerationStream({
   run,
   events,
   active,
+  usage,
   reconnecting,
   streamError,
-  onControl,
+  onStop,
   controlPending,
 }: {
   run?: Run;
   events: AutoResearchEvent[];
   active: ActiveInvocation[];
+  usage: AutoResearchUsageSummary;
   reconnecting: boolean;
   streamError: string | null;
-  onControl: (action: "pause" | "resume" | "stop") => void;
+  onStop: () => void;
   controlPending: boolean;
 }) {
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cost = 0;
-  for (const event of events) {
-    if (event.type !== "agent.usage") continue;
-    inputTokens += Number(event.payload.input_tokens ?? 0);
-    outputTokens += Number(event.payload.output_tokens ?? 0);
-    cost += Number(event.payload.cost_usd ?? 0);
-  }
   const transcript = events.filter((event) => eventText(event) !== "").slice(-120);
-  const current = active.find((item) => !item.advisor) ?? active[0];
-  const canPause = run?.state === "running";
-  const canResume = run?.state === "paused";
-  const canStop = Boolean(run && !["succeeded", "failed", "cancelled", "interrupted"].includes(run.state));
+  const current = active.filter((item) => !item.advisor).at(-1);
+  const timeline = invocationTimeline(events);
+  const canStop = Boolean(run && ["queued", "planning", "running", "paused", "waiting", "verifying"].includes(run.state));
+  const status = reconnecting ? "reconnecting" : run?.state ?? "idle";
 
   return (
-    <section className="lmw-panel flex min-h-[480px] flex-col overflow-hidden">
-      <header className="lmw-panel-head">
-        <h2 className="lmw-label">generation stream</h2>
-        {reconnecting ? <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] text-warn"><RotateCw className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> reconnecting</span> : (
-          <span className="ml-auto font-mono text-[10px] text-faint">{run?.state ?? "idle"}</span>
-        )}
+    <aside className="arf-panel arf-stream-panel" aria-label="Generation stream">
+      <header className="arf-panel-head">
+        <div className="arf-panel-title">
+          <h2>Generation stream</h2>
+          <span className="arf-panel-kicker">Tokens</span>
+        </div>
+        <div className="arf-stream-head-status">
+          {reconnecting ? <RotateCw className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : <i />}
+          <span>{status}</span>
+        </div>
       </header>
-      <div className="grid grid-cols-3 divide-x divide-hairline border-b border-hairline bg-raised/35">
-        <div className="px-3 py-2"><span className="lmw-label block">input</span><strong className="font-mono text-sm tnum">{inputTokens.toLocaleString()}</strong></div>
-        <div className="px-3 py-2"><span className="lmw-label block">output</span><strong className="font-mono text-sm tnum">{outputTokens.toLocaleString()}</strong></div>
-        <div className="px-3 py-2"><span className="lmw-label block">cost</span><strong className="font-mono text-sm tnum">${cost.toFixed(3)}</strong></div>
+      <div className="arf-stream-summary">
+        <div className="arf-stream-metric"><label>Total tokens</label><strong>{usage.totalTokens.toLocaleString()}</strong></div>
+        <div className="arf-stream-metric"><label>Output rate</label><strong>{metric(usage.outputRate, " t/s")}</strong></div>
+        <div className="arf-stream-metric"><label>Context</label><strong>{metric(usage.contextPercent, "%")}</strong></div>
       </div>
-      <div className="border-b border-hairline px-3 py-3">
-        {current ? (
-          <div className="flex items-center gap-3">
-            <span className="grid h-8 w-8 place-items-center rounded-sm border border-primary/50 bg-primary/10 font-mono text-xs text-primary">⌁</span>
-            <div className="min-w-0"><p className="truncate font-display text-sm font-medium">{current.role}</p><p className="truncate font-mono text-[10px] text-faint">{current.backend} · {current.model}</p></div>
-            <span className="ml-auto h-2 w-2 rounded-full bg-ok shadow-[0_0_10px_currentColor]" aria-label="active" />
-          </div>
-        ) : <p className="font-mono text-xs text-faint">No invocation active.</p>}
+      <div className="arf-stream-body">
+        <div className="arf-active-agent">
+          <div className="arf-agent-glyph"><span>⌁</span></div>
+          {current ? (
+            <div>
+              <h3>{current.role}</h3>
+              <p>{current.model || "—"} · {current.backend || "—"}</p>
+            </div>
+          ) : (
+            <div>
+              <h3>No invocation active</h3>
+              <p>Waiting for primary execution</p>
+            </div>
+          )}
+          <div className="arf-token-rate">{metric(usage.outputRate, " t/s")}</div>
+        </div>
+        <div className="arf-transcript" role="log" aria-live="polite">
+          {transcript.length === 0 ? <div className="arf-transcript-line arf-meta">Normalized model and tool events will appear here</div> : transcript.map((event, index) => {
+            const tone = event.type === "error" || event.type === "decision.required"
+              ? "arf-accent"
+              : event.type === "agent.tool.started" || event.type === "agent.tool.finished"
+                ? "arf-tool"
+                : event.type === "agent.text.delta"
+                  ? "arf-output"
+                  : "arf-meta";
+            return (
+              <div key={event.event_id} className={`arf-transcript-line ${tone}`} style={{ animationDelay: `${Math.min(index, 8) * 0.05}s` }}>
+                <span>{new Date(event.timestamp).toLocaleTimeString([], { hour12: false })} </span>
+                {eventText(event)}
+              </div>
+            );
+          })}
+          {streamError ? <p className="arf-inline-error" role="alert"><AlertTriangle className="inline h-3 w-3" aria-hidden /> {streamError}</p> : null}
+        </div>
+        {timeline.length ? <div className="arf-timeline" aria-label="Recent invocation lifecycle">
+          {timeline.map((entry) => (
+            <div className="arf-timeline-row" key={entry.id}>
+              <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour12: false })}</span>
+              <b>{entry.role}</b>
+              <em>{entry.state}</em>
+            </div>
+          ))}
+        </div> : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#11191c] px-3 py-3 font-mono text-[11px] leading-5 text-[#b8c3bd]" role="log" aria-live="polite">
-        {transcript.length === 0 ? <p className="text-[#71817c]">normalized model and tool events will appear here</p> : transcript.map((event) => (
-          <div key={event.event_id} className={event.type === "error" || event.type === "decision.required" ? "text-[#e7b579]" : event.type === "advisor.note" ? "text-[#bca8ef]" : undefined}>
-            <span className="mr-2 text-[#53645f]">{new Date(event.timestamp).toLocaleTimeString([], { hour12: false })}</span>
-            {eventText(event)}
-          </div>
-        ))}
-        {streamError ? <p className="mt-2 inline-flex items-center gap-1 text-[#e79078]"><AlertTriangle className="h-3 w-3" aria-hidden /> {streamError}</p> : null}
-      </div>
-      <footer className="flex flex-wrap items-center gap-2 border-t border-hairline px-3 py-2">
-        <Button size="sm" variant="outline" disabled={!canPause || controlPending} onClick={() => onControl("pause")}><CirclePause aria-hidden /> pause</Button>
-        <Button size="sm" variant="outline" disabled={!canResume || controlPending} onClick={() => onControl("resume")}><CirclePlay aria-hidden /> resume</Button>
-        <Button size="sm" variant="destructive" disabled={!canStop || controlPending} onClick={() => onControl("stop")}><OctagonX aria-hidden /> stop</Button>
-        <span className="ml-auto font-mono text-[10px] text-faint">{events.length} events</span>
+      <footer className="arf-stream-footer">
+        <span>{events.length.toLocaleString()} events retained</span>
+        {canStop ? <button type="button" className="arf-stop-button" disabled={controlPending} onClick={onStop}>Stop run</button> : null}
       </footer>
-    </section>
+    </aside>
   );
 }

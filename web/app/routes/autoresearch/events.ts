@@ -30,6 +30,60 @@ export interface AutoResearchEvent {
   payload: Record<string, unknown>;
 }
 
+export interface AutoResearchUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+  outputRate: number | null;
+  contextPercent: number | null;
+}
+
+function finitePayloadNumber(payload: Record<string, unknown>, key: string): number | null {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function summarizeAutoResearchUsage(events: AutoResearchEvent[]): AutoResearchUsageSummary {
+  const cumulative = new Map<string, { inputTokens: number; outputTokens: number; costUsd: number | null }>();
+  let outputRate: number | null = null;
+  let contextPercent: number | null = null;
+
+  for (const event of events) {
+    if (event.type !== "agent.usage") continue;
+    const key = event.invocation_id ?? event.event_id;
+    const previous = cumulative.get(key) ?? { inputTokens: 0, outputTokens: 0, costUsd: null };
+    const inputTokens = finitePayloadNumber(event.payload, "input_tokens");
+    const outputTokens = finitePayloadNumber(event.payload, "output_tokens");
+    const costUsd = finitePayloadNumber(event.payload, "cost_usd");
+    cumulative.set(key, {
+      inputTokens: inputTokens === null ? previous.inputTokens : Math.max(previous.inputTokens, inputTokens),
+      outputTokens: outputTokens === null ? previous.outputTokens : Math.max(previous.outputTokens, outputTokens),
+      costUsd: costUsd === null ? previous.costUsd : Math.max(previous.costUsd ?? 0, costUsd),
+    });
+    outputRate = finitePayloadNumber(event.payload, "output_rate") ?? outputRate;
+    contextPercent = finitePayloadNumber(event.payload, "context_percent") ?? contextPercent;
+  }
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let costUsd: number | null = null;
+  for (const usage of cumulative.values()) {
+    inputTokens += usage.inputTokens;
+    outputTokens += usage.outputTokens;
+    if (usage.costUsd !== null) costUsd = (costUsd ?? 0) + usage.costUsd;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    costUsd,
+    outputRate,
+    contextPercent,
+  };
+}
+
 export class NDJSONEventDecoder {
   private buffer = "";
 

@@ -89,12 +89,19 @@ const autoResearchIdea = {
   created_at: "2026-08-24T20:02:00Z",
   updated_at: "2026-08-24T20:05:00Z",
 };
+const autoResearchEvents = [
+  { version: 1, event_id: "arf-start", run_id: autoResearchRun.id, invocation_id: "inv-coder", node_id: "experiment.coder", timestamp: "2026-08-24T20:12:00Z", type: "agent.started", payload: { role: "experiment-coder", backend: "spark2", model: "real-coder-model" } },
+  { version: 1, event_id: "arf-usage-1", run_id: autoResearchRun.id, invocation_id: "inv-coder", node_id: "experiment.coder", timestamp: "2026-08-24T20:12:01Z", type: "agent.usage", payload: { input_tokens: 1200, output_tokens: 300, cost_usd: 0.42, output_rate: 25.5, context_percent: 40 } },
+  { version: 1, event_id: "arf-usage-2", run_id: autoResearchRun.id, invocation_id: "inv-coder", node_id: "experiment.coder", timestamp: "2026-08-24T20:12:02Z", type: "agent.usage", payload: { input_tokens: 1200, output_tokens: 300, cost_usd: 0.42, output_rate: 25.5, context_percent: 40 } },
+  { version: 1, event_id: "arf-text", run_id: autoResearchRun.id, invocation_id: "inv-coder", node_id: "experiment.coder", timestamp: "2026-08-24T20:12:03Z", type: "agent.text.delta", payload: { delta: "Running the deterministic sparse-latent ablation." } },
+] as const;
 
 async function fulfill(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
 async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?: boolean; fleetScenario?: boolean; autoResearchScenario?: boolean } = {}) {
+  let autoResearchState = autoResearchRun.state;
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -118,8 +125,30 @@ async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?:
       if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}`) return fulfill(route, autoResearchProject);
       if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/ideas`) return fulfill(route, [autoResearchIdea]);
       if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/sources`) return fulfill(route, []);
-      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/runs`) return fulfill(route, [autoResearchRun]);
+      if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/runs`) {
+        if (request.method() === "POST") {
+          autoResearchState = "queued";
+          return fulfill(route, { ...autoResearchRun, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: autoResearchState });
+        }
+        return fulfill(route, [{ ...autoResearchRun, state: autoResearchState }]);
+      }
       if (path === `/api/v1/autoresearch/projects/${autoResearchProject.id}/paper/files`) return fulfill(route, []);
+      if (path === `/api/v1/autoresearch/runs/${autoResearchRun.id}/pause`) {
+        autoResearchState = "paused";
+        return fulfill(route, { ...autoResearchRun, state: autoResearchState });
+      }
+      if (path === `/api/v1/autoresearch/runs/${autoResearchRun.id}/resume`) {
+        autoResearchState = "running";
+        return fulfill(route, { ...autoResearchRun, state: autoResearchState });
+      }
+      if (path === `/api/v1/autoresearch/runs/${autoResearchRun.id}/stop`) {
+        autoResearchState = "cancelled";
+        return fulfill(route, { ...autoResearchRun, state: autoResearchState });
+      }
+      if (path === `/api/v1/runs/${autoResearchRun.id}/logs`) {
+        const frames = autoResearchEvents.map((event) => `id: ${event.event_id}\ndata: ${JSON.stringify(`${JSON.stringify(event)}\n`)}\n\n`).join("");
+        return route.fulfill({ status: 200, contentType: "text/event-stream", body: `${frames}event: end\ndata: {}\n\n` });
+      }
     }
     if (path.startsWith("/api/v1/module-settings/")) return fulfill(route, { module: path.split("/").pop(), settings: {}, version: "1" });
     return fulfill(route, request.method() === "GET" ? [] : {});
@@ -195,41 +224,101 @@ test("current navigation exposes real and skeleton destinations on desktop and m
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("AutoResearch Factory mounts its empty and project-composer states without overflow", async ({ page }) => {
+test("AutoResearch Factory keeps the approved empty composition and usable mobile dialog", async ({ page }) => {
   await installAPI(page);
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 1024, height: 768 },
-    { width: 768, height: 1024 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await page.goto("/autoresearch");
-    await expect(page.getByText("No research project selected")).toBeVisible();
-    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", viewport.width);
-  }
-  await page.getByRole("button", { name: "project" }).click();
-  await expect(page.getByLabel("project name")).toBeVisible();
-  await expect(page.getByLabel("direct idea (optional)")).toBeVisible();
-  await expect(page.getByLabel("runner node")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/autoresearch");
+  await expect(page.getByText("No research project selected")).toBeVisible();
+  const verticalOrder = await page.locator(".arf-hero, .arf-composer, .arf-workspace").evaluateAll((elements) => elements.map((element) => element.className));
+  expect(verticalOrder).toEqual(["arf-hero", "arf-composer", "arf-workspace"]);
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(390);
+  await page.getByRole("button", { name: "New project", exact: true }).first().click();
+  await expect(page.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
+  await page.getByLabel("Project name").fill("Mobile research project");
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Direct idea")).toBeVisible();
+  await expect(page.getByLabel("Runner node")).toBeVisible();
 });
 
-test("AutoResearch Factory renders the approved live workspace with real project data", async ({ page }) => {
+test("AutoResearch Factory renders real desktop fidelity and run controls", async ({ page }) => {
   await installAPI(page, { autoResearchScenario: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/autoresearch");
 
   const primaryNav = page.getByRole("navigation", { name: "Primary" });
   await expect(primaryNav.getByRole("link", { name: "AutoResearch Factory", exact: true })).toBeVisible();
-  await expect(page.locator("#main-content").getByRole("heading", { name: "AutoResearch Factory", exact: true })).toBeVisible();
-  await expect(page.getByText("Sparse latent world models for long-horizon planning", { exact: true })).toBeVisible();
+  await expect(page.locator(".arf-hero")).toBeVisible();
+  await expect(page.locator(".arf-composer")).toBeVisible();
   await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "generation stream", exact: true })).toBeVisible();
-  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 1440);
+  await expect(page.getByRole("heading", { name: "Generation stream", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Research topic")).toHaveValue("Sparse latent world models for long-horizon planning");
+  await expect(page.getByText("99999999…")).toBeVisible();
+  await expect(page.getByText("$0.42")).toBeVisible();
+  await expect(page.getByText("1,500")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Experiment coder — real-coder-model — generating" })).toBeVisible();
+
+  const geometry = await page.locator(".arf-workspace").evaluate((workspace) => {
+    const graph = workspace.querySelector(".arf-flow-panel")!.getBoundingClientRect();
+    const stream = workspace.querySelector(".arf-stream-panel")!.getBoundingClientRect();
+    return {
+      display: getComputedStyle(workspace).display,
+      columns: getComputedStyle(workspace).gridTemplateColumns,
+      graphWidth: graph.width,
+      streamWidth: stream.width,
+      streamAfterGraph: stream.left > graph.left,
+    };
+  });
+  expect(geometry.display).toBe("grid");
+  expect(geometry.columns).not.toBe("none");
+  expect(geometry.streamAfterGraph).toBe(true);
+  expect(geometry.streamWidth).toBeLessThan(geometry.graphWidth);
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(1440);
+  await expect(page.locator(".arf-canvas")).not.toContainText("QWEN-3.5");
+  await expect(page.locator(".arf-canvas")).not.toContainText("$1.84");
+  await expect(page.locator(".arf-canvas")).not.toContainText("#018");
+
+  await page.getByRole("button", { name: "Pause run" }).click();
+  await expect(page.getByRole("button", { name: "Resume run" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume run" }).click();
+  await expect(page.getByRole("button", { name: "Pause run" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop run" }).click();
+  await expect(page.getByRole("button", { name: "Start run" })).toBeVisible();
+  await page.getByLabel("Start at").selectOption("experiment");
+  const startRequest = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith(`/autoresearch/projects/${autoResearchProject.id}/runs`));
+  await page.getByRole("button", { name: "Start run" }).click();
+  expect((await startRequest).postDataJSON()).toEqual({ factory: "experiment" });
 
   await page.getByRole("button", { name: "Ideas & sources", exact: true }).click();
   await expect(page.getByRole("heading", { name: "idea workspace", exact: true })).toBeVisible();
   await expect(page.getByLabel("candidate title")).toHaveValue("Sparse latent world models for long-horizon planning");
+});
+
+test("AutoResearch Factory stacks and contains topology overflow on mobile", async ({ page }) => {
+  await installAPI(page, { autoResearchScenario: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/autoresearch");
+  await expect(page.locator(".arf-workspace")).toBeVisible();
+  const mobileGeometry = await page.locator(".arf-workspace").evaluate((workspace) => {
+    const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
+    const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
+    return {
+      display: getComputedStyle(workspace).display,
+      stacked: stream.getBoundingClientRect().top > graph.getBoundingClientRect().bottom,
+      graphScrolls: graph.scrollWidth > graph.clientWidth,
+    };
+  });
+  expect(mobileGeometry.display).toBe("block");
+  expect(mobileGeometry.stacked).toBe(true);
+  expect(mobileGeometry.graphScrolls).toBe(true);
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(390);
+
+  const modeNav = page.getByRole("navigation", { name: "AutoResearch Factory workspace" });
+  for (const name of ["Factory", "Ideas & sources", "Paper studio", "Role controls"]) {
+    const button = modeNav.getByRole("button", { name, exact: true });
+    await expect(button).toBeEnabled();
+    await button.focus();
+    await expect(button).toBeFocused();
+  }
 });
 
 test("Workshop renders inventory, topology, and serving instruments", async ({ page }) => {

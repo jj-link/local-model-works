@@ -1,4 +1,3 @@
-import { Activity, ShieldCheck } from "lucide-react";
 import { cn } from "~/lib/utils";
 import workflowImage from "../../../../third_party/agon/figures/figure_xp.png";
 import type { ActiveInvocation } from "./events";
@@ -44,65 +43,81 @@ const HOTSPOTS: Hotspot[] = [
   { id: "deep-scientist", node: "experiment.scientist", label: "Deep literature experiment scientist", glyph: "ES", x: 54.5, y: 79, size: 5.2 },
 ];
 
-export function WorkflowGraph({ active }: { active: ActiveInvocation[] }) {
+function stageClass(hotspot: Hotspot): string {
+  if (hotspot.node.startsWith("idea.")) return "arf-stage-idea";
+  if (hotspot.node.startsWith("proposal.")) return "arf-stage-proposal";
+  if (hotspot.node.startsWith("experiment.")) return "arf-stage-experiment";
+  if (hotspot.node.startsWith("paper.")) return "arf-stage-paper";
+  return "arf-stage-literature";
+}
+
+function roleLabel(hotspot: Hotspot): string {
+  if (hotspot.id === "deep-readers") return "lit-readers";
+  if (hotspot.id === "deep-coordinator" || hotspot.id.endsWith("deep-lit")) return "deep-lit";
+  return hotspot.node.split(".").at(-1)?.replaceAll("-", " ") ?? hotspot.label;
+}
+
+export function WorkflowGraph({ active, paused = false }: { active: ActiveInvocation[]; paused?: boolean }) {
   const primary = active.filter((invocation) => !invocation.advisor);
   const advisors = active.filter((invocation) => invocation.advisor);
   const represented = new Set(HOTSPOTS.map((hotspot) => hotspot.node));
   const auxiliary = primary.filter((invocation) => !invocation.nodeId || !represented.has(invocation.nodeId));
 
   return (
-    <section className="lmw-panel overflow-hidden" aria-label="Live Agon workflow">
-      <header className="lmw-panel-head">
-        <h2 className="lmw-label">factory graph</h2>
-        <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] text-faint">
-          <Activity className="h-3 w-3" aria-hidden /> {primary.length} primary · {advisors.length} advisor
-        </span>
+    <section className="arf-panel arf-flow-panel" aria-label="Live Agon workflow">
+      <header className="arf-panel-head">
+        <div className="arf-panel-title">
+          <h2>Research topology</h2>
+          <span className="arf-panel-kicker">Live execution graph</span>
+        </div>
+        <div className="arf-legend" aria-label="Execution state legend">
+          <span><i /> waiting</span>
+          <span><i className="arf-live" /> generating</span>
+        </div>
       </header>
-      <div className="relative aspect-[1.78/1] min-h-[310px] overflow-hidden bg-[#eeece5]">
-        <img src={workflowImage} alt="Agon research factory workflow" className="absolute inset-0 h-full w-full object-contain opacity-80" />
-        {HOTSPOTS.map((hotspot) => {
-          const invocation = primary.find((item) => item.nodeId === hotspot.node);
-          return (
-            <button
-              key={hotspot.id}
-              type="button"
-              aria-label={`${hotspot.label}${invocation ? ` — ${invocation.model} active` : " — idle"}`}
-              title={invocation ? `${hotspot.label} · ${invocation.backend}/${invocation.model}` : hotspot.label}
-              className={cn(
-                "absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-sm border font-mono text-[clamp(6px,0.65vw,10px)] font-semibold transition-[box-shadow,border-color,background] motion-reduce:transition-none",
-                invocation
-                  ? "z-10 border-primary bg-primary text-primary-foreground shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_25%,transparent),0_0_24px_color-mix(in_srgb,var(--primary)_65%,transparent)]"
-                  : "border-foreground/30 bg-background/90 text-foreground/80 hover:border-primary/70",
-              )}
-              style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%`, width: `${hotspot.size ?? 6.2}%`, aspectRatio: "1" }}
-            >
-              {hotspot.glyph}
-            </button>
-          );
-        })}
-      </div>
-      <div className="grid gap-px border-t border-hairline bg-hairline sm:grid-cols-2">
-        <div className="bg-panel px-3 py-2">
-          <p className="lmw-label mb-1">auxiliary execution rail</p>
-          <div className="flex min-h-6 flex-wrap gap-1.5">
-            {auxiliary.length === 0 ? <span className="font-mono text-[10px] text-faint">no auxiliary role active</span> : auxiliary.map((item) => (
-              <span key={item.id} className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary">
-                {item.role} · {item.model}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="bg-panel px-3 py-2">
-          <p className="lmw-label mb-1 inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" aria-hidden /> advisor lane</p>
-          <div className="flex min-h-6 flex-wrap gap-1.5">
-            {advisors.length === 0 ? <span className="font-mono text-[10px] text-faint">advisors off</span> : advisors.map((item) => (
-              <span key={item.id} className="rounded border border-violet/40 bg-violet/10 px-2 py-1 font-mono text-[10px] text-violet">
-                {item.role} · {item.model}
-              </span>
-            ))}
-          </div>
+      <div className="arf-flow-canvas">
+        <div className="arf-chart-reference">
+          <img src={workflowImage} alt="Agon workflow from topic radar through idea, proposal, experiment, deep literature, and paper factories" />
+          {HOTSPOTS.map((hotspot) => {
+            const invocation = primary.find((item) => item.nodeId === hotspot.node);
+            const model = invocation?.model || "—";
+            const state = invocation ? (paused ? "paused" : "generating") : "waiting";
+            return (
+              <button
+                key={hotspot.id}
+                type="button"
+                aria-label={`${hotspot.label} — ${model} — ${state}`}
+                title={invocation ? `${hotspot.label} · ${invocation.backend}/${model}` : `${hotspot.label} · idle`}
+                className={cn(
+                  "arf-chart-node",
+                  stageClass(hotspot),
+                  invocation && "arf-live",
+                  invocation && paused && "arf-paused",
+                )}
+                style={{
+                  "--x": `${hotspot.x}%`,
+                  "--y": `${hotspot.y}%`,
+                  "--size": `${hotspot.size ?? 7}%`,
+                } as React.CSSProperties}
+              >
+                <span className="arf-node-shell">
+                  <span className="arf-node-avatar">{hotspot.glyph}</span>
+                  <span className="arf-node-role">{roleLabel(hotspot)}</span>
+                  <span className="arf-node-model">{model}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
+      <footer className="arf-chart-attribution">
+        <span>Exact Agon workflow · interactive model/status overlay</span>
+        <a href="https://github.com/AutoResearch-Factory/Agon" target="_blank" rel="noreferrer">Source: AutoResearch-Factory/Agon</a>
+        <span className="arf-execution-lanes">
+          <span><strong>Auxiliary:</strong> {auxiliary.length ? auxiliary.map((item) => `${item.role} · ${item.model}`).join(", ") : "none active"}</span>
+          <span><strong>Advisors:</strong> {advisors.length ? advisors.map((item) => `${item.role} · ${item.model}`).join(", ") : "off"}</span>
+        </span>
+      </footer>
     </section>
   );
 }
