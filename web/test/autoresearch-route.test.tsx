@@ -99,6 +99,15 @@ describe("AutoResearchRoute", () => {
     expect(within(workspace).getByRole("heading", { name: "Generation stream" })).toBeVisible();
     expect(within(workspace).getByRole("button", { name: /Idea creator.*waiting/i })).toBeVisible();
     expect(workspace).not.toHaveTextContent(/QWEN-3\.5|\$1\.84|#018/);
+    for (const mode of ["Ideas & sources", "Paper studio", "Role controls"]) {
+      await user.click(screen.getByRole("button", { name: mode }));
+      expect(screen.getByRole("heading", { name: mode })).toBeVisible();
+      expect(screen.getByText(`Select or create a research project to use ${mode}.`)).toBeVisible();
+      expect(screen.getByRole("button", { name: mode })).toHaveAttribute("aria-current", "page");
+    }
+    await user.click(screen.getByRole("button", { name: "Factory" }));
+    expect(screen.getByLabelText("Live Agon workflow")).toBeVisible();
+    expect(screen.getByLabelText("Generation stream")).toBeVisible();
     await user.click(screen.getAllByRole("button", { name: "New project" })[0]);
     expect(screen.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
     expect(screen.getByLabelText("Project name")).toBeEnabled();

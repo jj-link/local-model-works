@@ -223,28 +223,39 @@ export default function AutoResearchRoute() {
       </section>
 
       {!projectId || !project.data ? (
-        <div className="arf-workspace">
-          <WorkflowGraph
-            active={[]}
-            emptyState={(
-              <>
-                <div>
-                  <strong>No research project selected</strong>
-                  <span>Create a project with a direct idea, or begin with bounded candidate generation and verified sources.</span>
-                </div>
-                <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
-              </>
-            )}
-          />
-          <GenerationStream
-            events={[]}
-            active={[]}
-            usage={EMPTY_USAGE}
-            reconnecting={false}
-            streamError={null}
-            controlPending={false}
-          />
-        </div>
+        tab === "factory" ? (
+          <div className="arf-workspace">
+            <section className="arf-empty-notice" aria-label="No project selected">
+              <div>
+                <strong>No research project selected</strong>
+                <span>Create a project with a direct idea, or begin with bounded candidate generation and verified sources.</span>
+              </div>
+              <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
+            </section>
+            <WorkflowGraph active={[]} />
+            <GenerationStream
+              events={[]}
+              active={[]}
+              usage={EMPTY_USAGE}
+              reconnecting={false}
+              streamError={null}
+              controlPending={false}
+            />
+          </div>
+        ) : (
+          <section className="arf-panel arf-mode-empty">
+            <header className="arf-panel-head">
+              <div className="arf-panel-title">
+                <h2>{TAB_LABELS[tab]}</h2>
+                <span className="arf-panel-kicker">Project workspace</span>
+              </div>
+            </header>
+            <div className="arf-mode-empty-body">
+              <p>Select or create a research project to use {TAB_LABELS[tab]}.</p>
+              <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
+            </div>
+          </section>
+        )
       ) : (
         <>
           {tab === "factory" ? <div className="arf-workspace">

@@ -234,31 +234,44 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
   const desktop = await page.locator(".arf-workspace").evaluate((workspace) => {
     const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
     const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
+    const notice = workspace.querySelector(".arf-empty-notice") as HTMLElement;
     return {
       display: getComputedStyle(workspace).display,
       streamNarrower: stream.clientWidth < graph.clientWidth,
+      noticeClear: notice.getBoundingClientRect().bottom <= graph.getBoundingClientRect().top &&
+        notice.getBoundingClientRect().bottom <= stream.getBoundingClientRect().top,
     };
   });
-  expect(desktop).toEqual({ display: "grid", streamNarrower: true });
+  expect(desktop).toEqual({ display: "grid", streamNarrower: true, noticeClear: true });
   await expect(page.locator(".arf-canvas")).not.toContainText(/QWEN-3\.5|\$1\.84|#018/);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobile = await page.locator(".arf-workspace").evaluate((workspace) => {
     const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
     const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
-    const empty = workspace.querySelector(".arf-topology-empty") as HTMLElement;
+    const notice = workspace.querySelector(".arf-empty-notice") as HTMLElement;
     return {
       display: getComputedStyle(workspace).display,
       stacked: stream.getBoundingClientRect().top > graph.getBoundingClientRect().bottom,
       graphScrolls: graph.scrollWidth > graph.clientWidth,
-      emptyVisible: empty.getBoundingClientRect().left >= graph.getBoundingClientRect().left &&
-        empty.getBoundingClientRect().right <= graph.getBoundingClientRect().right + 1,
+      noticeClear: notice.getBoundingClientRect().bottom <= graph.getBoundingClientRect().top,
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
   });
-  expect(mobile).toEqual({ display: "block", stacked: true, graphScrolls: true, emptyVisible: true, overflow: 0 });
+  expect(mobile).toEqual({ display: "block", stacked: true, graphScrolls: true, noticeClear: true, overflow: 0 });
   const verticalOrder = await page.locator(".arf-hero, .arf-composer, .arf-workspace").evaluateAll((elements) => elements.map((element) => element.className));
   expect(verticalOrder).toEqual(["arf-hero", "arf-composer", "arf-workspace"]);
+  const modeNav = page.getByRole("navigation", { name: "AutoResearch Factory workspace" });
+  for (const mode of ["Ideas & sources", "Paper studio", "Role controls"]) {
+    const button = modeNav.getByRole("button", { name: mode, exact: true });
+    await button.click();
+    await expect(page.getByRole("heading", { name: mode, exact: true })).toBeVisible();
+    await expect(page.getByText(`Select or create a research project to use ${mode}.`)).toBeVisible();
+    await expect(button).toHaveAttribute("aria-current", "page");
+  }
+  await modeNav.getByRole("button", { name: "Factory", exact: true }).click();
+  await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
+  await expect(page.getByLabel("Generation stream")).toBeVisible();
 
   await page.getByRole("button", { name: "New project", exact: true }).first().click();
   await expect(page.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
