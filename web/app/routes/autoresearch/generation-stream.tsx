@@ -1,4 +1,5 @@
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronDown, RotateCw } from "lucide-react";
 import type { Run } from "~/lib/api";
 import type {
   ActiveInvocation,
@@ -81,19 +82,39 @@ export function GenerationStream({
   const timeline = invocationTimeline(events);
   const canStop = Boolean(onStop && run && ["queued", "planning", "running", "paused", "waiting", "verifying"].includes(run.state));
   const status = reconnecting ? "reconnecting" : run?.state ?? "idle";
+  const shouldOpenForRun = Boolean(run && !["succeeded", "failed", "cancelled", "interrupted"].includes(run.state));
+  const [expanded, setExpanded] = useState(Boolean(run));
+
+  useEffect(() => {
+    if (shouldOpenForRun) setExpanded(true);
+  }, [run?.id, shouldOpenForRun]);
 
   return (
-    <aside className="arf-panel arf-stream-panel" aria-label="Generation stream">
+    <aside className={`arf-panel arf-stream-panel${expanded ? "" : " arf-collapsed"}`} aria-label="Generation stream">
       <header className="arf-panel-head">
         <div className="arf-panel-title">
           <h2>Generation stream</h2>
           <span className="arf-panel-kicker">Tokens</span>
         </div>
-        <div className="arf-stream-head-status">
-          {reconnecting ? <RotateCw className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : <i />}
-          <span>{status}</span>
+        <div className="arf-stream-head-actions">
+          <div className="arf-stream-head-status">
+            {reconnecting ? <RotateCw className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : <i />}
+            <span>{status}</span>
+          </div>
+          <button
+            type="button"
+            className="arf-stream-toggle"
+            aria-expanded={expanded}
+            aria-controls="arf-generation-content"
+            aria-label={expanded ? "Collapse Generation stream" : "Expand Generation stream"}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ChevronDown aria-hidden />
+          </button>
         </div>
       </header>
+      {expanded ? (
+        <div id="arf-generation-content" className="arf-generation-content">
       <div className="arf-stream-summary">
         <div className="arf-stream-metric"><label>Total tokens</label><strong>{usage.totalTokens.toLocaleString()}</strong></div>
         <div className="arf-stream-metric"><label>Output rate</label><strong>{metric(usage.outputRate, " t/s")}</strong></div>
@@ -147,6 +168,8 @@ export function GenerationStream({
         <span>{events.length.toLocaleString()} events retained</span>
         {canStop && onStop ? <button type="button" className="arf-stop-button" disabled={controlPending} onClick={onStop}>Stop run</button> : null}
       </footer>
+        </div>
+      ) : null}
     </aside>
   );
 }

@@ -90,7 +90,8 @@
 .arf-run-button:disabled { cursor: not-allowed; opacity: .62; }
 .arf-inline-error { margin: 8px 0 0; color: var(--arf-oxblood); font: 9px/1.5 "Commit Mono", monospace; }
 
-.arf-workspace { display: grid; grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); align-items: start; gap: 16px; margin-top: 16px; }
+.arf-workspace { margin-top: 16px; }
+.arf-workspace > .arf-panel + .arf-panel { margin-top: 16px; }
 .arf-panel { min-width: 0; background: rgba(251,250,245,.92); border: 1px solid var(--arf-line); box-shadow: 0 8px 35px rgba(44,44,38,.035); }
 .arf-panel-head { height: 49px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--arf-line); }
 .arf-panel-title { display: flex; align-items: baseline; gap: 10px; }
@@ -130,6 +131,13 @@
 .arf-execution-lanes strong { color: var(--arf-muted); font-weight: 500; }
 
 .arf-stream-panel { display: flex; flex-direction: column; min-height: 490px; }
+.arf-stream-panel.arf-collapsed { min-height: 0; }
+.arf-stream-head-actions { display: flex; align-items: center; gap: 12px; }
+.arf-stream-toggle { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; color: var(--arf-muted); background: transparent; border: 1px solid var(--arf-line); border-radius: 2px; cursor: pointer; }
+.arf-stream-toggle:hover { color: var(--arf-ink); border-color: var(--arf-line-dark); }
+.arf-stream-toggle svg { width: 13px; height: 13px; }
+.arf-stream-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.arf-generation-content { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .arf-stream-head-status { display: flex; align-items: center; gap: 7px; color: #7a5038; font: 9px "Commit Mono", monospace; text-transform: uppercase; }
 .arf-stream-head-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--arf-live); animation: arf-blink 1s step-end infinite; }
 .arf-stream-summary { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--arf-line); }
@@ -170,6 +178,7 @@
   border: 1px solid var(--arf-line-dark);
   border-radius: 3px;
   box-shadow: 0 5px 24px rgba(44,44,38,.045);
+  margin-bottom: 16px;
 }
 .arf-empty-notice strong { display: block; margin-bottom: 3px; font: 500 16px "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
 .arf-empty-notice span { display: block; color: var(--arf-muted); font: 9px/1.45 "Commit Mono", monospace; }
@@ -202,10 +211,6 @@
 @keyframes arf-blink { 50% { opacity: .25; } }
 @keyframes arf-line-in { to { opacity: 1; transform: translateY(0); } }
 
-@media (max-width: 1180px) {
-  .arf-workspace { grid-template-columns: 1fr; }
-  .arf-stream-panel { min-height: 590px; }
-}
 
 @media (max-width: 800px) {
   .arf-canvas { padding: 0 15px 24px; overflow-x: clip; }
@@ -216,10 +221,8 @@
   .arf-stat { min-width: 0; }
   .arf-composer { grid-template-columns: 1fr; }
   .arf-composer-controls { justify-content: space-between; }
-  .arf-workspace { display: block; }
-  .arf-flow-panel { overflow-x: auto; margin-bottom: 16px; }
+  .arf-flow-panel { overflow-x: auto; }
   .arf-flow-canvas { min-width: 720px; }
-  .arf-empty-notice { margin-bottom: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

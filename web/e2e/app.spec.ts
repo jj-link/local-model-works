@@ -230,20 +230,27 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
   await page.goto("/autoresearch");
   await expect(page.getByText("No research project selected")).toBeVisible();
   await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
-  await expect(page.getByLabel("Generation stream")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Generation stream", exact: true })).toBeVisible();
   const desktop = await page.locator(".arf-workspace").evaluate((workspace) => {
     const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
     const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
     const notice = workspace.querySelector(".arf-empty-notice") as HTMLElement;
+    const graphBox = graph.getBoundingClientRect();
+    const streamBox = stream.getBoundingClientRect();
     return {
       display: getComputedStyle(workspace).display,
-      streamNarrower: stream.clientWidth < graph.clientWidth,
-      noticeClear: notice.getBoundingClientRect().bottom <= graph.getBoundingClientRect().top &&
-        notice.getBoundingClientRect().bottom <= stream.getBoundingClientRect().top,
+      fullWidth: Math.abs(streamBox.width - graphBox.width) < 1,
+      streamBelow: streamBox.top > graphBox.bottom,
+      noticeClear: notice.getBoundingClientRect().bottom <= graphBox.top,
     };
   });
-  expect(desktop).toEqual({ display: "grid", streamNarrower: true, noticeClear: true });
+  expect(desktop).toEqual({ display: "block", fullWidth: true, streamBelow: true, noticeClear: true });
   await expect(page.locator(".arf-canvas")).not.toContainText(/QWEN-3\.5|\$1\.84|#018/);
+  const emptyToggle = page.getByRole("button", { name: "Expand Generation stream" });
+  await expect(emptyToggle).toHaveAttribute("aria-expanded", "false");
+  await emptyToggle.click();
+  await expect(page.getByText("No invocation active")).toBeVisible();
+  await page.getByRole("button", { name: "Collapse Generation stream" }).click();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobile = await page.locator(".arf-workspace").evaluate((workspace) => {
@@ -271,7 +278,7 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
   }
   await modeNav.getByRole("button", { name: "Factory", exact: true }).click();
   await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
-  await expect(page.getByLabel("Generation stream")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Generation stream", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "New project", exact: true }).first().click();
   await expect(page.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
@@ -303,16 +310,20 @@ test("AutoResearch Factory renders real desktop fidelity and run controls", asyn
     const stream = workspace.querySelector(".arf-stream-panel")!.getBoundingClientRect();
     return {
       display: getComputedStyle(workspace).display,
-      columns: getComputedStyle(workspace).gridTemplateColumns,
       graphWidth: graph.width,
       streamWidth: stream.width,
-      streamAfterGraph: stream.left > graph.left,
+      streamBelowGraph: stream.top > graph.bottom,
     };
   });
-  expect(geometry.display).toBe("grid");
-  expect(geometry.columns).not.toBe("none");
-  expect(geometry.streamAfterGraph).toBe(true);
-  expect(geometry.streamWidth).toBeLessThan(geometry.graphWidth);
+  expect(geometry.display).toBe("block");
+  expect(Math.abs(geometry.streamWidth - geometry.graphWidth)).toBeLessThan(1);
+  expect(geometry.streamBelowGraph).toBe(true);
+  const activeToggle = page.getByRole("button", { name: "Collapse Generation stream" });
+  await expect(activeToggle).toHaveAttribute("aria-expanded", "true");
+  await activeToggle.click();
+  await expect(page.getByRole("log")).toHaveCount(0);
+  await page.getByRole("button", { name: "Expand Generation stream" }).click();
+  await expect(page.getByRole("log")).toBeVisible();
   expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(1440);
   await expect(page.locator(".arf-canvas")).not.toContainText("QWEN-3.5");
   await expect(page.locator(".arf-canvas")).not.toContainText("$1.84");
