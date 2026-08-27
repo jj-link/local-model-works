@@ -6,6 +6,20 @@ import type { Deployment, Node, NodePayload } from "~/lib/api";
 export type TelemetryRange = "15m" | "1h" | "24h" | "7d";
 export const TELEMETRY_RANGES: TelemetryRange[] = ["15m", "1h", "24h", "7d"];
 
+const CURRENT_DEPLOYMENT_STATES: Record<string, true> = {
+  preparing: true,
+  starting: true,
+  stopping: true,
+};
+
+/** A deployment still present in operational views, including transitions. */
+export function isCurrentDeployment(deployment: Deployment): boolean {
+  return (
+    deployment.desired_state === "running" ||
+    Boolean(CURRENT_DEPLOYMENT_STATES[deployment.observed_state ?? ""])
+  );
+}
+
 export interface RangePolicy {
   resolution: "5s" | "1m";
   windowMs: number;
@@ -167,12 +181,13 @@ export interface NodeDeploymentRow {
   rankZero: boolean;
 }
 /**
- * Deployments placed on a node, sorted with desired-running rank-zero services
- * first, then by recipe_name / id.
+ * Current deployments placed on a node, sorted with desired-running rank-zero
+ * services first, then by recipe_name / id.
  */
 export function deploymentsOnNode(deployments: Deployment[], nodeId: string): NodeDeploymentRow[] {
   const rows: NodeDeploymentRow[] = [];
   for (const d of deployments) {
+    if (!isCurrentDeployment(d)) continue;
     for (const pl of d.placements ?? []) {
       if (pl.node_id !== nodeId) continue;
       rows.push({

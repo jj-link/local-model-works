@@ -15,17 +15,19 @@ import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { endpointLabel, relativeTime, shortDigest } from "~/lib/format";
+import { isCurrentDeployment } from "~/lib/telemetry";
 
 export default function DeploymentsRoute() {
   const { data, isPending, isError, error, refetch } = useDeployments();
   const [planOpen, setPlanOpen] = useState(false);
+  const currentDeployments = (data ?? []).filter(isCurrentDeployment);
 
   return (
     <div className="grid gap-4">
       <div className="lmw-panel">
         <header className="lmw-panel-head">
           <h1 className="lmw-label">deployments</h1>
-          <span className="font-mono text-[11px] text-faint">{(data ?? []).length} total</span>
+          <span className="font-mono text-[11px] text-faint">{currentDeployments.length} current</span>
           <Button size="sm" className="ml-auto" onClick={() => setPlanOpen(true)}>
             <Radio aria-hidden /> plan deployment
           </Button>
@@ -40,10 +42,10 @@ export default function DeploymentsRoute() {
             detail={error instanceof Error ? error.message : undefined}
             onRetry={() => void refetch()}
           />
-        ) : (data ?? []).length === 0 ? (
+        ) : currentDeployments.length === 0 ? (
           <EmptyState
             className="m-3"
-            title="No deployments"
+            title="No current deployments"
             hint="Plan a deployment from an installed recipe to place a model on the fleet."
           />
         ) : (
@@ -63,7 +65,7 @@ export default function DeploymentsRoute() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(data ?? []).map((d) => (
+                {currentDeployments.map((d) => (
                   <TableRow key={d.id}>
                     <TableCell>
                       <Link

@@ -88,11 +88,12 @@ describe("thresholds", () => {
 
 describe("deploymentsOnNode", () => {
   const deps: Deployment[] = [
-    { id: "d-worker", placements: [{ node_id: "node-a", rank: 1 }] } as Deployment,
+    { id: "d-worker", desired_state: "running", placements: [{ node_id: "node-a", rank: 1 }] } as Deployment,
     { id: "d-zero", desired_state: "running", placements: [{ node_id: "node-a", rank: 0 }] } as Deployment,
-    { id: "d-other", placements: [{ node_id: "node-b", rank: 0 }] } as Deployment,
+    { id: "d-stopped", desired_state: "stopped", observed_state: "stopped", placements: [{ node_id: "node-a", rank: 0 }] } as Deployment,
+    { id: "d-other", desired_state: "running", placements: [{ node_id: "node-b", rank: 0 }] } as Deployment,
   ];
-  it("keeps only placements on the target node", () => {
+  it("keeps only current placements on the target node", () => {
     const rows = deploymentsOnNode(deps, "node-a");
     const ids = rows.map((r) => r.deploymentId);
     expect(ids.sort()).toEqual(["d-worker", "d-zero"].sort());

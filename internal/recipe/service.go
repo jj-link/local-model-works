@@ -372,14 +372,20 @@ func (s *Service) Get(ctx context.Context, digest string) (RecipeDetail, error) 
 	return RecipeDetail{Recipe: base, Manifest: json.RawMessage(row.Manifest)}, nil
 }
 
-// List returns all installed recipes, most recently installed first.
+// List returns the most recently installed version of each recipe name.
+// Older immutable versions remain addressable by digest for existing deployments.
 func (s *Service) List(ctx context.Context) ([]Recipe, error) {
 	rows, err := s.q.ListRecipes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Recipe, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
 	for i := range rows {
+		if _, ok := seen[rows[i].Name]; ok {
+			continue
+		}
+		seen[rows[i].Name] = struct{}{}
 		var m *Manifest
 		if err := json.Unmarshal([]byte(rows[i].Manifest), &m); err != nil {
 			return nil, err

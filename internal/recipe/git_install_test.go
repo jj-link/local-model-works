@@ -321,16 +321,19 @@ func TestGitInstallImmutability(t *testing.T) {
 	if !bytes.Equal(asset, []byte(immutableAsset)) {
 		t.Fatalf("unpacked asset bytes drifted")
 	}
-	// Side-by-side: both versions coexist under one name.
+	// Side-by-side storage remains immutable, but inventory lists expose only
+	// the most recently installed version for each recipe name.
 	list2, err := svc.List(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	seen := map[string]bool{}
-	for _, r := range list2 {
-		seen[r.Digest] = true
+	if len(list2) != 1 {
+		t.Fatalf("expected one current recipe entry, got %d: %v", len(list2), list2)
 	}
-	if !seen[d] || !seen[rec2.Digest] || len(list2) != 2 {
-		t.Fatalf("expected side-by-side installs of D and D2, got %d entries: %v", len(list2), list2)
+	if list2[0].Digest != rec2.Digest {
+		t.Fatalf("listed digest %q != newest installed digest %q", list2[0].Digest, rec2.Digest)
+	}
+	if list2[0].VersionCount != 2 {
+		t.Fatalf("version count %d != 2", list2[0].VersionCount)
 	}
 }

@@ -46,6 +46,18 @@ const deployments = [
     updated_at: "2026-01-03T00:00:00Z",
   },
   {
+    id: "55555555-5555-4555-8555-555555555555",
+    recipe_digest: "sha256:recipe-a-old",
+    recipe_name: "Recipe A",
+    engine: "vllm",
+    profile: "fast",
+    placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 0 }],
+    desired_state: "stopped",
+    observed_state: "stopped",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T01:00:00Z",
+  },
+  {
     id: "44444444-4444-4444-8444-444444444444",
     recipe_digest: "sha256:recipe-b",
     recipe_name: "Recipe B",
@@ -121,6 +133,11 @@ describe("Fleet and Serving workload views", () => {
     expect(within(table).getByRole("columnheader", { name: "Model" })).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Engine" })).toBeInTheDocument();
     const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    expect(within(table).getByRole("link", { name: "Recipe A" })).toHaveAttribute(
+      "href",
+      "/serving/deployments/33333333-3333-4333-8333-333333333333",
+    );
     expect(rows[0]).toHaveTextContent("Model A");
     expect(rows[0]).toHaveTextContent("vLLM");
     expect(rows[0]).toHaveTextContent("fast");

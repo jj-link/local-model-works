@@ -13,6 +13,7 @@ import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { bytes, relativeTime } from "~/lib/format";
 import type { RunState } from "~/lib/api";
+import { isCurrentDeployment } from "~/lib/telemetry";
 
 
 const ACTIVE_RUN_STATES: RunState[] = [
@@ -32,13 +33,7 @@ export default function DashboardRoute() {
 
   const nodes = nodesQ.data ?? [];
   const deployments = deploymentsQ.data ?? [];
-  const activeDeployments = deployments.filter(
-    (d) =>
-      d.desired_state === "running" ||
-      d.observed_state === "preparing" ||
-      d.observed_state === "starting" ||
-      d.observed_state === "stopping",
-  );
+  const activeDeployments = deployments.filter(isCurrentDeployment);
   const recipes = recipesQ.data ?? [];
   const runs = runsQ.data?.items ?? [];
 
