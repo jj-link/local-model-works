@@ -1,7 +1,18 @@
-import type { CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Plus, Save, X } from "lucide-react";
 import { cn } from "~/lib/utils";
 import workflowImage from "../../../../third_party/agon/figures/figure_xp.png";
 import type { ActiveInvocation } from "./events";
+import {
+  effectiveFallbacks,
+  effectiveProvider,
+  GRAPH_ROLE_BY_NODE,
+  providerKey,
+  providerLabel,
+  withConfiguredProviders,
+  type ProviderOption,
+  type ProviderRef,
+} from "./routing";
 
 interface Hotspot {
   id: string;
@@ -58,7 +69,87 @@ function roleLabel(hotspot: Hotspot): string {
   return hotspot.node.split(".").at(-1)?.replaceAll("-", " ") ?? hotspot.label;
 }
 
-export function WorkflowGraph({ active, paused = false }: { active: ActiveInvocation[]; paused?: boolean }) {
+export interface WorkflowRouting {
+  roles: Record<string, ProviderRef>;
+  fallbacks: Record<string, ProviderRef[]>;
+  defaults: Record<string, ProviderRef>;
+  providers: ProviderOption[];
+  saving: boolean;
+  error: string | null;
+  onSave: (role: string, primary: ProviderRef | undefined, fallbackOverride: ProviderRef[] | undefined) => void;
+}
+
+function RoutingPopover({ hotspot, routing, onClose }: { hotspot: Hotspot; routing: WorkflowRouting; onClose: () => void }) {
+  const role = GRAPH_ROLE_BY_NODE[hotspot.node];
+  const effective = effectiveProvider(role, routing.roles, routing.defaults);
+  const effectiveFallback = useMemo(() => effectiveFallbacks(role, routing.fallbacks), [role, routing.fallbacks]);
+  const [primaryKey, setPrimaryKey] = useState(routing.roles[role] ? providerKey(routing.roles[role]) : "inherit");
+  const [inheritFallbacks, setInheritFallbacks] = useState(effectiveFallback.inherited);
+  const [fallbackKeys, setFallbackKeys] = useState(effectiveFallback.refs.map(providerKey));
+  const aliases = HOTSPOTS.filter((item) => item.node === hotspot.node).length;
+  const options = useMemo(() => withConfiguredProviders(
+    routing.providers,
+    [effective.ref, ...effectiveFallback.refs, routing.roles[role]],
+  ), [effective.ref, effectiveFallback.refs, role, routing.providers, routing.roles]);
+  const byKey = useMemo(() => new Map(options.map((option) => [option.key, option.ref])), [options]);
+
+  useEffect(() => {
+    setPrimaryKey(routing.roles[role] ? providerKey(routing.roles[role]) : "inherit");
+    setInheritFallbacks(effectiveFallback.inherited);
+    setFallbackKeys(effectiveFallback.refs.map(providerKey));
+  }, [effectiveFallback.inherited, effectiveFallback.refs, role, routing.roles]);
+
+  const selectedKeys = fallbackKeys.filter(Boolean);
+  const duplicateFallback = !inheritFallbacks && new Set(selectedKeys).size !== selectedKeys.length;
+  const primaryConflict = !inheritFallbacks && primaryKey !== "inherit" && selectedKeys.includes(primaryKey);
+  const validationError = duplicateFallback
+    ? "A provider can appear only once in the fallback chain."
+    : primaryConflict
+      ? "Primary provider cannot also be a fallback."
+      : null;
+
+  return (
+    <div className={cn("arf-routing-popover", hotspot.x > 68 && "arf-routing-popover-left", hotspot.y > 64 && "arf-routing-popover-up")} role="dialog" aria-label={`Model assignment for ${hotspot.label}`} onKeyDown={(event) => event.key === "Escape" && onClose()}>
+      <header>
+        <div><strong>{hotspot.label}</strong><span>{role}</span></div>
+        <button type="button" aria-label="Close model assignment" onClick={onClose}><X aria-hidden /></button>
+      </header>
+      <label>Primary provider
+        <select aria-label={`${role} primary provider`} value={primaryKey} onChange={(event) => setPrimaryKey(event.target.value)}>
+          <option value="inherit">Inherit project/module default</option>
+          {options.map((option) => <option key={option.key} value={option.key} disabled={!option.available && option.key !== primaryKey}>{option.label}{option.available ? "" : " (unavailable)"}</option>)}
+        </select>
+      </label>
+      <p className="arf-routing-effective">Effective: {effective.ref ? providerLabel(effective.ref) : "unassigned"} · {effective.source.replaceAll("-", " ")}</p>
+      {role !== "default" ? <label className="arf-routing-check"><input type="checkbox" checked={inheritFallbacks} onChange={(event) => setInheritFallbacks(event.target.checked)} /> Inherit project fallback chain</label> : null}
+      {!inheritFallbacks ? <div className="arf-routing-fallbacks">
+        <span>Fallback chain</span>
+        {fallbackKeys.map((key, index) => <div key={`${index}-${key}`}>
+          <select aria-label={`${role} fallback ${index + 1}`} value={key} onChange={(event) => setFallbackKeys((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}>
+            <option value="">Select provider</option>
+            {options.map((option) => <option key={option.key} value={option.key} disabled={!option.available && option.key !== key}>{option.label}{option.available ? "" : " (unavailable)"}</option>)}
+          </select>
+          <button type="button" aria-label={`Remove fallback ${index + 1}`} onClick={() => setFallbackKeys((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X aria-hidden /></button>
+        </div>)}
+        <button type="button" className="arf-routing-add" onClick={() => setFallbackKeys((current) => [...current, ""])}><Plus aria-hidden /> Add fallback</button>
+      </div> : null}
+      {aliases > 1 ? <p className="arf-routing-notice">Shared assignment: this role appears at {aliases} topology points.</p> : null}
+      {validationError ? <p className="arf-inline-error" role="alert">{validationError}</p> : null}
+      {routing.error ? <p className="arf-inline-error" role="alert">{routing.error}</p> : null}
+      <footer>
+        <span>Applies to the next invocation.</span>
+        <button type="button" disabled={routing.saving || Boolean(validationError)} onClick={() => routing.onSave(
+          role,
+          primaryKey === "inherit" ? undefined : byKey.get(primaryKey),
+          inheritFallbacks ? undefined : fallbackKeys.map((key) => byKey.get(key)).filter((ref): ref is ProviderRef => Boolean(ref)),
+        )}><Save aria-hidden /> {routing.saving ? "Saving…" : "Save"}</button>
+      </footer>
+    </div>
+  );
+}
+
+export function WorkflowGraph({ active, paused = false, routing }: { active: ActiveInvocation[]; paused?: boolean; routing?: WorkflowRouting }) {
+  const [openHotspot, setOpenHotspot] = useState<string | null>(null);
   const primary = active.filter((invocation) => !invocation.advisor);
   const advisors = active.filter((invocation) => invocation.advisor);
   const represented = new Set(HOTSPOTS.map((hotspot) => hotspot.node));
@@ -83,17 +174,16 @@ export function WorkflowGraph({ active, paused = false }: { active: ActiveInvoca
             const invocation = primary.find((item) => item.nodeId === hotspot.node);
             const model = invocation?.model || "—";
             const state = invocation ? (paused ? "paused" : "generating") : "waiting";
+            const routingEnabled = Boolean(routing && GRAPH_ROLE_BY_NODE[hotspot.node]);
             return (
-              <button
+              <div
                 key={hotspot.id}
-                type="button"
-                aria-label={`${hotspot.label} — ${model} — ${state}`}
-                title={invocation ? `${hotspot.label} · ${invocation.backend}/${model}` : `${hotspot.label} · idle`}
                 className={cn(
-                  "arf-chart-node",
+                  "arf-chart-hotspot",
                   stageClass(hotspot),
                   invocation && "arf-live",
                   invocation && paused && "arf-paused",
+                  openHotspot === hotspot.id && "arf-routing-open",
                 )}
                 style={{
                   "--x": `${hotspot.x}%`,
@@ -101,18 +191,28 @@ export function WorkflowGraph({ active, paused = false }: { active: ActiveInvoca
                   "--size": `${hotspot.size ?? 7}%`,
                 } as CSSProperties}
               >
-                <span className="arf-node-shell">
-                  <span className="arf-node-avatar">{hotspot.glyph}</span>
-                  <span className="arf-node-role">{roleLabel(hotspot)}</span>
-                  <span className="arf-node-model">{model}</span>
-                </span>
-              </button>
+                <button
+                  type="button"
+                  aria-label={`${hotspot.label} — ${model} — ${state}${routingEnabled ? " — configure model" : ""}`}
+                  aria-expanded={routingEnabled ? openHotspot === hotspot.id : undefined}
+                  title={invocation ? `${hotspot.label} · ${invocation.backend}/${model}` : `${hotspot.label} · idle`}
+                  className="arf-chart-node"
+                  onClick={() => routingEnabled && setOpenHotspot((current) => current === hotspot.id ? null : hotspot.id)}
+                >
+                  <span className="arf-node-shell">
+                    <span className="arf-node-avatar">{hotspot.glyph}</span>
+                    <span className="arf-node-role">{roleLabel(hotspot)}</span>
+                    <span className="arf-node-model">{model}</span>
+                  </span>
+                </button>
+                {routing && openHotspot === hotspot.id ? <RoutingPopover hotspot={hotspot} routing={routing} onClose={() => setOpenHotspot(null)} /> : null}
+              </div>
             );
           })}
         </div>
       </div>
       <footer className="arf-chart-attribution">
-        <span>Exact Agon workflow · interactive model/status overlay</span>
+        <span>Exact Agon workflow · click a role to assign its model</span>
         <a href="https://github.com/AutoResearch-Factory/Agon" target="_blank" rel="noreferrer">Source: AutoResearch-Factory/Agon</a>
         <span className="arf-execution-lanes">
           <span><strong>Auxiliary:</strong> {auxiliary.length ? auxiliary.map((item) => `${item.role} · ${item.model}`).join(", ") : "none active"}</span>

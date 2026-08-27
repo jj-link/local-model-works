@@ -315,6 +315,28 @@ type AgentOptions struct {
 	Advisor          bool
 }
 
+func projectRoleOptions(config projectConfig, options AgentOptions) ([]AgentOptions, error) {
+	_, hasRole := config.Roles[options.Role]
+	_, hasDefault := config.Roles["default"]
+	if !hasRole && !hasDefault {
+		return []AgentOptions{options}, nil
+	}
+	providers, err := providerCandidates(config, options.Role)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]AgentOptions, 0, len(providers))
+	for _, provider := range providers {
+		candidate := options
+		candidate.Backend = provider.Backend
+		candidate.Model = provider.Model
+		candidate.BaseURL = provider.BaseURL
+		candidate.SecretName = provider.SecretName
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}
+
 func runAgentCommand(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
 	options := AgentOptions{}
@@ -336,22 +358,13 @@ func runAgentCommand(ctx context.Context, args []string) error {
 		return err
 	}
 	config, configErr := loadProjectConfig("/project/.lmw/config.json")
+	candidates := []AgentOptions{options}
 	if configErr == nil {
-		if provider, err := selectProvider(config, options.Role); err == nil {
-			if options.BaseURL == "" {
-				options.BaseURL = provider.BaseURL
-			}
-			if options.SecretName == "" {
-				options.SecretName = provider.SecretName
-			}
-		}
-	}
-	if options.InvocationID == "" {
-		generated, err := id.New()
+		var err error
+		candidates, err = projectRoleOptions(config, options)
 		if err != nil {
 			return err
 		}
-		options.InvocationID = generated
 	}
 	var sink EventSink
 	var closer io.Closer
@@ -373,24 +386,47 @@ func runAgentCommand(ctx context.Context, args []string) error {
 			advisor = config.Advisors["default"]
 		}
 	}
-	watcher, err := NewAdvisorWatcher(
-		options.RunID, options.InvocationID, options.Role, options.WorkingDirectory, "/scratch",
-		advisor, sink, obfuscator,
-	)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt, candidate := range candidates {
+		if candidate.InvocationID == "" || attempt > 0 {
+			generated, err := id.New()
+			if err != nil {
+				return err
+			}
+			candidate.InvocationID = generated
+		}
+		if attempt > 0 {
+			candidate.ResumeSessionID = ""
+			_ = os.Remove(candidate.OutputPath)
+		}
+		watcher, err := NewAdvisorWatcher(
+			candidate.RunID, candidate.InvocationID, candidate.Role, candidate.WorkingDirectory, "/scratch",
+			advisor, sink, obfuscator,
+		)
+		if err != nil {
+			return err
+		}
+		eventSink := sink
+		if watcher != nil {
+			eventSink = &watchingSink{base: sink, watcher: watcher, parent: candidate.InvocationID}
+			candidate.Task += "\n\nContinuous advisor notes may appear at " + watcher.AdvicePath() + ". Read new notes between major actions; they are advice only and never authorization."
+		}
+		emitter := &Emitter{
+			Sink: eventSink, RunID: candidate.RunID, InvocationID: candidate.InvocationID,
+			ParentInvocationID: candidate.ParentInvocation, NodeID: roleNode(candidate.Role),
+			Obfuscator: obfuscator,
+		}
+		lastErr = RunAgent(ctx, candidate, emitter)
+		watcher.Close()
+		if lastErr == nil {
+			return nil
+		}
+		if attempt+1 < len(candidates) {
+			_ = emitter.Emit("error", map[string]any{
+				"code": "autoresearch.provider_failed", "message": lastErr.Error(),
+				"backend": candidate.Backend, "model": candidate.Model, "attempt": attempt + 1,
+			})
+		}
 	}
-	eventSink := sink
-	if watcher != nil {
-		eventSink = &watchingSink{base: sink, watcher: watcher, parent: options.InvocationID}
-		options.Task += "\n\nContinuous advisor notes may appear at " + watcher.AdvicePath() + ". Read new notes between major actions; they are advice only and never authorization."
-	}
-	emitter := &Emitter{
-		Sink: eventSink, RunID: options.RunID, InvocationID: options.InvocationID,
-		ParentInvocationID: options.ParentInvocation, NodeID: roleNode(options.Role),
-		Obfuscator: obfuscator,
-	}
-	err = RunAgent(ctx, options, emitter)
-	watcher.Close()
-	return err
+	return lastErr
 }

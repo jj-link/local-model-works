@@ -83,6 +83,56 @@ func TestCodexProviderCommandPinsConfiguredBaseURL(t *testing.T) {
 	}
 }
 
+func TestProjectRoleProviderAndFallbacksOverrideAgonDefaults(t *testing.T) {
+	options := AgentOptions{
+		Role: "idea-creator", Backend: "claude", Model: "agon-default",
+		BaseURL: "https://agon.invalid/v1", SecretName: "agon-secret",
+	}
+	candidates, err := projectRoleOptions(projectConfig{
+		Roles: map[string]providerConfig{
+			"idea-creator": {
+				Source: "external", Backend: "codex", Model: "project-model",
+				BaseURL: "https://project.example/v1", SecretName: "project-secret",
+			},
+		},
+		Fallbacks: map[string][]providerConfig{
+			"idea-creator": {{
+				Source: "external", Backend: "claude", Model: "fallback-model",
+				BaseURL: "https://fallback.example/v1", SecretName: "fallback-secret",
+			}},
+		},
+	}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("candidate count = %d", len(candidates))
+	}
+	primary, fallback := candidates[0], candidates[1]
+	if primary.Backend != "codex" || primary.Model != "project-model" ||
+		primary.BaseURL != "https://project.example/v1" || primary.SecretName != "project-secret" {
+		t.Fatalf("project provider was not authoritative: %+v", primary)
+	}
+	if fallback.Backend != "claude" || fallback.Model != "fallback-model" ||
+		fallback.BaseURL != "https://fallback.example/v1" || fallback.SecretName != "fallback-secret" {
+		t.Fatalf("project fallback was not preserved: %+v", fallback)
+	}
+}
+
+func TestMissingProjectRolePreservesAgonDefaults(t *testing.T) {
+	options := AgentOptions{
+		Role: "idea-creator", Backend: "claude", Model: "agon-default",
+		BaseURL: "https://agon.example/v1", SecretName: "agon-secret",
+	}
+	candidates, err := projectRoleOptions(projectConfig{}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0] != options {
+		t.Fatalf("Agon defaults changed without a project assignment: %+v", candidates)
+	}
+}
+
 func TestSSHPreflightIsExplicit(t *testing.T) {
 	if err := preflightSSH(context.Background(), projectConfig{Input: map[string]any{}}, t.TempDir()); err != nil {
 		t.Fatal(err)

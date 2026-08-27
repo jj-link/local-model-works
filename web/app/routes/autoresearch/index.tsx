@@ -9,7 +9,10 @@ import {
   useAutoResearchSources,
   useControlAutoResearchRun,
   useCreateAutoResearchRun,
+  useDeployments,
+  useModuleSettings,
   useNodes,
+  useSecrets,
   useUpdateAutoResearchIdea,
   useUpdateAutoResearchProject,
 } from "~/lib/queries";
@@ -22,6 +25,14 @@ import { PaperStudio } from "./paper-studio";
 import { RoleControls } from "./role-controls";
 import { summarizeAutoResearchUsage, useAutoResearchEvents } from "./events";
 import { WorkflowGraph } from "./workflow-graph";
+import {
+  buildProviderCatalog,
+  readDefaultRoleAssignments,
+  readFallbackMap,
+  readProviderMap,
+  withRoutingConfig,
+  type ProviderRef,
+} from "./routing";
 import "./factory.css";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
@@ -67,6 +78,9 @@ function errorMessage(error: unknown): string | null {
 export default function AutoResearchRoute() {
   const projects = useAutoResearchProjects();
   const nodes = useNodes();
+  const deployments = useDeployments();
+  const moduleSettings = useModuleSettings("autoresearch");
+  const secrets = useSecrets();
   const [projectId, setProjectId] = useState("");
   const [tab, setTab] = useState<WorkspaceTab>("factory");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -91,6 +105,16 @@ export default function AutoResearchRoute() {
   const selectedIdea = ideas.data?.find((idea) => idea.selected);
   const persistedTopic = selectedIdea?.title ?? project.data?.idea_prompt ?? "";
   const [researchTopic, setResearchTopic] = useState("");
+  const providerCatalog = useMemo(
+    () => buildProviderCatalog(deployments.data ?? [], moduleSettings.data?.settings, secrets.data ?? []),
+    [deployments.data, moduleSettings.data?.settings, secrets.data],
+  );
+  const routingDefaults = useMemo(
+    () => readDefaultRoleAssignments(moduleSettings.data?.settings),
+    [moduleSettings.data?.settings],
+  );
+  const projectRoles = useMemo(() => readProviderMap(project.data?.config.roles), [project.data?.config.roles]);
+  const projectFallbacks = useMemo(() => readFallbackMap(project.data?.config.fallbacks), [project.data?.config.fallbacks]);
 
   useEffect(() => setResearchTopic(persistedTopic), [persistedTopic, projectId]);
 
@@ -102,6 +126,23 @@ export default function AutoResearchRoute() {
   const topicReadOnly = Boolean(latestRun && !TERMINAL.has(latestRun.state));
   const topicError = errorMessage(updateIdea.error ?? updateProject.error);
   const runError = errorMessage(createRun.error ?? control.error);
+  const routingError = errorMessage(updateProject.error ?? deployments.error ?? moduleSettings.error ?? secrets.error);
+
+  const saveProjectConfig = (config: NonNullable<typeof project.data>["config"]) => {
+    if (!project.data) return;
+    updateProject.mutate({ id: project.data.id, version: project.data.version, body: { config } });
+  };
+
+  const saveRoleRouting = (role: string, primary: ProviderRef | undefined, fallbackOverride: ProviderRef[] | undefined) => {
+    if (!project.data) return;
+    const roles = { ...readProviderMap(project.data.config.roles) };
+    const fallbacks = { ...readFallbackMap(project.data.config.fallbacks) };
+    if (primary) roles[role] = primary;
+    else delete roles[role];
+    if (fallbackOverride === undefined) delete fallbacks[role];
+    else fallbacks[role] = fallbackOverride;
+    saveProjectConfig(withRoutingConfig(project.data.config, roles, fallbacks));
+  };
 
   const saveTopic = () => {
     const next = researchTopic.trim();
@@ -259,7 +300,19 @@ export default function AutoResearchRoute() {
       ) : (
         <>
           {tab === "factory" ? <div className="arf-workspace">
-            <WorkflowGraph active={stream.activeInvocations} paused={latestRun?.state === "paused"} />
+            <WorkflowGraph
+              active={stream.activeInvocations}
+              paused={latestRun?.state === "paused"}
+              routing={{
+                roles: projectRoles,
+                fallbacks: projectFallbacks,
+                defaults: routingDefaults,
+                providers: providerCatalog,
+                saving: updateProject.isPending,
+                error: routingError,
+                onSave: saveRoleRouting,
+              }}
+            />
             <GenerationStream
               run={latestRun}
               events={stream.events}
@@ -273,7 +326,7 @@ export default function AutoResearchRoute() {
           </div> : null}
           {tab === "ideas" ? <div className="arf-mode-frame"><IdeaWorkspace projectId={projectId} projectPrompt={project.data.idea_prompt} ideas={ideas.data ?? []} sources={sources.data ?? []} /></div> : null}
           {tab === "paper" ? <div className="arf-mode-frame"><PaperStudio projectId={projectId} files={paperFiles.data ?? []} runs={runs.data ?? []} /></div> : null}
-          {tab === "settings" ? <div className="arf-mode-frame"><RoleControls project={project.data} /></div> : null}
+          {tab === "settings" ? <div className="arf-mode-frame"><RoleControls project={project.data} providers={providerCatalog} defaults={routingDefaults} saving={updateProject.isPending} error={routingError} onSaveConfig={saveProjectConfig} /></div> : null}
           {runError ? <p className="arf-run-error" role="alert">{runError}</p> : null}
           {latestRun && TERMINAL.has(latestRun.state) && latestRun.state !== "succeeded" ? <div className="arf-run-error"><Settings2 className="inline h-3.5 w-3.5" aria-hidden /> {latestRun.error_message ?? `run ${latestRun.state}`}</div> : null}
         </>

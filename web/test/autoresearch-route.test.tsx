@@ -1,16 +1,38 @@
 /// <reference types="@testing-library/jest-dom" />
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import AutoResearchRoute from "~/routes/autoresearch";
 import { server } from "../msw/server";
 
 const projectId = "00000000-0000-4000-8000-000000000099";
 const runId = "10000000-0000-4000-8000-000000000099";
 const now = "2026-08-23T12:10:00Z";
+const deploymentId = "30000000-0000-4000-8000-000000000099";
+const deployment = {
+  id: deploymentId,
+  desired_state: "running",
+  observed_state: "healthy",
+  profile: "spark",
+  recipe_digest: "sha256:routing",
+  recipe_name: "Spark local",
+  endpoint: { host: "127.0.0.1", port: 8888, model: "local-routing-model" },
+};
+const moduleSettings = {
+  module: "autoresearch",
+  version: "settings-v1",
+  settings: {
+    default_role_assignments: {
+      default: { source: "lmw", deployment_id: deploymentId, model: "local-routing-model" },
+    },
+    external_providers: [
+      { name: "Codex cloud", backend: "codex", model: "gpt-routing", secret_name: "provider-key" },
+    ],
+  },
+};
 const project = {
   id: projectId,
   name: "Sparse world models",
@@ -75,6 +97,14 @@ function installProject(state: "running" | "paused" | "succeeded" = "running") {
   return run;
 }
 
+
+  beforeEach(() => {
+    server.use(
+      http.get("*/api/v1/deployments", () => HttpResponse.json([deployment])),
+      http.get("*/api/v1/modules/autoresearch/settings", () => HttpResponse.json(moduleSettings)),
+      http.get("*/api/v1/secrets", () => HttpResponse.json([{ id: "secret-1", name: "provider-key", purpose: "model_provider" }])),
+    );
+  });
 describe("AutoResearchRoute", () => {
   it("keeps the approved hierarchy in the empty state and opens project creation", async () => {
     server.use(
@@ -153,6 +183,86 @@ describe("AutoResearchRoute", () => {
     expect(screen.getByLabelText("candidate title")).toHaveValue("Candidate one");
     expect(screen.getByText("license acceptance required")).toBeVisible();
     expect(screen.getByRole("button", { name: /continue selected/i })).toBeDisabled();
+  });
+
+  it("assigns a graph role from the anchored model popover", async () => {
+    installProject("running");
+    let requestBody: Record<string, unknown> | undefined;
+    server.use(http.put("*/api/v1/autoresearch/projects/:projectId", async ({ request }) => {
+      requestBody = await request.json() as Record<string, unknown>;
+      return HttpResponse.json({ ...project, version: 3, ...requestBody });
+    }));
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(await screen.findByRole("button", { name: /Idea creator.*configure model/i }));
+    const popover = screen.getByRole("dialog", { name: "Model assignment for Idea creator" });
+    expect(within(popover).getByText(/Effective: local-routing-model · module default/i)).toBeVisible();
+    await user.selectOptions(within(popover).getByLabelText("idea-creator primary provider"), screen.getByRole("option", { name: "local-routing-model · Spark local" }));
+    await user.click(within(popover).getByRole("checkbox", { name: "Inherit project fallback chain" }));
+    await user.click(within(popover).getByRole("button", { name: "Add fallback" }));
+    await user.selectOptions(within(popover).getByLabelText("idea-creator fallback 1"), `lmw|${deploymentId}|local-routing-model`);
+    expect(within(popover).getByRole("alert")).toHaveTextContent("Primary provider cannot also be a fallback.");
+    expect(within(popover).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.selectOptions(within(popover).getByLabelText("idea-creator fallback 1"), "external|codex|gpt-routing||provider-key");
+    await user.click(within(popover).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(requestBody).toBeDefined());
+    expect(requestBody).toMatchObject({
+      config: {
+        roles: {
+          "idea-creator": { source: "lmw", deployment_id: deploymentId, model: "local-routing-model" },
+        },
+        fallbacks: {
+          "idea-creator": [{ source: "external", backend: "codex", model: "gpt-routing", secret_name: "provider-key" }],
+        },
+      },
+    });
+
+    await user.click(within(popover).getByRole("button", { name: "Close model assignment" }));
+    await user.click(screen.getByRole("button", { name: /Idea deep literature.*configure model/i }));
+    expect(screen.getByText("Shared assignment: this role appears at 5 topology points.")).toBeVisible();
+  });
+
+  it("bulk assigns canonical roles and preserves advisor and paper controls", async () => {
+    installProject("succeeded");
+    const requests: Array<Record<string, unknown>> = [];
+    server.use(http.put("*/api/v1/autoresearch/projects/:projectId", async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>;
+      requests.push(body);
+      return HttpResponse.json({ ...project, version: project.version + requests.length, ...body });
+    }));
+    const user = userEvent.setup();
+    renderRoute();
+    await user.click(await screen.findByRole("button", { name: "Role controls" }));
+
+    await user.click(screen.getByRole("checkbox", { name: "Select idea-creator" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select proposal-refiner" }));
+    await user.selectOptions(screen.getByLabelText("Bulk provider assignment"), "external|codex|gpt-routing||provider-key");
+    await user.click(screen.getByRole("button", { name: "Apply to selected" }));
+    await user.click(screen.getByRole("button", { name: "save model routing" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      config: {
+        roles: {
+          "idea-creator": { source: "external", backend: "codex", model: "gpt-routing", secret_name: "provider-key" },
+          "proposal-refiner": { source: "external", backend: "codex", model: "gpt-routing", secret_name: "provider-key" },
+        },
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Advisors" }));
+    await user.click(screen.getByRole("checkbox", { name: "idea-creator" }));
+    await user.selectOptions(screen.getByLabelText("idea-creator advisor backlog"), "3");
+    await user.click(screen.getByRole("button", { name: "save advisor settings" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ config: { advisors: { "idea-creator": { enabled: true, backlog: 3 } } } });
+
+    await user.click(screen.getByRole("button", { name: "Paper policy" }));
+    await user.click(screen.getByLabelText("Paper round cap"));
+    await user.keyboard("{Control>}a{/Control}7");
+    await user.click(screen.getByRole("button", { name: "save paper policy" }));
+    await waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests[2]).toMatchObject({ config: { paper_max_rounds: 7 } });
   });
 
   it("keeps findings and release reachable in Paper studio", async () => {

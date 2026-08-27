@@ -110,6 +110,16 @@ async function installAPI(page: Page, options: { signedIn?: boolean; failNodes?:
     if (path === "/api/v1/nodes") return fulfill(route, options.failNodes ? { code: "test.failure", error: "node inventory unavailable" } : options.fleetScenario ? nodes : [nodes[0]], options.failNodes ? 503 : 200);
     if (path === "/api/v1/fabrics") return fulfill(route, fabrics);
     if (path === "/api/v1/deployments") return fulfill(route, options.fleetScenario ? fleetDeployments : sampleDeployments);
+    if (path === "/api/v1/modules/autoresearch/settings") return fulfill(route, {
+      module: "autoresearch",
+      version: "settings-v1",
+      settings: {
+        default_role_assignments: {
+          default: { source: "lmw", deployment_id: sampleDeployments[0].id, model: sampleDeployments[0].endpoint.model },
+        },
+        external_providers: [],
+      },
+    });
     if (path === "/api/v1/nodes/telemetry") return fulfill(route, options.fleetScenario ? fleetTelemetry : []);
     if (path === "/api/v1/deployments/telemetry") return fulfill(route, options.fleetScenario ? servingTelemetry : []);
     if (path === "/api/v1/nodes/77777777-7777-7777-8777-777777777777/telemetry") return fulfill(route, nodeHistory);
@@ -304,6 +314,11 @@ test("AutoResearch Factory renders real desktop fidelity and run controls", asyn
   await expect(page.getByText("$0.42")).toBeVisible();
   await expect(page.getByText("1,500")).toBeVisible();
   await expect(page.getByRole("button", { name: "Experiment coder — real-coder-model — generating" })).toBeVisible();
+  await page.getByRole("button", { name: /Idea creator.*configure model/ }).click();
+  const routingPopover = page.getByRole("dialog", { name: "Model assignment for Idea creator" });
+  await expect(routingPopover).toContainText("Effective: Qwen3.8-27B · module default");
+  await expect(routingPopover.getByLabel("idea-creator primary provider")).toContainText("Qwen3.8-27B · qwen3.8");
+  await routingPopover.getByRole("button", { name: "Close model assignment" }).click();
 
   const geometry = await page.locator(".arf-workspace").evaluate((workspace) => {
     const graph = workspace.querySelector(".arf-flow-panel")!.getBoundingClientRect();
