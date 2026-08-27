@@ -419,10 +419,9 @@ type RecipeDraftState string
 
 // RecipeDraftSource defines model for RecipeDraftSource.
 type RecipeDraftSource struct {
-	BaseRecipeDigest *string `json:"base_recipe_digest,omitempty"`
-	Path             *string `json:"path,omitempty"`
-	Remote           string  `json:"remote"`
-	Revision         string  `json:"revision"`
+	Path     *string `json:"path,omitempty"`
+	Remote   string  `json:"remote"`
+	Revision string  `json:"revision"`
 }
 
 // RecipeImport defines model for RecipeImport.

@@ -86,7 +86,7 @@ var importOutputSchema = json.RawMessage(`{
 var draftInputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
   "required":["remote","revision"],"additionalProperties":false,
-  "properties":{"remote":{"type":"string","minLength":1},"revision":{"type":"string","minLength":1},"path":{"type":"string"},"base_recipe_digest":{"type":"string"}}
+  "properties":{"remote":{"type":"string","minLength":1},"revision":{"type":"string","minLength":1},"path":{"type":"string"}}
 }`)
 var draftOutputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",

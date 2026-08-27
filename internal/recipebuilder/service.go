@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/db"
@@ -69,10 +68,9 @@ func New(q *db.Queries, stateRoot string, validator *recipe.Validator, recipes *
 }
 
 type GitSource struct {
-	Remote           string `json:"remote"`
-	Revision         string `json:"revision"`
-	Path             string `json:"path,omitempty"`
-	BaseRecipeDigest string `json:"base_recipe_digest,omitempty"`
+	Remote   string `json:"remote"`
+	Revision string `json:"revision"`
+	Path     string `json:"path,omitempty"`
 }
 
 func (s *Service) CreateFromGit(ctx context.Context, source GitSource) (*Draft, error) {
@@ -106,55 +104,7 @@ func (s *Service) CreateFromGit(ctx context.Context, source GitSource) (*Draft, 
 		return nil, fmt.Errorf("source path escapes checkout")
 	}
 	root := filepath.Join(checkout, rel)
-	manifest, err := s.updateManifest(ctx, source, commit)
-	if err != nil {
-		return nil, err
-	}
-	return s.CreateFromDir(ctx, source, commit, tree, manifest, root)
-}
-
-func (s *Service) updateManifest(ctx context.Context, source GitSource, commit string) (json.RawMessage, error) {
-	if source.BaseRecipeDigest == "" {
-		return nil, nil
-	}
-	detail, err := s.recipes.Get(ctx, source.BaseRecipeDigest)
-	if err != nil {
-		return nil, fmt.Errorf("base recipe: %w", err)
-	}
-	var manifest recipe.Manifest
-	if err := json.Unmarshal(detail.Manifest, &manifest); err != nil {
-		return nil, fmt.Errorf("base recipe manifest: %w", err)
-	}
-	manifest.Metadata.Version, err = nextPatchVersion(manifest.Metadata.Version)
-	if err != nil {
-		return nil, err
-	}
-	sourcePath := source.Path
-	if sourcePath == "" {
-		sourcePath = "."
-	}
-	manifest.Metadata.Source = &recipe.Source{
-		URL:      strings.TrimSuffix(source.Remote, ".git"),
-		Revision: commit,
-		Path:     sourcePath,
-	}
-	return json.Marshal(manifest)
-}
-
-func nextPatchVersion(version string) (string, error) {
-	core := version
-	if suffix := strings.IndexAny(core, "-+"); suffix >= 0 {
-		core = core[:suffix]
-	}
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return "", fmt.Errorf("base recipe version %q is not semantic", version)
-	}
-	patch, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return "", fmt.Errorf("base recipe version %q is not semantic", version)
-	}
-	return strings.Join([]string{parts[0], parts[1], strconv.Itoa(patch + 1)}, "."), nil
+	return s.CreateFromDir(ctx, source, commit, tree, nil, root)
 }
 func (s *Service) CreateFromDir(ctx context.Context, source any, resolvedCommit, resolvedTree string, manifest json.RawMessage, sourceDir string) (*Draft, error) {
 	draftID, _ := id.New()
@@ -178,39 +128,16 @@ func (s *Service) CreateFromDir(ctx context.Context, source any, resolvedCommit,
 	if err != nil {
 		return nil, err
 	}
-	selectedAssets := make([]string, 0)
-	if len(manifest) == 0 {
-		manifest = json.RawMessage(`{}`)
-	} else {
-		var base recipe.Manifest
-		if err := json.Unmarshal(manifest, &base); err != nil {
-			return nil, err
-		}
-		wanted := make(map[string]bool, len(base.Assets))
-		for _, asset := range base.Assets {
-			wanted[filepath.ToSlash(asset)] = true
-		}
-		for _, candidate := range candidates {
-			if wanted[candidate.Path] {
-				selectedAssets = append(selectedAssets, candidate.SHA256)
-				delete(wanted, candidate.Path)
-			}
-		}
-		for missing := range wanted {
-			diagnostics = append(diagnostics, Diagnostic{
-				Code: "recipe.draft_asset_missing", Severity: "warning", Path: missing,
-				Message: "asset from the installed recipe is absent from the candidate revision",
-			})
-		}
-	}
 	candidateJSON, _ := json.Marshal(candidates)
 	diagnosticJSON, _ := json.Marshal(diagnostics)
-	selectedJSON, _ := json.Marshal(selectedAssets)
+	if len(manifest) == 0 {
+		manifest = json.RawMessage(`{}`)
+	}
 	if err := s.q.CreateRecipeDraft(ctx, db.CreateRecipeDraftParams{
 		ID: draftID, State: "needs_input", Source: string(sourceJSON),
 		ResolvedCommit: nullable(resolvedCommit), ResolvedTree: nullable(resolvedTree),
 		Manifest: string(manifest), Candidates: string(candidateJSON),
-		SelectedAssets: string(selectedJSON), Diagnostics: string(diagnosticJSON),
+		SelectedAssets: "[]", Diagnostics: string(diagnosticJSON),
 	}); err != nil {
 		return nil, err
 	}

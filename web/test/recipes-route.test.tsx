@@ -130,36 +130,38 @@ function installCatalogHandlers(rows: readonly unknown[] = recipes) {
   );
 }
 
-describe("RecipesRoute catalog", () => {
-  it("renders the recipe catalog with real recipe, deployment, and update data", async () => {
+describe("RecipesRoute Sample A catalog", () => {
+  it("matches the Sample A hierarchy while using real recipe and deployment data", async () => {
     installCatalogHandlers();
     const user = userEvent.setup();
     renderCatalog();
 
-    expect(await screen.findByRole("heading", { name: "Recipe catalog" })).toBeInTheDocument();
-    expect(screen.getByText("Installed serving recipes, hardware compatibility, and upstream update status.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sample A" })).toBeInTheDocument();
+    expect(screen.getByText("A curated catalog of models, workers, and workloads for your hardware.")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "All recipes" })).toBeInTheDocument();
 
-    const alphaCard = screen.getByRole("article", { name: "Recipe Alpha Model" });
+    const alphaCard = screen.getByRole("button", {
+      name: "Choose installation hardware for Alpha Model",
+    });
     expect(within(alphaCard).getByText("Alpha Model")).toBeInTheDocument();
     expect(within(alphaCard).getByText("A verified two-node recipe.")).toBeInTheDocument();
     expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Installed on 2 devices")).toBeInTheDocument();
-    expect(within(alphaCard).getByRole("button", { name: "Choose hardware →" })).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Choose installation hardware →")).toBeInTheDocument();
     expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("catalog source")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Update available")).toBeInTheDocument();
     expect(screen.getByText("Up to date")).toBeInTheDocument();
 
-    expect(screen.getAllByRole("article").map((card) => card.getAttribute("aria-label"))).toEqual([
-      "Recipe Alpha Model",
-      "Recipe Beta Model",
-      "Recipe Gamma Model",
+    expect(screen.getAllByRole("button", { name: /Choose installation hardware for/ }).map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Choose installation hardware for Alpha Model",
+      "Choose installation hardware for Beta Model",
+      "Choose installation hardware for Gamma Model",
     ]);
 
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("article", { name: "Recipe Gamma Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("article", { name: "Recipe Alpha Model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose installation hardware for Gamma Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Choose installation hardware for Alpha Model" })).not.toBeInTheDocument();
     await user.clear(screen.getByRole("searchbox", { name: "Search recipes" }));
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), "does-not-exist");
     expect(screen.getByText("No recipes match")).toBeInTheDocument();
@@ -174,8 +176,9 @@ describe("RecipesRoute catalog", () => {
     expect(await screen.findByRole("heading", { name: "Install recipe" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
 
-    const alphaCard = screen.getByRole("article", { name: "Recipe Alpha Model" });
-    await user.click(within(alphaCard).getByRole("button", { name: "Choose hardware →" }));
+    await user.click(screen.getByRole("button", {
+      name: "Choose installation hardware for Alpha Model",
+    }));
     expect(await screen.findByRole("heading", { name: "Choose hardware" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
   });
@@ -197,30 +200,6 @@ describe("RecipesRoute catalog", () => {
     expect(screen.getByRole("button", { name: "Check updates" })).toBeEnabled();
   });
 
-  it("starts an available update directly from its catalog card", async () => {
-    installCatalogHandlers();
-    let submitted: unknown;
-    server.use(
-      http.post("*/api/v1/recipe-drafts", async ({ request }) => {
-        submitted = await request.json();
-        return HttpResponse.json({ run_id: "run-update-card" }, { status: 202 });
-      }),
-    );
-    const user = userEvent.setup();
-    renderCatalog();
-
-    const alphaCard = await screen.findByRole("article", { name: "Recipe Alpha Model" });
-    await user.click(within(alphaCard).getByRole("button", { name: "Update recipe →" }));
-    await waitFor(() =>
-      expect(submitted).toEqual({
-        remote: recipes[0].update.remote,
-        revision: recipes[0].update.candidate_revision,
-        path: ".",
-        base_recipe_digest: alphaDigest,
-      }),
-    );
-  });
-
   it("queues an available commit for inspection in Recipe Builder", async () => {
     installCatalogHandlers();
     let submitted: unknown;
@@ -239,7 +218,6 @@ describe("RecipesRoute catalog", () => {
         remote: recipes[0].update.remote,
         revision: recipes[0].update.candidate_revision,
         path: ".",
-        base_recipe_digest: alphaDigest,
       }),
     );
     expect(await screen.findByText("Builder route")).toBeInTheDocument();

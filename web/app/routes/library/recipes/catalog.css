@@ -191,7 +191,7 @@
 }
 
 .sample-a-card:hover,
-.sample-a-card:focus-within {
+.sample-a-card:focus-visible {
   box-shadow: 0 6px 18px rgb(32 39 43 / 10%);
   transform: translateY(-2px);
 }
@@ -265,10 +265,6 @@
   line-height: 1.2;
 }
 
-.sample-a-cardname:hover {
-  color: var(--cat-oxblood);
-}
-
 .sample-a-carddesc {
   display: -webkit-box;
   overflow: hidden;
@@ -286,38 +282,13 @@
 }
 
 .sample-a-updrow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   margin-top: 8px;
 }
 
-.sample-a-upd,
-.sample-a-update-action {
-  padding: 0;
-  border: 0;
-  background: transparent;
+.sample-a-upd {
+  color: var(--cat-oxblood);
   font-family: var(--cat-font-mono);
   font-size: 11px;
-}
-
-.sample-a-upd {
-  color: var(--cat-muted);
-}
-
-.sample-a-update-action {
-  color: var(--cat-oxblood);
-  font-weight: 700;
-}
-
-.sample-a-upd:hover,
-.sample-a-update-action:hover {
-  text-decoration: underline;
-}
-
-.sample-a-update-action:disabled {
-  cursor: wait;
-  opacity: 0.6;
 }
 
 .sample-a-meta {

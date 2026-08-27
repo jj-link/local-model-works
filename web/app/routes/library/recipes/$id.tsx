@@ -58,7 +58,6 @@ export default function RecipeDetailRoute() {
         remote: update.remote,
         revision: update.candidate_revision,
         ...(update.path ? { path: update.path } : {}),
-        base_recipe_digest: recipe.digest,
       });
       toast.success("Update inspection queued", {
         description: `${update.tracking_ref} · ${update.candidate_revision.slice(0, 12)}`,
