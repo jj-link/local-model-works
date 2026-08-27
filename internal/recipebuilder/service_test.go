@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/recipe"
 )
 
@@ -90,5 +91,96 @@ func TestDraftPersistsHashedCandidatesAndRejectsStaleUpdate(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "drafts", draft.ID)); !os.IsNotExist(err) {
 		t.Fatalf("draft source remains after delete: %v", err)
+	}
+}
+
+func TestUpdateDraftStartsFromInstalledManifest(t *testing.T) {
+	ctx := context.Background()
+	state := t.TempDir()
+	database, err := db.Open(ctx, filepath.Join(state, "lmw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	queries := db.New(database)
+	validator, err := recipe.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipes, err := recipe.New(
+		database,
+		queries,
+		events.NewEventBus(queries),
+		validator,
+		"",
+		filepath.Join(state, "catalog"),
+		filepath.Join(state, "recipes"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseDigest := "sha256:" + strings.Repeat("a", 64)
+	baseRevision := strings.Repeat("b", 40)
+	baseManifest, err := json.Marshal(recipe.Manifest{
+		APIVersion: recipe.APIVersion,
+		Kind:       "Recipe",
+		Metadata: recipe.Metadata{
+			Name: "update-base", Version: "1.0.2", DisplayName: "Update base",
+			Description: "base", License: "MIT",
+			Source: &recipe.Source{URL: "https://github.com/example/base", Revision: baseRevision, Path: "."},
+		},
+		Assets: []string{"start.sh", "missing.sh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{
+		Digest: baseDigest, Name: "update-base", Version: "1.0.2",
+		Source: `{"type":"local","path":"fixture"}`, TrustState: recipe.TrustLocal,
+		Manifest: string(baseManifest),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(queries, state, validator, recipes)
+	candidateRevision := strings.Repeat("c", 40)
+	source := GitSource{
+		Remote: "https://github.com/example/base.git", Revision: candidateRevision,
+		Path: ".", BaseRecipeDigest: baseDigest,
+	}
+	updateManifest, err := service.updateManifest(ctx, source, candidateRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updated recipe.Manifest
+	if err := json.Unmarshal(updateManifest, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Metadata.Version != "1.0.3" {
+		t.Fatalf("updated version = %q", updated.Metadata.Version)
+	}
+	if updated.Metadata.Source == nil || updated.Metadata.Source.Revision != candidateRevision {
+		t.Fatalf("updated source = %+v", updated.Metadata.Source)
+	}
+
+	candidateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(candidateDir, "start.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := service.CreateFromDir(ctx, source, candidateRevision, strings.Repeat("d", 40), updateManifest, candidateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.SelectedAssets) != 1 {
+		t.Fatalf("selected assets = %+v", draft.SelectedAssets)
+	}
+	missing := false
+	for _, diagnostic := range draft.Diagnostics {
+		if diagnostic.Code == "recipe.draft_asset_missing" && diagnostic.Path == "missing.sh" {
+			missing = true
+		}
+	}
+	if !missing {
+		t.Fatalf("missing asset diagnostic absent: %+v", draft.Diagnostics)
 	}
 }

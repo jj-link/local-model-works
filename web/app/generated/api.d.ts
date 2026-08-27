@@ -1419,6 +1419,7 @@ export interface components {
             version: number;
         };
         RecipeDraftSource: {
+            base_recipe_digest?: string;
             path?: string;
             remote: string;
             revision: string;

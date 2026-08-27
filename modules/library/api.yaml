@@ -364,6 +364,7 @@ components:
         remote: {type: string}
         revision: {type: string}
         path: {type: string}
+        base_recipe_digest: {type: string}
     RecipeDraft:
       type: object
       required: [id, version, state, source, manifest, candidates, selected_assets, diagnostics, created_at, updated_at]

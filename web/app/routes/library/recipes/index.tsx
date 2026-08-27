@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { useCheckRecipeUpdates, useDeployments, useRecipes } from "~/lib/queries";
+import { useCheckRecipeUpdates, useCreateRecipeDraft, useDeployments, useRecipes } from "~/lib/queries";
 import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { shortDigest } from "~/lib/format";
 import type { Recipe } from "~/lib/api";
 import { toast } from "sonner";
+import { Link, useNavigate } from "react-router";
 import "./catalog.css";
 
 const SOURCE_SEAL: Record<string, string> = {
@@ -29,9 +30,11 @@ function compareDigest(left: Recipe, right: Recipe): number {
 }
 
 export default function RecipesRoute() {
+  const navigate = useNavigate();
   const recipesQuery = useRecipes();
   const deploymentsQuery = useDeployments();
   const checkUpdates = useCheckRecipeUpdates();
+  const createDraft = useCreateRecipeDraft();
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -74,15 +77,34 @@ export default function RecipesRoute() {
     }
   };
 
+  const queueUpdate = async (recipe: Recipe) => {
+    const update = recipe.update;
+    if (!update?.candidate_revision) return;
+    try {
+      await createDraft.mutateAsync({
+        remote: update.remote,
+        revision: update.candidate_revision,
+        ...(update.path ? { path: update.path } : {}),
+        base_recipe_digest: recipe.digest,
+      });
+      toast.success("Recipe update queued", {
+        description: `${recipeDisplayName(recipe)} · ${update.candidate_revision.slice(0, 12)}`,
+      });
+      navigate("/library/builder");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Recipe update failed");
+    }
+  };
+
   return (
     <div className="sample-a-catalog">
       <header className="sample-a-mast">
         <div className="sample-a-brand">
           <span className="sample-a-seal sample-a-seal--local" aria-hidden>L</span>
           <div>
-            <h1 className="sample-a-title">Sample A</h1>
+            <h1 className="sample-a-title">Recipe catalog</h1>
             <p className="sample-a-subtitle">
-              A curated catalog of models, workers, and workloads for your hardware.
+              Installed serving recipes, hardware compatibility, and upstream update status.
             </p>
           </div>
         </div>
@@ -173,15 +195,10 @@ export default function RecipesRoute() {
                   : "Compatibility not reported";
 
                 return (
-                  <button
-                    type="button"
+                  <article
                     key={recipe.digest}
                     className="sample-a-card"
-                    aria-label={`Choose installation hardware for ${recipeDisplayName(recipe)}`}
-                    onClick={() => {
-                      setSelectedRecipeDigest(recipe.digest);
-                      setPlanOpen(true);
-                    }}
+                    aria-label={`Recipe ${recipeDisplayName(recipe)}`}
                   >
                     <span className="sample-a-cardtop">
                       <span
@@ -209,18 +226,39 @@ export default function RecipesRoute() {
                         )}
                       </span>
                     </span>
-                    <span className="sample-a-cardname">{recipeDisplayName(recipe)}</span>
+                    <Link className="sample-a-cardname" to={`/library/recipes/${recipe.digest}`}>
+                      {recipeDisplayName(recipe)}
+                    </Link>
                     <span className="sample-a-carddesc">
                       {recipe.description || "No description provided for this installed recipe."}
                     </span>
                     <span className="sample-a-compat">{compatibility}</span>
-                    <span className="sample-a-updrow">
-                      <span className="sample-a-upd">Choose installation hardware →</span>
-                    </span>
+                    <div className="sample-a-updrow">
+                      {recipe.update?.state === "available" && recipe.update.candidate_revision ? (
+                        <button
+                          type="button"
+                          className="sample-a-update-action"
+                          disabled={createDraft.isPending}
+                          onClick={() => void queueUpdate(recipe)}
+                        >
+                          {createDraft.isPending ? "Queuing update…" : "Update recipe →"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="sample-a-upd"
+                        onClick={() => {
+                          setSelectedRecipeDigest(recipe.digest);
+                          setPlanOpen(true);
+                        }}
+                      >
+                        Choose hardware →
+                      </button>
+                    </div>
                     <span className="sample-a-meta">
                       {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
                     </span>
-                  </button>
+                  </article>
                 );
               })}
             </div>
