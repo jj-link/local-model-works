@@ -1,15 +1,8 @@
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
-import { useRecipe, useSetRecipeTrust, useDeleteRecipe } from "~/lib/queries";
+import { useNavigate } from "react-router";
+import { useCreateRecipeDraft, useDeleteRecipe, useRecipe, useSetRecipeTrust } from "~/lib/queries";
 import { EmptyState } from "~/components/empty-state";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
 import { HighlightedPre } from "~/components/json-viewer";
@@ -28,10 +21,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Recipe detail: metadata panel, trust actions, and the manifest document. */
 export default function RecipeDetailRoute() {
+  const navigate = useNavigate();
   const id = useTailPathParam();
   const { data: recipe, isPending, isError, error, refetch } = useRecipe(id);
   const setTrust = useSetRecipeTrust();
   const remove = useDeleteRecipe();
+  const createDraft = useCreateRecipeDraft();
 
   if (isPending) {
     return <p className="py-10 text-center font-mono text-xs text-faint">loading recipe…</p>;
@@ -54,6 +49,24 @@ export default function RecipeDetailRoute() {
       .mutateAsync({ digest: recipe.digest, trust_state, permission_diff_accepted: true })
       .then((r) => toast.success(`Trust set to ${r.trust_state}`))
       .catch((e) => toast.error(e instanceof Error ? e.message : "trust update failed"));
+
+  const inspectUpdate = async () => {
+    const update = recipe.update;
+    if (!update?.candidate_revision) return;
+    try {
+      await createDraft.mutateAsync({
+        remote: update.remote,
+        revision: update.candidate_revision,
+        ...(update.path ? { path: update.path } : {}),
+      });
+      toast.success("Update inspection queued", {
+        description: `${update.tracking_ref} · ${update.candidate_revision.slice(0, 12)}`,
+      });
+      navigate("/library/builder");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Update inspection failed");
+    }
+  };
 
   return (
     <div className="grid gap-4">
@@ -174,27 +187,41 @@ export default function RecipeDetailRoute() {
         </div>
       </div>
 
-      {recipe.updates && recipe.updates.length > 0 ? (
-        <Section title="available updates">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Digest</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recipe.updates.map((u) => (
-                  <TableRow key={u.digest ?? u.version}>
-                    <TableCell className="font-mono text-xs">{u.version ?? "unknown"}</TableCell>
-                    <TableCell className="font-mono text-[11px] text-muted">
-                      {shortDigest(u.digest)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+      {recipe.update ? (
+        <Section title="upstream status">
+          <div className="grid gap-3 p-3 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="grid gap-1 font-mono text-xs">
+              <p
+                className={
+                  recipe.update.state === "available"
+                    ? "text-primary"
+                    : recipe.update.state === "error"
+                      ? "text-warn"
+                      : "text-ok"
+                }
+              >
+                {recipe.update.state === "available"
+                  ? "Update available"
+                  : recipe.update.state === "error"
+                    ? "Update check failed"
+                    : "Up to date"}
+              </p>
+              <p className="text-muted">
+                {recipe.update.remote.replace(/\\.git$/, "")} · {recipe.update.tracking_ref}
+              </p>
+              <p className="text-faint">
+                installed {recipe.update.installed_revision.slice(0, 12)}
+                {recipe.update.candidate_revision
+                  ? ` · candidate ${recipe.update.candidate_revision.slice(0, 12)}`
+                  : ""}
+              </p>
+              {recipe.update.error ? <p className="text-warn">{recipe.update.error}</p> : null}
+            </div>
+            {recipe.update.state === "available" && recipe.update.candidate_revision ? (
+              <Button disabled={createDraft.isPending} onClick={() => void inspectUpdate()}>
+                {createDraft.isPending ? "queuing inspection…" : "Inspect update in builder"}
+              </Button>
+            ) : null}
           </div>
         </Section>
       ) : null}

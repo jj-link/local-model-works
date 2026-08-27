@@ -657,6 +657,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipes/check-updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh cached upstream Git update status for installed recipes */
+        post: operations["checkRecipeUpdates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipes/import": {
         parameters: {
             query?: never;
@@ -1372,6 +1389,7 @@ export interface components {
             source?: components["schemas"]["RecipeSource"];
             /** @enum {string} */
             trust_state: "verified" | "local" | "untrusted";
+            update?: components["schemas"]["RecipeUpdateStatus"];
             variant_count?: number;
             version: string;
             /** @description Other installed versions of the same recipe name */
@@ -1380,12 +1398,6 @@ export interface components {
         RecipeDetail: components["schemas"]["Recipe"] & {
             /** @description Canonical recipe manifest JSON (localmodelworks/v1alpha1) */
             manifest?: Record<string, never>;
-            updates?: {
-                /** @description Manifest/permission difference summary */
-                diff?: Record<string, never>;
-                digest?: string;
-                version?: string;
-            }[];
         };
         RecipeDraft: {
             candidates: Record<string, never>[];
@@ -1427,6 +1439,18 @@ export interface components {
             permission_diff_accepted: boolean;
             /** @enum {string} */
             trust_state: "local" | "untrusted";
+        };
+        RecipeUpdateStatus: {
+            candidate_revision?: string;
+            /** Format: date-time */
+            checked_at: string;
+            error?: string;
+            installed_revision: string;
+            path?: string;
+            remote: string;
+            /** @enum {string} */
+            state: "current" | "available" | "error";
+            tracking_ref: string;
         };
         Run: {
             /** Format: date-time */
@@ -2960,6 +2984,27 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    checkRecipeUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed recipe update states */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdateStatus"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     importRecipe: {

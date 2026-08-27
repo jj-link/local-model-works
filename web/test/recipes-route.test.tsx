@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import RecipesRoute from "~/routes/library/recipes/index";
+import RecipeDetailRoute from "~/routes/library/recipes/$id";
 import { server } from "../msw/server";
 
 const alphaDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -28,6 +29,15 @@ const recipes = [
     source: { type: "catalog", remote: "https://catalog.example/alpha" },
     compatibility: { nodeCount: 2, fabric: { transport: "roce" } },
     installed_at: "2026-01-03T00:00:00Z",
+    update: {
+      state: "available",
+      remote: "https://github.com/MiaAI-Lab/alpha.git",
+      tracking_ref: "main",
+      path: ".",
+      installed_revision: "1111111111111111111111111111111111111111",
+      candidate_revision: "2222222222222222222222222222222222222222",
+      checked_at: "2026-01-04T00:00:00Z",
+    },
   },
   {
     digest: betaDigest,
@@ -40,6 +50,13 @@ const recipes = [
     source: { type: "git", remote: "https://git.example/beta" },
     compatibility: { nodeCount: 1 },
     installed_at: "2026-01-01T00:00:00Z",
+    update: {
+      state: "current",
+      remote: "https://github.com/MiaAI-Lab/beta.git",
+      tracking_ref: "main",
+      installed_revision: "3333333333333333333333333333333333333333",
+      checked_at: "2026-01-04T00:00:00Z",
+    },
   },
   {
     digest: gammaDigest,
@@ -82,6 +99,22 @@ function renderCatalog() {
   );
 }
 
+function renderRecipeDetail() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/library/recipes/${alphaDigest}`]}>
+        <Routes>
+          <Route path="/library/recipes/:id" element={<RecipeDetailRoute />} />
+          <Route path="/library/builder" element={<p>Builder route</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 function installCatalogHandlers(rows: readonly unknown[] = recipes) {
   server.use(
     http.get("*/api/v1/recipes", () => HttpResponse.json(rows)),
@@ -91,6 +124,9 @@ function installCatalogHandlers(rows: readonly unknown[] = recipes) {
     http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
     http.get("*/api/v1/nodes", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+    http.post("*/api/v1/recipes/check-updates", () =>
+      HttpResponse.json(recipes.flatMap((recipe) => "update" in recipe ? [recipe.update] : [])),
+    ),
   );
 }
 
@@ -114,6 +150,8 @@ describe("RecipesRoute Sample A catalog", () => {
     expect(within(alphaCard).getByText("Choose installation hardware →")).toBeInTheDocument();
     expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("catalog source")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Update available")).toBeInTheDocument();
+    expect(screen.getByText("Up to date")).toBeInTheDocument();
 
     expect(screen.getAllByRole("button", { name: /Choose installation hardware for/ }).map((button) => button.getAttribute("aria-label"))).toEqual([
       "Choose installation hardware for Alpha Model",
@@ -143,6 +181,46 @@ describe("RecipesRoute Sample A catalog", () => {
     }));
     expect(await screen.findByRole("heading", { name: "Choose hardware" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
+  });
+
+  it("refreshes cached update status on demand", async () => {
+    installCatalogHandlers();
+    let checks = 0;
+    server.use(
+      http.post("*/api/v1/recipes/check-updates", () => {
+        checks += 1;
+        return HttpResponse.json([recipes[0].update, recipes[1].update]);
+      }),
+    );
+    const user = userEvent.setup();
+    renderCatalog();
+
+    await user.click(await screen.findByRole("button", { name: "Check updates" }));
+    await waitFor(() => expect(checks).toBe(1));
+    expect(screen.getByRole("button", { name: "Check updates" })).toBeEnabled();
+  });
+
+  it("queues an available commit for inspection in Recipe Builder", async () => {
+    installCatalogHandlers();
+    let submitted: unknown;
+    server.use(
+      http.post("*/api/v1/recipe-drafts", async ({ request }) => {
+        submitted = await request.json();
+        return HttpResponse.json({ run_id: "run-update" }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRecipeDetail();
+
+    await user.click(await screen.findByRole("button", { name: "Inspect update in builder" }));
+    await waitFor(() =>
+      expect(submitted).toEqual({
+        remote: recipes[0].update.remote,
+        revision: recipes[0].update.candidate_revision,
+        path: ".",
+      }),
+    );
+    expect(await screen.findByText("Builder route")).toBeInTheDocument();
   });
 
   it("distinguishes loading, API-empty, and retryable error states", async () => {

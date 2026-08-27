@@ -1167,6 +1167,23 @@ paths:
       summary: Approve trust (local) after reviewing the permission diff
       tags:
         - recipes
+  /recipes/check-updates:
+    post:
+      operationId: checkRecipeUpdates
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/RecipeUpdateStatus'
+                type: array
+          description: Refreshed recipe update states
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Refresh cached upstream Git update status for installed recipes
+      tags:
+        - recipes
   /recipes/import:
     post:
       operationId: importRecipe
@@ -2676,6 +2693,8 @@ components:
             - local
             - untrusted
           type: string
+        update:
+          $ref: '#/components/schemas/RecipeUpdateStatus'
         variant_count:
           type: integer
         version:
@@ -2697,18 +2716,6 @@ components:
             manifest:
               description: Canonical recipe manifest JSON (localmodelworks/v1alpha1)
               type: object
-            updates:
-              items:
-                properties:
-                  diff:
-                    description: Manifest/permission difference summary
-                    type: object
-                  digest:
-                    type: string
-                  version:
-                    type: string
-                type: object
-              type: array
           type: object
     RecipeDraft:
       properties:
@@ -2821,6 +2828,36 @@ components:
       required:
         - trust_state
         - permission_diff_accepted
+      type: object
+    RecipeUpdateStatus:
+      properties:
+        candidate_revision:
+          type: string
+        checked_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        installed_revision:
+          type: string
+        path:
+          type: string
+        remote:
+          type: string
+        state:
+          enum:
+            - current
+            - available
+            - error
+          type: string
+        tracking_ref:
+          type: string
+      required:
+        - state
+        - remote
+        - tracking_ref
+        - installed_revision
+        - checked_at
       type: object
     Run:
       properties:

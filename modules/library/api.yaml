@@ -147,6 +147,23 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+
+  /recipes/check-updates:
+    post:
+      tags: [recipes]
+      operationId: checkRecipeUpdates
+      summary: Refresh cached upstream Git update status for installed recipes
+      responses:
+        '200':
+          description: Refreshed recipe update states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecipeUpdateStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /recipes/import:
     post:
       tags: [recipes]
@@ -543,6 +560,8 @@ components:
         version_count:
           type: integer
           description: Other installed versions of the same recipe name
+        update:
+          $ref: '#/components/schemas/RecipeUpdateStatus'
 
     RecipeDetail:
       allOf:
@@ -552,18 +571,29 @@ components:
             manifest:
               type: object
               description: Canonical recipe manifest JSON (localmodelworks/v1alpha1)
-            updates:
-              type: array
-              items:
-                type: object
-                properties:
-                  digest:
-                    type: string
-                  version:
-                    type: string
-                  diff:
-                    type: object
-                    description: Manifest/permission difference summary
+
+    RecipeUpdateStatus:
+      type: object
+      required: [state, remote, tracking_ref, installed_revision, checked_at]
+      properties:
+        state:
+          type: string
+          enum: [current, available, error]
+        remote:
+          type: string
+        tracking_ref:
+          type: string
+        path:
+          type: string
+        installed_revision:
+          type: string
+        candidate_revision:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        error:
+          type: string
 
     Compatibility:
       type: object

@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { useDeployments, useRecipes } from "~/lib/queries";
+import { useCheckRecipeUpdates, useDeployments, useRecipes } from "~/lib/queries";
 import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { shortDigest } from "~/lib/format";
 import type { Recipe } from "~/lib/api";
+import { toast } from "sonner";
 import "./catalog.css";
 
 const SOURCE_SEAL: Record<string, string> = {
@@ -11,6 +12,12 @@ const SOURCE_SEAL: Record<string, string> = {
   oci: "◉",
   git: "⎇",
   local: "▣",
+};
+
+const UPDATE_LABEL: Record<string, string> = {
+  available: "Update available",
+  current: "Up to date",
+  error: "Check failed",
 };
 
 function recipeDisplayName(recipe: Recipe): string {
@@ -24,6 +31,7 @@ function compareDigest(left: Recipe, right: Recipe): number {
 export default function RecipesRoute() {
   const recipesQuery = useRecipes();
   const deploymentsQuery = useDeployments();
+  const checkUpdates = useCheckRecipeUpdates();
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -54,6 +62,18 @@ export default function RecipesRoute() {
       });
   }, [recipesQuery.data, search]);
 
+  const refreshUpdates = async () => {
+    try {
+      const statuses = await checkUpdates.mutateAsync();
+      const available = statuses.filter((status) => status.state === "available").length;
+      toast.success("Recipe update check complete", {
+        description: available > 0 ? `${available} update${available === 1 ? "" : "s"} available` : "All tracked recipes are current",
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Recipe update check failed");
+    }
+  };
+
   return (
     <div className="sample-a-catalog">
       <header className="sample-a-mast">
@@ -77,6 +97,14 @@ export default function RecipesRoute() {
               placeholder="Search by name, source, or digest…"
             />
           </label>
+          <button
+            type="button"
+            className="sample-a-check"
+            disabled={checkUpdates.isPending}
+            onClick={() => void refreshUpdates()}
+          >
+            {checkUpdates.isPending ? "Checking updates…" : "Check updates"}
+          </button>
           <button type="button" className="sample-a-import" onClick={() => setImportOpen(true)}>
             Import recipe
           </button>
@@ -162,17 +190,24 @@ export default function RecipesRoute() {
                       >
                         {SOURCE_SEAL[sourceType] ?? "·"}
                       </span>
-                      {deploymentsQuery.isPending ? (
-                        <span className="sample-a-install-state is-checking">Checking devices</span>
-                      ) : deploymentsQuery.isError ? (
-                        <span className="sample-a-install-state is-not-installed">Status unavailable</span>
-                      ) : installedCount > 0 ? (
-                        <span className="sample-a-install-state is-installed">
-                          Installed on {installedCount} {installedCount === 1 ? "device" : "devices"}
-                        </span>
-                      ) : (
-                        <span className="sample-a-install-state is-not-installed">Not installed</span>
-                      )}
+                      <span className="sample-a-cardflags">
+                        {recipe.update ? (
+                          <span className={`sample-a-update-state is-${recipe.update.state}`}>
+                            {UPDATE_LABEL[recipe.update.state] ?? recipe.update.state}
+                          </span>
+                        ) : null}
+                        {deploymentsQuery.isPending ? (
+                          <span className="sample-a-install-state is-checking">Checking devices</span>
+                        ) : deploymentsQuery.isError ? (
+                          <span className="sample-a-install-state is-not-installed">Status unavailable</span>
+                        ) : installedCount > 0 ? (
+                          <span className="sample-a-install-state is-installed">
+                            Installed on {installedCount} {installedCount === 1 ? "device" : "devices"}
+                          </span>
+                        ) : (
+                          <span className="sample-a-install-state is-not-installed">Not installed</span>
+                        )}
+                      </span>
                     </span>
                     <span className="sample-a-cardname">{recipeDisplayName(recipe)}</span>
                     <span className="sample-a-carddesc">

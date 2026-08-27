@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opencontainers/go-digest"
@@ -84,6 +85,7 @@ type Recipe struct {
 	HighRisk      []string        `json:"high_risk,omitempty"`
 	InstalledAt   string          `json:"installed_at"`
 	VersionCount  int             `json:"version_count,omitempty"`
+	Update        *UpdateStatus   `json:"update,omitempty"`
 }
 
 // RecipeDetail adds the full manifest (openapi RecipeDetail).
@@ -93,15 +95,17 @@ type RecipeDetail struct {
 }
 
 type Service struct {
-	db            *sql.DB
-	q             *db.Queries
-	bus           *events.EventBus
-	validator     *Validator
-	catalogSchema *jsonschema.Schema
-	trustKey      []byte // PEM, empty when unconfigured
-	catalogRoot   string
-	packageRoot   string
-	onInstalled   func()
+	db             *sql.DB
+	q              *db.Queries
+	bus            *events.EventBus
+	validator      *Validator
+	catalogSchema  *jsonschema.Schema
+	trustKey       []byte // PEM, empty when unconfigured
+	catalogRoot    string
+	packageRoot    string
+	onInstalled    func()
+	updateMu       sync.Mutex
+	resolveGitHead func(context.Context, string) (string, string, error)
 }
 
 // New builds the store. packageRoot holds complete immutable OCI packages.
@@ -124,6 +128,7 @@ func New(sqlDB *sql.DB, q *db.Queries, bus *events.EventBus, v *Validator, trust
 	service := &Service{
 		db: sqlDB, q: q, bus: bus, validator: v, catalogSchema: catalogSchema,
 		trustKey: keyPEM, catalogRoot: catalogRoot, packageRoot: packageRoot,
+		resolveGitHead: resolveGitHEAD,
 	}
 	if err := service.recoverPackageDeletes(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover recipe package deletion: %w", err)
@@ -743,6 +748,11 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 		InstalledAt:   row.InstalledAt,
 		VersionCount:  len(versions),
 	}
+	update, err := s.UpdateStatus(ctx, row.Digest)
+	if err != nil {
+		return Recipe{}, err
+	}
+	v.Update = update
 	comp, err := json.Marshal(m.Compatibility)
 	if err == nil && string(comp) != "null" {
 		v.Compatibility = comp

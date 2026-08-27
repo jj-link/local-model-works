@@ -7,30 +7,25 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { StatusDot } from "~/components/status-dot";
-import { createRecipeDraft } from "~/lib/api";
-import { useRecipeDrafts } from "~/lib/queries";
+import { useCreateRecipeDraft, useRecipeDrafts } from "~/lib/queries";
 import { shortId, wallClock } from "~/lib/format";
 
 export default function RecipeBuilderIndex() {
   const drafts = useRecipeDrafts();
+  const createDraft = useCreateRecipeDraft();
   const [remote, setRemote] = useState("");
   const [revision, setRevision] = useState("");
   const [path, setPath] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
-    setSubmitting(true);
     try {
-      const result = await createRecipeDraft({ remote, revision, ...(path ? { path } : {}) });
+      const result = await createDraft.mutateAsync({ remote, revision, ...(path ? { path } : {}) });
       toast.success("Source inspection queued", { description: `Run ${shortId(result.run_id)}` });
       setRemote("");
       setRevision("");
       setPath("");
-      await drafts.refetch();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Draft analysis failed");
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -69,8 +64,8 @@ export default function RecipeBuilderIndex() {
               <Input id="builder-path" value={path} onChange={(event) => setPath(event.target.value)} placeholder="optional/package/path" />
             </div>
           </div>
-          <Button className="mt-4" disabled={!remote || !revision || submitting} onClick={submit}>
-            <Hammer aria-hidden /> {submitting ? "queuing…" : "Analyze source"}
+          <Button className="mt-4" disabled={!remote || !revision || createDraft.isPending} onClick={submit}>
+            <Hammer aria-hidden /> {createDraft.isPending ? "queuing…" : "Analyze source"}
           </Button>
         </div>
         <aside className="bg-raised p-4 text-xs text-muted">

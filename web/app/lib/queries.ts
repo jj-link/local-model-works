@@ -321,6 +321,22 @@ export function useDeleteFabric() {
   });
 }
 
+export function useCreateRecipeDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.createRecipeDraft,
+    onSuccess: () => invalidates(qk.recipeDrafts)(qc),
+  });
+}
+
+export function useCheckRecipeUpdates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.checkRecipeUpdates,
+    onSuccess: () => invalidates(qk.recipes)(qc),
+  });
+}
+
 export function useImportRecipe() {
   const qc = useQueryClient();
   return useMutation({

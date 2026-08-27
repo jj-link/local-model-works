@@ -177,6 +177,18 @@ type RecipeDraft struct {
 	UpdatedAt      string         `json:"updated_at"`
 }
 
+type RecipeUpdateCheck struct {
+	RecipeDigest      string         `json:"recipe_digest"`
+	Remote            string         `json:"remote"`
+	TrackingRef       string         `json:"tracking_ref"`
+	Path              string         `json:"path"`
+	InstalledRevision string         `json:"installed_revision"`
+	CandidateRevision sql.NullString `json:"candidate_revision"`
+	State             string         `json:"state"`
+	CheckedAt         string         `json:"checked_at"`
+	Error             sql.NullString `json:"error"`
+}
+
 type Run struct {
 	ID             string         `json:"id"`
 	Module         string         `json:"module"`

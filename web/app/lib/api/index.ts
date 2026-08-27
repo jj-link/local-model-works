@@ -16,6 +16,7 @@ export type Fabric = Schemas["Fabric"];
 export type CreateFabricRequest = Schemas["CreateFabricRequest"];
 export type Recipe = Schemas["Recipe"];
 export type RecipeDetail = Schemas["RecipeDetail"];
+export type RecipeUpdateStatus = Schemas["RecipeUpdateStatus"];
 export type RecipeSource = Schemas["RecipeSource"];
 export type RecipeImport = Schemas["RecipeImport"];
 export type RecipeTrustRequest = Schemas["RecipeTrustRequest"];
@@ -137,6 +138,9 @@ export const listRecipes = ({ signal }: Sig = {}) => http.get<Recipe[]>("/recipe
 
 export const getRecipe = (digest: string, { signal }: Sig = {}) =>
   http.get<RecipeDetail>(`/recipes/${digest}`, { signal });
+
+export const checkRecipeUpdates = () =>
+  http.post<RecipeUpdateStatus[]>("/recipes/check-updates");
 
 /** If-Match must carry the recipe digest. */
 export const deleteRecipe = (digest: string) =>

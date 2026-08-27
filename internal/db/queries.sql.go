@@ -870,6 +870,29 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 	return i, err
 }
 
+const getRecipeUpdateCheck = `-- name: GetRecipeUpdateCheck :one
+SELECT recipe_digest, remote, tracking_ref, path, installed_revision,
+       candidate_revision, state, checked_at, error
+FROM recipe_update_checks WHERE recipe_digest = ?
+`
+
+func (q *Queries) GetRecipeUpdateCheck(ctx context.Context, recipeDigest string) (RecipeUpdateCheck, error) {
+	row := q.db.QueryRowContext(ctx, getRecipeUpdateCheck, recipeDigest)
+	var i RecipeUpdateCheck
+	err := row.Scan(
+		&i.RecipeDigest,
+		&i.Remote,
+		&i.TrackingRef,
+		&i.Path,
+		&i.InstalledRevision,
+		&i.CandidateRevision,
+		&i.State,
+		&i.CheckedAt,
+		&i.Error,
+	)
+	return i, err
+}
+
 const getRun = `-- name: GetRun :one
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
@@ -2614,6 +2637,49 @@ func (q *Queries) UpsertPlacement(ctx context.Context, arg UpsertPlacementParams
 		arg.VerifiedAt,
 		arg.Diagnostics,
 		arg.SizeBytes,
+	)
+	return err
+}
+
+const upsertRecipeUpdateCheck = `-- name: UpsertRecipeUpdateCheck :exec
+INSERT INTO recipe_update_checks (
+    recipe_digest, remote, tracking_ref, path, installed_revision,
+    candidate_revision, state, checked_at, error
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(recipe_digest) DO UPDATE SET
+    remote = excluded.remote,
+    tracking_ref = excluded.tracking_ref,
+    path = excluded.path,
+    installed_revision = excluded.installed_revision,
+    candidate_revision = excluded.candidate_revision,
+    state = excluded.state,
+    checked_at = excluded.checked_at,
+    error = excluded.error
+`
+
+type UpsertRecipeUpdateCheckParams struct {
+	RecipeDigest      string         `json:"recipe_digest"`
+	Remote            string         `json:"remote"`
+	TrackingRef       string         `json:"tracking_ref"`
+	Path              string         `json:"path"`
+	InstalledRevision string         `json:"installed_revision"`
+	CandidateRevision sql.NullString `json:"candidate_revision"`
+	State             string         `json:"state"`
+	CheckedAt         string         `json:"checked_at"`
+	Error             sql.NullString `json:"error"`
+}
+
+func (q *Queries) UpsertRecipeUpdateCheck(ctx context.Context, arg UpsertRecipeUpdateCheckParams) error {
+	_, err := q.db.ExecContext(ctx, upsertRecipeUpdateCheck,
+		arg.RecipeDigest,
+		arg.Remote,
+		arg.TrackingRef,
+		arg.Path,
+		arg.InstalledRevision,
+		arg.CandidateRevision,
+		arg.State,
+		arg.CheckedAt,
+		arg.Error,
 	)
 	return err
 }

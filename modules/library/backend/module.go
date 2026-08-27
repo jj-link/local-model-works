@@ -222,13 +222,14 @@ func mapRecipeError(err error) error {
 	}
 }
 
-// listRecipes — GET /recipes: all installed recipes, newest first.
+// listRecipes — GET /recipes: current installed recipes with cached update status.
 func (m *Module) listRecipes(w http.ResponseWriter, r *http.Request) {
 	items, err := m.env.Recipes.List(r.Context())
 	if err != nil {
 		httpx.HandleErr(w, err)
 		return
 	}
+	m.env.Recipes.RefreshUpdatesAsync(m.env.Ctx, recipe.PageUpdateCheckMaxAge)
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
@@ -248,70 +249,26 @@ func (m *Module) importRecipeHandler(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, rec)
 }
 
-// recipeDetailView is the fragment's RecipeDetail: the service's detail
-// plus the installed side-by-side versions of the same recipe name.
-type recipeDetailView struct {
-	recipe.RecipeDetail
-	Updates []updateEntry `json:"updates,omitempty"`
-}
-
-// updateEntry is one side-by-side version with a difference summary.
-type updateEntry struct {
-	Digest  string         `json:"digest"`
-	Version string         `json:"version"`
-	Diff    map[string]any `json:"diff"`
-}
-
-// getRecipe — GET /recipes/{digest}: full manifest plus update view.
+// getRecipe — GET /recipes/{digest}: full manifest plus cached update status.
 func (m *Module) getRecipe(w http.ResponseWriter, r *http.Request) {
 	detail, err := m.env.Recipes.Get(r.Context(), chi.URLParam(r, "digest"))
 	if err != nil {
 		httpx.HandleErr(w, mapRecipeError(err))
 		return
 	}
-	out := recipeDetailView{RecipeDetail: detail}
-	if ups, uerr := m.updates(r.Context(), detail); uerr != nil {
-		httpx.HandleErr(w, uerr)
-		return
-	} else {
-		out.Updates = ups
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	m.env.Recipes.RefreshUpdatesAsync(m.env.Ctx, recipe.PageUpdateCheckMaxAge)
+	httpx.WriteJSON(w, http.StatusOK, detail)
 }
 
-// updates renders the other installed versions of the same recipe name,
-// most advanced first, each with a manifest/permission difference summary
-// against the installed digest.
-func (m *Module) updates(ctx context.Context, current recipe.RecipeDetail) ([]updateEntry, error) {
-	rows, err := m.env.Q.ListRecipeVersions(ctx, current.Name)
+// checkRecipeUpdates — POST /recipes/check-updates: force a fresh comparison
+// against each current GitHub-backed recipe's tracked repository head.
+func (m *Module) checkRecipeUpdates(w http.ResponseWriter, r *http.Request) {
+	statuses, err := m.env.Recipes.CheckUpdatesNow(r.Context())
 	if err != nil {
-		return nil, err
+		httpx.HandleErr(w, err)
+		return
 	}
-	out := make([]updateEntry, 0, len(rows))
-	for _, row := range rows {
-		if row.Digest == current.Digest {
-			continue
-		}
-		risk, artifactCount, ok := manifestSummary(row.Manifest)
-		if !ok {
-			continue
-		}
-		out = append(out, updateEntry{
-			Digest:  row.Digest,
-			Version: row.Version,
-			Diff: map[string]any{
-				"version":           map[string]any{"installed": current.Version, "candidate": row.Version},
-				"high_risk_added":   diffLists(risk, current.HighRisk),
-				"high_risk_removed": diffLists(current.HighRisk, risk),
-				"artifact_count":    map[string]any{"installed": current.ArtifactCount, "candidate": artifactCount},
-			},
-		})
-	}
-	// Version descending; ties keep the query's installed_at DESC order.
-	sort.SliceStable(out, func(i, j int) bool {
-		return semverCmp(out[i].Version, out[j].Version) > 0
-	})
-	return out, nil
+	httpx.WriteJSON(w, http.StatusOK, statuses)
 }
 
 // deleteRecipe — DELETE /recipes/{digest}: uninstall, blocked while any

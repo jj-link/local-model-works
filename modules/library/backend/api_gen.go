@@ -227,6 +227,27 @@ func (e RecipeTrustRequestTrustState) Valid() bool {
 	}
 }
 
+// Defines values for RecipeUpdateStatusState.
+const (
+	RecipeUpdateStatusStateAvailable RecipeUpdateStatusState = "available"
+	RecipeUpdateStatusStateCurrent   RecipeUpdateStatusState = "current"
+	RecipeUpdateStatusStateError     RecipeUpdateStatusState = "error"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateStatusState enum.
+func (e RecipeUpdateStatusState) Valid() bool {
+	switch e {
+	case RecipeUpdateStatusStateAvailable:
+		return true
+	case RecipeUpdateStatusStateCurrent:
+		return true
+	case RecipeUpdateStatusStateError:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TransferState.
 const (
 	TransferStateCancelled    TransferState = "cancelled"
@@ -318,23 +339,24 @@ type PlacementState string
 
 // Recipe defines model for Recipe.
 type Recipe struct {
-	ArtifactCount *int             `json:"artifact_count,omitempty"`
-	Compatibility *Compatibility   `json:"compatibility,omitempty"`
-	Description   *string          `json:"description,omitempty"`
-	Digest        string           `json:"digest"`
-	DisplayName   *string          `json:"display_name,omitempty"`
-	Engine        *string          `json:"engine,omitempty"`
-	HighRisk      *[]string        `json:"high_risk,omitempty"`
-	InstalledAt   time.Time        `json:"installed_at"`
-	License       *string          `json:"license,omitempty"`
-	Model         *string          `json:"model,omitempty"`
-	Name          string           `json:"name"`
-	Permissions   *[]string        `json:"permissions,omitempty"`
-	ProfileCount  *int             `json:"profile_count,omitempty"`
-	Source        *RecipeSource    `json:"source,omitempty"`
-	TrustState    RecipeTrustState `json:"trust_state"`
-	VariantCount  *int             `json:"variant_count,omitempty"`
-	Version       string           `json:"version"`
+	ArtifactCount *int                `json:"artifact_count,omitempty"`
+	Compatibility *Compatibility      `json:"compatibility,omitempty"`
+	Description   *string             `json:"description,omitempty"`
+	Digest        string              `json:"digest"`
+	DisplayName   *string             `json:"display_name,omitempty"`
+	Engine        *string             `json:"engine,omitempty"`
+	HighRisk      *[]string           `json:"high_risk,omitempty"`
+	InstalledAt   time.Time           `json:"installed_at"`
+	License       *string             `json:"license,omitempty"`
+	Model         *string             `json:"model,omitempty"`
+	Name          string              `json:"name"`
+	Permissions   *[]string           `json:"permissions,omitempty"`
+	ProfileCount  *int                `json:"profile_count,omitempty"`
+	Source        *RecipeSource       `json:"source,omitempty"`
+	TrustState    RecipeTrustState    `json:"trust_state"`
+	Update        *RecipeUpdateStatus `json:"update,omitempty"`
+	VariantCount  *int                `json:"variant_count,omitempty"`
+	Version       string              `json:"version"`
 
 	// VersionCount Other installed versions of the same recipe name
 	VersionCount *int `json:"version_count,omitempty"`
@@ -363,14 +385,9 @@ type RecipeDetail struct {
 	ProfileCount *int                    `json:"profile_count,omitempty"`
 	Source       *RecipeSource           `json:"source,omitempty"`
 	TrustState   RecipeDetailTrustState  `json:"trust_state"`
-	Updates      *[]struct {
-		// Diff Manifest/permission difference summary
-		Diff    *map[string]interface{} `json:"diff,omitempty"`
-		Digest  *string                 `json:"digest,omitempty"`
-		Version *string                 `json:"version,omitempty"`
-	} `json:"updates,omitempty"`
-	VariantCount *int   `json:"variant_count,omitempty"`
-	Version      string `json:"version"`
+	Update       *RecipeUpdateStatus     `json:"update,omitempty"`
+	VariantCount *int                    `json:"variant_count,omitempty"`
+	Version      string                  `json:"version"`
 
 	// VersionCount Other installed versions of the same recipe name
 	VersionCount *int `json:"version_count,omitempty"`
@@ -433,6 +450,21 @@ type RecipeTrustRequest struct {
 
 // RecipeTrustRequestTrustState defines model for RecipeTrustRequest.TrustState.
 type RecipeTrustRequestTrustState string
+
+// RecipeUpdateStatus defines model for RecipeUpdateStatus.
+type RecipeUpdateStatus struct {
+	CandidateRevision *string                 `json:"candidate_revision,omitempty"`
+	CheckedAt         time.Time               `json:"checked_at"`
+	Error             *string                 `json:"error,omitempty"`
+	InstalledRevision string                  `json:"installed_revision"`
+	Path              *string                 `json:"path,omitempty"`
+	Remote            string                  `json:"remote"`
+	State             RecipeUpdateStatusState `json:"state"`
+	TrackingRef       string                  `json:"tracking_ref"`
+}
+
+// RecipeUpdateStatusState defines model for RecipeUpdateStatus.State.
+type RecipeUpdateStatusState string
 
 // Transfer defines model for Transfer.
 type Transfer struct {
@@ -556,6 +588,9 @@ type ServerInterface interface {
 
 	// (GET /recipes)
 	ListRecipes(w http.ResponseWriter, r *http.Request)
+	// CheckRecipeUpdates Refresh cached upstream Git update status for installed recipes
+	// (POST /recipes/check-updates)
+	CheckRecipeUpdates(w http.ResponseWriter, r *http.Request)
 	// ImportRecipe Install a recipe from catalog, OCI reference, or pinned Git source
 	// (POST /recipes/import)
 	ImportRecipe(w http.ResponseWriter, r *http.Request)
@@ -633,6 +668,12 @@ func (_ Unimplemented) PackageRecipeDraft(w http.ResponseWriter, r *http.Request
 
 // (GET /recipes)
 func (_ Unimplemented) ListRecipes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CheckRecipeUpdates Refresh cached upstream Git update status for installed recipes
+// (POST /recipes/check-updates)
+func (_ Unimplemented) CheckRecipeUpdates(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -952,6 +993,20 @@ func (siw *ServerInterfaceWrapper) ListRecipes(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListRecipes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CheckRecipeUpdates operation middleware
+func (siw *ServerInterfaceWrapper) CheckRecipeUpdates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckRecipeUpdates(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1312,6 +1367,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipes/{digest}/trust", wrapper.SetRecipeTrust)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/check-updates", wrapper.CheckRecipeUpdates)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipes/import", wrapper.ImportRecipe)

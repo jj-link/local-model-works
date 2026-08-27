@@ -183,6 +183,26 @@ SELECT digest, name, version, display_name, description, license, source,
        trust_state, manifest, installed_at
 FROM recipes WHERE name = ? ORDER BY installed_at DESC;
 
+-- name: GetRecipeUpdateCheck :one
+SELECT recipe_digest, remote, tracking_ref, path, installed_revision,
+       candidate_revision, state, checked_at, error
+FROM recipe_update_checks WHERE recipe_digest = ?;
+
+-- name: UpsertRecipeUpdateCheck :exec
+INSERT INTO recipe_update_checks (
+    recipe_digest, remote, tracking_ref, path, installed_revision,
+    candidate_revision, state, checked_at, error
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(recipe_digest) DO UPDATE SET
+    remote = excluded.remote,
+    tracking_ref = excluded.tracking_ref,
+    path = excluded.path,
+    installed_revision = excluded.installed_revision,
+    candidate_revision = excluded.candidate_revision,
+    state = excluded.state,
+    checked_at = excluded.checked_at,
+    error = excluded.error;
+
 -- name: UpdateRecipeTrust :exec
 UPDATE recipes SET trust_state = ? WHERE digest = ?;
 

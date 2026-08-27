@@ -30,8 +30,8 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/runs"
-	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/servingtelemetry"
+	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
@@ -105,7 +105,6 @@ func New(d Deps) *Server {
 	servingPoll := servingtelemetry.New(deploys, telemetrySvc)
 	go servingPoll.Run(d.Ctx)
 
-
 	v, err := recipe.NewValidator()
 	if err != nil {
 		panic(fmt.Sprintf("recipe validator: %v", err))
@@ -119,6 +118,7 @@ func New(d Deps) *Server {
 			ReconcileRequest: &agentv1.ReconcileRequest{Reason: "artifact.rescan"},
 		}})
 	})
+	go recipes.RunUpdateChecker(d.Ctx, recipe.DefaultUpdateCheckInterval)
 	builder := recipebuilder.New(d.Q, d.Cfg.StateRoot, v, recipes)
 	box, err := auth.NewSecretBox(d.Cfg.SecretKeyPath())
 	if err != nil {
@@ -126,7 +126,7 @@ func New(d Deps) *Server {
 	}
 	jobsReg.SetSecretBox(box)
 	env := &moduleapi.Env{
-		Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
+		Ctx: d.Ctx, Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
 		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder, Runs: runsSvc,
 		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc,
 		Nodes: nodes, Commands: broker, RunRoot: runRoot,

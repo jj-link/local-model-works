@@ -8,6 +8,7 @@
 package moduleapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 
@@ -57,6 +58,7 @@ type Descriptor struct {
 // placements/leases, secrets, and event streaming; modules add the
 // operator-facing experience on top of these services.
 type Env struct {
+	Ctx           context.Context
 	Q             *db.Queries
 	DB            *sql.DB
 	Bus           *events.EventBus
