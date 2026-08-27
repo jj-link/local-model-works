@@ -25,7 +25,7 @@ export function NewAutoResearchProjectDialog({
 }) {
   const createProject = useCreateAutoResearchProject();
   const [name, setName] = useState("");
-  const [ideaPrompt, setIdeaPrompt] = useState("");
+  const [researchQuestion, setResearchQuestion] = useState("");
   const [runnerNodeId, setRunnerNodeId] = useState("");
 
   useEffect(() => {
@@ -36,17 +36,18 @@ export function NewAutoResearchProjectDialog({
   }, [nodes, runnerNodeId]);
 
   const create = () => {
+    const trimmedName = name.trim();
     createProject.mutate(
       {
-        name: name.trim(),
-        idea_prompt: ideaPrompt.trim() || undefined,
+        idea_prompt: researchQuestion.trim(),
+        ...(trimmedName ? { name: trimmedName } : {}),
         runner_node_id: runnerNodeId || undefined,
       },
       {
         onSuccess: (project) => {
           onCreated(project);
           setName("");
-          setIdeaPrompt("");
+          setResearchQuestion("");
           onOpenChange(false);
         },
       },
@@ -59,27 +60,27 @@ export function NewAutoResearchProjectDialog({
         <DialogHeader>
           <DialogTitle>New AutoResearch project</DialogTitle>
           <DialogDescription>
-            Begin with a direct idea, or leave it blank to generate source-backed candidates.
+            Enter the research question the Factory should investigate. Naming the project is optional.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <label>
-            Project name
-            <input
-              aria-label="Project name"
+            Research question
+            <textarea
+              aria-label="Research question"
               autoFocus
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Evidence-aware decoding"
+              value={researchQuestion}
+              onChange={(event) => setResearchQuestion(event.target.value)}
+              placeholder="Can sparse latent world models improve long-horizon robotic planning?"
             />
           </label>
           <label>
-            Direct idea (optional)
-            <textarea
-              aria-label="Direct idea"
-              value={ideaPrompt}
-              onChange={(event) => setIdeaPrompt(event.target.value)}
-              placeholder="Leave blank to generate candidates from a prompt and sources."
+            Project name (optional)
+            <input
+              aria-label="Project name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Sparse world models"
             />
           </label>
           <label>
@@ -93,7 +94,7 @@ export function NewAutoResearchProjectDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={createProject.isPending || name.trim() === ""} onClick={create}>
+          <Button disabled={createProject.isPending || researchQuestion.trim() === ""} onClick={create}>
             <Beaker aria-hidden /> {createProject.isPending ? "Creating…" : "Create"}
           </Button>
         </DialogFooter>

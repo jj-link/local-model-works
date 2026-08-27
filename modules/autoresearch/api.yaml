@@ -453,10 +453,10 @@ components:
     AutoResearchProjectCreate:
       type: object
       additionalProperties: false
-      required: [name]
+      required: [idea_prompt]
       properties:
         name: {type: string, minLength: 1, maxLength: 200}
-        idea_prompt: {type: string, maxLength: 100000}
+        idea_prompt: {type: string, minLength: 1, maxLength: 100000}
         runner_node_id: {type: string, format: uuid}
         config: {$ref: '#/components/schemas/AutoResearchProjectConfig'}
     AutoResearchProjectPatch:
@@ -531,7 +531,6 @@ components:
     AutoResearchRunCreate:
       type: object
       additionalProperties: false
-      required: [factory]
       properties:
         factory: {$ref: '#/components/schemas/AutoResearchFactory'}
         parent_run_id: {type: string, format: uuid}

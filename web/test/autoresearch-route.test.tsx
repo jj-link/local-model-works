@@ -122,14 +122,14 @@ describe("AutoResearchRoute", () => {
     expect(canvas).toContainElement(hero);
     expect(hero.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(composer.compareDocumentPosition(workspace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(composer).getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(within(composer).getByRole("button", { name: "Start research" })).toBeDisabled();
     expect(within(workspace).getByLabelText("Live Agon workflow")).toBeVisible();
     expect(within(workspace).getByLabelText("Generation stream")).toBeVisible();
     expect(within(workspace).getByRole("heading", { name: "Research topology" })).toBeVisible();
     expect(within(workspace).getByRole("heading", { name: "Generation stream" })).toBeVisible();
     expect(within(workspace).getByRole("button", { name: /Idea creator.*waiting/i })).toBeVisible();
     expect(workspace).not.toHaveTextContent(/QWEN-3\.5|\$1\.84|#018/);
-    for (const mode of ["Ideas & sources", "Paper studio", "Role controls"]) {
+    for (const mode of ["Paper studio", "Role controls"]) {
       await user.click(screen.getByRole("button", { name: mode }));
       expect(screen.getByRole("heading", { name: mode })).toBeVisible();
       expect(screen.getByText(`Select or create a research project to use ${mode}.`)).toBeVisible();
@@ -140,7 +140,41 @@ describe("AutoResearchRoute", () => {
     expect(screen.getByLabelText("Generation stream")).toBeVisible();
     await user.click(screen.getAllByRole("button", { name: "New project" })[0]);
     expect(screen.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
+    expect(screen.getByLabelText("Research question")).toBeEnabled();
     expect(screen.getByLabelText("Project name")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+  });
+
+  it("creates an unnamed project from a required research question", async () => {
+    const created = {
+      ...project,
+      id: "40000000-0000-4000-8000-000000000099",
+      name: "",
+      status: "idea_intake",
+      idea_prompt: "Can sparse latent world models improve long-horizon planning?",
+      version: 1,
+    };
+    let projectsList: typeof project[] = [];
+    let requestBody: unknown;
+    server.use(
+      http.get("*/api/v1/autoresearch/projects", () => HttpResponse.json(projectsList)),
+      http.get("*/api/v1/nodes", () => HttpResponse.json([])),
+      http.post("*/api/v1/autoresearch/projects", async ({ request }) => {
+        requestBody = await request.json();
+        projectsList = [created];
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute();
+    await user.click((await screen.findAllByRole("button", { name: "New project" }))[0]);
+    await user.type(screen.getByLabelText("Research question"), created.idea_prompt);
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(requestBody).toEqual({ idea_prompt: created.idea_prompt }));
+    expect(await screen.findByRole("option", { name: /Untitled · 40000000… · idea_intake/ })).toBeVisible();
+    expect(screen.queryByLabelText("Start at")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start research" })).toBeEnabled();
   });
 
   it("shows real active-run summary, topic, model, usage, and pause control", async () => {
@@ -160,7 +194,7 @@ describe("AutoResearchRoute", () => {
     expect(await screen.findByRole("button", { name: "Resume run" })).toBeEnabled();
   });
 
-  it("starts the selected real factory", async () => {
+  it("continues research without exposing a factory selector", async () => {
     installProject("succeeded");
     let requestBody: unknown;
     server.use(http.post("*/api/v1/autoresearch/projects/:projectId/runs", async ({ request }) => {
@@ -169,20 +203,22 @@ describe("AutoResearchRoute", () => {
     }));
     const user = userEvent.setup();
     renderRoute();
-    await user.selectOptions(await screen.findByLabelText("Start at"), "experiment");
-    await user.click(screen.getByRole("button", { name: "Start run" }));
-    expect(requestBody).toEqual({ factory: "experiment" });
+    expect(await screen.findByRole("button", { name: "Continue research" })).toBeEnabled();
+    expect(screen.queryByLabelText("Start at")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue research" }));
+    expect(requestBody).toEqual({});
   });
 
-  it("keeps candidate editing reachable from Ideas and sources", async () => {
+  it("keeps alternative idea generation available on demand", async () => {
     server.use(http.get("*/api/v1/nodes", () => HttpResponse.json([])));
     const user = userEvent.setup();
     renderRoute();
-    await user.click(await screen.findByRole("button", { name: "Ideas & sources" }));
-    expect(await screen.findByRole("tab", { name: /01/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Ideas & sources" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Generate alternatives" }));
+    expect(await screen.findByRole("heading", { name: "alternative ideas & sources" })).toBeVisible();
     expect(screen.getByLabelText("candidate title")).toHaveValue("Candidate one");
     expect(screen.getByText("license acceptance required")).toBeVisible();
-    expect(screen.getByRole("button", { name: /continue selected/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue with selected idea/i })).toBeDisabled();
   });
 
   it("assigns a graph role from the anchored model popover", async () => {

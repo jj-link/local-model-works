@@ -56,7 +56,7 @@ export function IdeaWorkspace({
   return (
     <section className="lmw-panel overflow-hidden">
       <header className="lmw-panel-head">
-        <h2 className="lmw-label">idea workspace</h2>
+        <h2 className="lmw-label">alternative ideas &amp; sources</h2>
         <span className="ml-auto font-mono text-[10px] text-faint">{selectedCount} selected · {sources.length} sources</span>
       </header>
       <div className="grid gap-px bg-hairline xl:grid-cols-[320px_minmax(0,1fr)]">
@@ -112,10 +112,10 @@ export function IdeaWorkspace({
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" disabled={pending || title.trim() === "" || body.trim() === "" || (title === activeIdea.title && body === activeIdea.body)} onClick={() => updateIdea.mutate({ ideaId: activeIdea.id, version: activeIdea.version, body: { title, body } })}>save candidate</Button>
                 <Button variant="outline" size="sm" disabled={pending || activeIdea.selected} onClick={() => selectIdea.mutate(activeIdea.id)}><Check aria-hidden /> {activeIdea.selected ? "selected" : "select"}</Button>
-                <Button size="sm" className="ml-auto" disabled={pending || selectedCount === 0} onClick={() => createRun.mutate({ factory: "idea" })}><Rocket aria-hidden /> continue selected</Button>
+                <Button size="sm" className="ml-auto" disabled={pending || selectedCount === 0} onClick={() => createRun.mutate({})}><Rocket aria-hidden /> continue with selected idea</Button>
               </div>
             </div>
-          ) : <div className="grid min-h-[460px] place-items-center p-6 text-center"><div><p className="font-display text-lg">No candidate document</p><p className="mt-1 max-w-sm font-mono text-xs text-faint">Write a direct idea when creating the project or generate one to open the selection gate.</p></div></div>}
+          ) : <div className="grid min-h-[460px] place-items-center p-6 text-center"><div><p className="font-display text-lg">No alternative ideas</p><p className="mt-1 max-w-sm font-mono text-xs text-faint">Generate alternatives from the project question and any supporting sources.</p></div></div>}
         </div>
       </div>
       {(generate.error || updateIdea.error || selectIdea.error || createSource.error || uploadSource.error || createRun.error) ? <p className="border-t border-hairline px-3 py-2 font-mono text-[10px] text-fault">{String((generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) instanceof Error ? (generate.error ?? updateIdea.error ?? selectIdea.error ?? createSource.error ?? uploadSource.error ?? createRun.error) : "Action failed")}</p> : null}

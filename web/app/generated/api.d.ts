@@ -1298,8 +1298,8 @@ export interface components {
         };
         AutoResearchProjectCreate: {
             config?: components["schemas"]["AutoResearchProjectConfig"];
-            idea_prompt?: string;
-            name: string;
+            idea_prompt: string;
+            name?: string;
             /** Format: uuid */
             runner_node_id?: string;
         };
@@ -1314,7 +1314,7 @@ export interface components {
         AutoResearchProjectStatus: "idea_intake" | "awaiting_idea_selection" | "running" | "paper_editing" | "completed" | "failed";
         AutoResearchProviderRef: components["schemas"]["AutoResearchLMWProviderRef"] | components["schemas"]["AutoResearchExternalProviderRef"];
         AutoResearchRunCreate: {
-            factory: components["schemas"]["AutoResearchFactory"];
+            factory?: components["schemas"]["AutoResearchFactory"];
             /** Format: uuid */
             parent_run_id?: string;
             provider_overrides?: {

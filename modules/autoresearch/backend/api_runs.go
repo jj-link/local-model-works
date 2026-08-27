@@ -105,6 +105,53 @@ func (m *Module) GenerateAutoResearchIdeas(w http.ResponseWriter, r *http.Reques
 	httpx.WriteJSON(w, http.StatusAccepted, run)
 }
 
+func nextFactoryForRun(factory AutoResearchFactory, state string, input map[string]any) (AutoResearchFactory, error) {
+	if state != string(runsvc.Succeeded) {
+		return factory, nil
+	}
+	if factory == Idea {
+		if _, intake := input["candidate_count"]; intake {
+			return Idea, nil
+		}
+	}
+	switch factory {
+	case Idea:
+		return Proposal, nil
+	case Proposal:
+		return DeepLit, nil
+	case DeepLit:
+		return Experiment, nil
+	case Experiment:
+		return Paper, nil
+	case Paper:
+		return Paper, nil
+	default:
+		return "", fmt.Errorf("autoresearch.factory_invalid: %s", factory)
+	}
+}
+
+func (m *Module) resolveFactory(ctx context.Context, project db.AutoresearchProject, requested *AutoResearchFactory) (AutoResearchFactory, error) {
+	if project.Status == "completed" {
+		return "", errors.New("autoresearch.project_completed")
+	}
+	if requested != nil {
+		return *requested, nil
+	}
+	links, err := m.env.Q.ListAutoResearchRuns(ctx, project.ID)
+	if err != nil {
+		return "", err
+	}
+	if len(links) == 0 {
+		return Idea, nil
+	}
+	latest := links[0]
+	run, err := m.env.Runs.Get(ctx, latest.RunID)
+	if err != nil {
+		return "", err
+	}
+	return nextFactoryForRun(AutoResearchFactory(latest.Factory), run.State, run.Input)
+}
+
 func (m *Module) CreateAutoResearchRun(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId) {
 	project, err := m.env.Q.GetAutoResearchProject(r.Context(), projectID.String())
 	if err != nil {
@@ -120,7 +167,16 @@ func (m *Module) CreateAutoResearchRun(w http.ResponseWriter, r *http.Request, p
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	if req.Factory == Idea {
+	factory, err := m.resolveFactory(r.Context(), project, req.Factory)
+	if err != nil {
+		if err.Error() == "autoresearch.project_completed" {
+			httpx.WriteErr(w, http.StatusConflict, "autoresearch.project_completed", "completed projects cannot start another research run")
+			return
+		}
+		httpx.HandleErr(w, err)
+		return
+	}
+	if factory == Idea {
 		selected, err := m.env.Q.CountSelectedAutoResearchIdeas(r.Context(), project.ID)
 		if err != nil {
 			httpx.HandleErr(w, err)
@@ -143,7 +199,7 @@ func (m *Module) CreateAutoResearchRun(w http.ResponseWriter, r *http.Request, p
 		parent = req.ParentRunId.String()
 		input["parent_run_id"] = parent
 	}
-	runID, err := m.submitFactoryRun(r, project, string(req.Factory), input, parent)
+	runID, err := m.submitFactoryRun(r, project, string(factory), input, parent)
 	if err != nil {
 		if errors.Is(err, jobs.ErrInput) {
 			httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())

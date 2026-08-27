@@ -279,7 +279,7 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
   const verticalOrder = await page.locator(".arf-hero, .arf-composer, .arf-workspace").evaluateAll((elements) => elements.map((element) => element.className));
   expect(verticalOrder).toEqual(["arf-hero", "arf-composer", "arf-workspace"]);
   const modeNav = page.getByRole("navigation", { name: "AutoResearch Factory workspace" });
-  for (const mode of ["Ideas & sources", "Paper studio", "Role controls"]) {
+  for (const mode of ["Paper studio", "Role controls"]) {
     const button = modeNav.getByRole("button", { name: mode, exact: true });
     await button.click();
     await expect(page.getByRole("heading", { name: mode, exact: true })).toBeVisible();
@@ -292,9 +292,10 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
 
   await page.getByRole("button", { name: "New project", exact: true }).first().click();
   await expect(page.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
-  await page.getByLabel("Project name").fill("Mobile research project");
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  await page.getByLabel("Research question").fill("Can sparse latent world models improve long-horizon planning?");
   await expect(page.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
-  await expect(page.getByLabel("Direct idea")).toBeVisible();
+  await expect(page.getByLabel("Project name")).toHaveValue("");
   await expect(page.getByLabel("Runner node")).toBeVisible();
 });
 
@@ -349,15 +350,16 @@ test("AutoResearch Factory renders real desktop fidelity and run controls", asyn
   await page.getByRole("button", { name: "Resume run" }).click();
   await expect(page.getByRole("button", { name: "Pause run" })).toBeVisible();
   await page.getByRole("button", { name: "Stop run" }).click();
-  await expect(page.getByRole("button", { name: "Start run" })).toBeVisible();
-  await page.getByLabel("Start at").selectOption("experiment");
-  const startRequest = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith(`/autoresearch/projects/${autoResearchProject.id}/runs`));
-  await page.getByRole("button", { name: "Start run" }).click();
-  expect((await startRequest).postDataJSON()).toEqual({ factory: "experiment" });
-
-  await page.getByRole("button", { name: "Ideas & sources", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "idea workspace", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry research" })).toBeVisible();
+  await expect(page.getByLabel("Start at")).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "alternative ideas & sources", exact: true })).toBeVisible();
   await expect(page.getByLabel("candidate title")).toHaveValue("Sparse latent world models for long-horizon planning");
+  await page.getByRole("button", { name: "Factory", exact: true }).click();
+  const startRequest = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith(`/autoresearch/projects/${autoResearchProject.id}/runs`));
+  await page.getByRole("button", { name: "Retry research" }).click();
+  expect((await startRequest).postDataJSON()).toEqual({});
+
 });
 
 test("AutoResearch Factory stacks and contains topology overflow on mobile", async ({ page }) => {
@@ -381,7 +383,7 @@ test("AutoResearch Factory stacks and contains topology overflow on mobile", asy
   expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(390);
 
   const modeNav = page.getByRole("navigation", { name: "AutoResearch Factory workspace" });
-  for (const name of ["Factory", "Ideas & sources", "Paper studio", "Role controls"]) {
+  for (const name of ["Factory", "Paper studio", "Role controls"]) {
     const button = modeNav.getByRole("button", { name, exact: true });
     await expect(button).toBeEnabled();
     await button.focus();

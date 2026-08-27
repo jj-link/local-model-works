@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Plus, Settings2 } from "lucide-react";
+import { ChevronDown, Plus, Settings2, Sparkles } from "lucide-react";
 import {
   useAutoResearchIdeas,
   useAutoResearchPaperFiles,
@@ -45,14 +45,15 @@ const TRANSITIONAL_LABELS: Record<string, string> = {
 };
 
 type WorkspaceTab = "factory" | "ideas" | "paper" | "settings";
-type Factory = "idea" | "proposal" | "deep_lit" | "experiment";
 
 const TAB_LABELS: Record<WorkspaceTab, string> = {
   factory: "Factory",
-  ideas: "Ideas & sources",
+  ideas: "Alternative ideas",
   paper: "Paper studio",
   settings: "Role controls",
 };
+
+const PRIMARY_TABS: WorkspaceTab[] = ["factory", "paper", "settings"];
 
 const EMPTY_USAGE = {
   inputTokens: 0,
@@ -75,6 +76,11 @@ function errorMessage(error: unknown): string | null {
   return error instanceof Error ? error.message : error ? "Action failed" : null;
 }
 
+function projectLabel(project: { id: string; name: string }): string {
+  const name = project.name.trim();
+  return name || `Untitled · ${shortId(project.id)}`;
+}
+
 export default function AutoResearchRoute() {
   const projects = useAutoResearchProjects();
   const nodes = useNodes();
@@ -84,7 +90,6 @@ export default function AutoResearchRoute() {
   const [projectId, setProjectId] = useState("");
   const [tab, setTab] = useState<WorkspaceTab>("factory");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [factory, setFactory] = useState<Factory>("idea");
 
   useEffect(() => {
     if (!projectId && projects.data?.[0]) setProjectId(projects.data[0].id);
@@ -119,7 +124,8 @@ export default function AutoResearchRoute() {
   useEffect(() => setResearchTopic(persistedTopic), [persistedTopic, projectId]);
 
   useEffect(() => {
-    if (project.data?.status === "paper_editing" || project.data?.status === "completed") setTab("paper");
+    if (project.data?.status === "awaiting_idea_selection") setTab("ideas");
+    else if (project.data?.status === "paper_editing" || project.data?.status === "completed") setTab("paper");
   }, [project.data?.status]);
 
   const runIsTerminal = !latestRun || TERMINAL.has(latestRun.state);
@@ -168,7 +174,7 @@ export default function AutoResearchRoute() {
 
   const primaryAction = () => {
     if (!latestRun || TERMINAL.has(latestRun.state)) {
-      createRun.mutate({ factory });
+      createRun.mutate({});
     } else if (latestRun.state === "running") {
       control.mutate({ runId: latestRun.id, action: "pause" });
     } else if (latestRun.state === "paused") {
@@ -176,14 +182,16 @@ export default function AutoResearchRoute() {
     }
   };
 
-  const primaryLabel = !latestRun || runIsTerminal
-    ? "Start run"
-    : latestRun.state === "running"
-      ? "Pause run"
-      : latestRun.state === "paused"
-        ? "Resume run"
-        : TRANSITIONAL_LABELS[latestRun.state] ?? latestRun.state;
-  const primaryDisabled = !project.data || createRun.isPending || control.isPending ||
+  const primaryLabel = !latestRun
+    ? "Start research"
+    : runIsTerminal
+      ? latestRun.state === "succeeded" ? "Continue research" : "Retry research"
+      : latestRun.state === "running"
+        ? "Pause run"
+        : latestRun.state === "paused"
+          ? "Resume run"
+          : TRANSITIONAL_LABELS[latestRun.state] ?? latestRun.state;
+  const primaryDisabled = !project.data || project.data.status === "completed" || createRun.isPending || control.isPending ||
     Boolean(latestRun && !runIsTerminal && latestRun.state !== "running" && latestRun.state !== "paused");
 
   const hero = (
@@ -216,14 +224,14 @@ export default function AutoResearchRoute() {
           <span className="sr-only">Active project</span>
           <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
             <option value="">select project</option>
-            {projects.data?.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
+            {projects.data?.map((item) => <option key={item.id} value={item.id}>{projectLabel(item)} · {item.status}</option>)}
           </select>
           <ChevronDown aria-hidden />
         </label>
         <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
         {project.data ? <span className="arf-status arf-mono text-[10px]" data-tone={statusTone(latestRun?.state ?? project.data.status)}>{latestRun?.state ?? project.data.status}</span> : null}
         <nav className="arf-mode-nav" aria-label="AutoResearch Factory workspace">
-          {(Object.keys(TAB_LABELS) as WorkspaceTab[]).map((value) => (
+          {PRIMARY_TABS.map((value) => (
             <button key={value} type="button" className="arf-mode-button" aria-current={tab === value ? "page" : undefined} onClick={() => setTab(value)}>
               {TAB_LABELS[value]}
             </button>
@@ -248,15 +256,11 @@ export default function AutoResearchRoute() {
           {topicError ? <p className="arf-inline-error" role="alert">{topicError}</p> : null}
         </div>
         <div className="arf-composer-controls">
-          <div className="arf-select-wrap">
-            <label htmlFor="arf-entry">Start at</label>
-            <select id="arf-entry" value={factory} disabled={!project.data || !runIsTerminal} onChange={(event) => setFactory(event.target.value as Factory)}>
-              <option value="idea">Idea factory</option>
-              <option value="proposal">Proposal factory</option>
-              <option value="experiment">Experiment factory</option>
-              <option value="deep_lit">Deep literature</option>
-            </select>
-          </div>
+          {project.data && runIsTerminal && project.data.status !== "completed" ? (
+            <button type="button" className="arf-alternative-button" onClick={() => setTab("ideas")}>
+              <Sparkles aria-hidden /> Generate alternatives
+            </button>
+          ) : null}
           <button type="button" className={cn("arf-run-button", latestRun?.state === "running" && "arf-running")} disabled={primaryDisabled} onClick={primaryAction}>
             {primaryLabel}
           </button>
@@ -269,7 +273,7 @@ export default function AutoResearchRoute() {
             <section className="arf-empty-notice" aria-label="No project selected">
               <div>
                 <strong>No research project selected</strong>
-                <span>Create a project with a direct idea, or begin with bounded candidate generation and verified sources.</span>
+                <span>Enter a research question to create a project and begin the Idea factory.</span>
               </div>
               <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
             </section>
@@ -338,7 +342,7 @@ export default function AutoResearchRoute() {
         nodes={nodes.data ?? []}
         onCreated={(created) => {
           setProjectId(created.id);
-          setTab(created.status === "awaiting_idea_selection" ? "ideas" : "factory");
+          setTab("factory");
         }}
       />
     </main>

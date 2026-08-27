@@ -148,15 +148,28 @@ func (m *Module) ListAutoResearchProjects(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+func initialIdeaTitle(question string) string {
+	title := strings.TrimSpace(strings.SplitN(question, "\n", 2)[0])
+	runes := []rune(title)
+	if len(runes) > 500 {
+		title = string(runes[:500])
+	}
+	return title
+}
+
 func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Request) {
 	var req AutoResearchProjectCreate
 	if err := httpx.DecodeBody(r, &req); err != nil {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "name is required")
+	name := ""
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+	}
+	question := strings.TrimSpace(req.IdeaPrompt)
+	if question == "" {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "research question is required")
 		return
 	}
 	projectID, err := id.New()
@@ -173,17 +186,9 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	ideaPrompt := ""
-	status := "idea_intake"
-	if req.IdeaPrompt != nil {
-		ideaPrompt = strings.TrimSpace(*req.IdeaPrompt)
-		if ideaPrompt != "" {
-			status = "awaiting_idea_selection"
-		}
-	}
 	if err := m.env.Q.CreateAutoResearchProject(r.Context(), db.CreateAutoResearchProjectParams{
-		ID: projectID, Name: req.Name, Status: status, RunnerNodeID: nullableUUID(req.RunnerNodeId),
-		IdeaPrompt: ideaPrompt, ConfigJson: string(configJSON),
+		ID: projectID, Name: name, Status: "idea_intake", RunnerNodeID: nullableUUID(req.RunnerNodeId),
+		IdeaPrompt: question, ConfigJson: string(configJSON),
 	}); err != nil {
 		httpx.HandleErr(w, err)
 		return
@@ -193,19 +198,24 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		httpx.HandleErr(w, err)
 		return
 	}
-	if ideaPrompt != "" {
-		ideaID, err := id.New()
+	ideaID, err := id.New()
+	if err == nil {
+		err = m.env.Q.CreateAutoResearchIdea(r.Context(), db.CreateAutoResearchIdeaParams{
+			ID: ideaID, ProjectID: projectID, Ordinal: 1, Source: "human",
+			Title: initialIdeaTitle(question), Body: question, Selected: 1,
+		})
+	}
+	if err == nil {
+		var idea db.AutoresearchIdea
+		idea, err = m.env.Q.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID, ProjectID: projectID})
 		if err == nil {
-			err = m.env.Q.CreateAutoResearchIdea(r.Context(), db.CreateAutoResearchIdeaParams{
-				ID: ideaID, ProjectID: projectID, Ordinal: 1, Source: "human",
-				Title: req.Name, Body: ideaPrompt, Selected: 0,
-			})
+			err = adoptIdea(m.projectRoot(projectID), idea)
 		}
-		if err != nil {
-			_, _ = m.env.DB.ExecContext(r.Context(), "DELETE FROM autoresearch_projects WHERE id = ?", projectID)
-			httpx.HandleErr(w, err)
-			return
-		}
+	}
+	if err != nil {
+		_, _ = m.env.DB.ExecContext(r.Context(), "DELETE FROM autoresearch_projects WHERE id = ?", projectID)
+		httpx.HandleErr(w, err)
+		return
 	}
 	row, err := m.env.Q.GetAutoResearchProject(r.Context(), projectID)
 	if err != nil {

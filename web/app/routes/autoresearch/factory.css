@@ -83,7 +83,9 @@
 .arf-composer textarea { width: 100%; height: 54px; resize: none; padding: 0; color: var(--arf-ink); background: transparent; border: 0; outline: 0; font: 500 19px/1.35 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
 .arf-composer textarea:disabled { color: var(--arf-faint); }
 .arf-composer-controls { display: flex; align-items: flex-end; gap: 8px; }
-.arf-select-wrap select { height: 38px; padding: 0 31px 0 11px; color: #536063; background: #f6f4ed; border: 1px solid var(--arf-line); border-radius: 2px; font: 10px "Commit Mono", monospace; }
+.arf-alternative-button { height: 38px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--arf-blue); background: #eef3f5; border: 1px solid #bdcbd1; border-radius: 2px; cursor: pointer; font: 500 9px "Commit Mono", monospace; }
+.arf-alternative-button:hover { color: var(--arf-ink); border-color: var(--arf-blue); }
+.arf-alternative-button svg { width: 13px; height: 13px; }
 .arf-run-button { height: 38px; min-width: 128px; padding: 0 16px; color: #f7f3e8; background: var(--arf-deep); border: 1px solid var(--arf-deep); border-radius: 2px; cursor: pointer; font: 500 11px "Commit Mono", monospace; transition: transform .15s ease, background .15s ease; }
 .arf-run-button:hover:not(:disabled) { background: #243b41; transform: translateY(-1px); }
 .arf-run-button.arf-running { color: var(--arf-deep); background: #e7debf; border-color: #bcae80; }

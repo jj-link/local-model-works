@@ -2327,6 +2327,7 @@ components:
           $ref: '#/components/schemas/AutoResearchProjectConfig'
         idea_prompt:
           maxLength: 100000
+          minLength: 1
           type: string
         name:
           maxLength: 200
@@ -2336,7 +2337,7 @@ components:
           format: uuid
           type: string
       required:
-        - name
+        - idea_prompt
       type: object
     AutoResearchProjectPatch:
       additionalProperties: false
@@ -2383,8 +2384,6 @@ components:
           type: object
         ssh_secret_name:
           type: string
-      required:
-        - factory
       type: object
     AutoResearchSource:
       properties:

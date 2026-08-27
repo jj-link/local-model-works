@@ -363,8 +363,8 @@ type AutoResearchProjectConfig struct {
 // AutoResearchProjectCreate defines model for AutoResearchProjectCreate.
 type AutoResearchProjectCreate struct {
 	Config       *AutoResearchProjectConfig `json:"config,omitempty"`
-	IdeaPrompt   *string                    `json:"idea_prompt,omitempty"`
-	Name         string                     `json:"name"`
+	IdeaPrompt   string                     `json:"idea_prompt"`
+	Name         *string                    `json:"name,omitempty"`
 	RunnerNodeId *openapi_types.UUID        `json:"runner_node_id,omitempty"`
 }
 
@@ -386,7 +386,7 @@ type AutoResearchProviderRef struct {
 
 // AutoResearchRunCreate defines model for AutoResearchRunCreate.
 type AutoResearchRunCreate struct {
-	Factory           AutoResearchFactory                 `json:"factory"`
+	Factory           *AutoResearchFactory                `json:"factory,omitempty"`
 	ParentRunId       *openapi_types.UUID                 `json:"parent_run_id,omitempty"`
 	ProviderOverrides *map[string]AutoResearchProviderRef `json:"provider_overrides,omitempty"`
 	SshSecretName     *string                             `json:"ssh_secret_name,omitempty"`

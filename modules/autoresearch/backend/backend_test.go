@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -285,6 +286,91 @@ func TestImportGeneratedCandidatesReplacesUnselectedModelIdeas(t *testing.T) {
 	}
 	if status, err := runGit(filepath.Join(module.projectRoot(projectID), "artifacts"), "status", "--porcelain"); err != nil || strings.TrimSpace(string(status)) != "" {
 		t.Fatalf("artifact status = %q, %v", status, err)
+	}
+}
+
+func TestNextFactoryFollowsReadinessAndRetries(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory AutoResearchFactory
+		state   string
+		input   map[string]any
+		want    AutoResearchFactory
+	}{
+		{name: "new idea tick advances", factory: Idea, state: "succeeded", want: Proposal},
+		{name: "idea intake waits for selection", factory: Idea, state: "succeeded", input: map[string]any{"candidate_count": 3}, want: Idea},
+		{name: "proposal advances to literature", factory: Proposal, state: "succeeded", want: DeepLit},
+		{name: "failed experiment retries", factory: Experiment, state: "failed", want: Experiment},
+		{name: "experiment advances to paper", factory: Experiment, state: "succeeded", want: Paper},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := nextFactoryForRun(test.factory, test.state, test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("factory = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCreateProjectRequiresQuestionButNotName(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	question := "Can sparse latent world models improve long-horizon planning?"
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"idea_prompt":`+strconv.Quote(question)+`}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	module.CreateAutoResearchProject(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var project AutoResearchProject
+	if err := json.Unmarshal(response.Body.Bytes(), &project); err != nil {
+		t.Fatal(err)
+	}
+	if project.Name != "" || project.IdeaPrompt != question || project.Status != "idea_intake" {
+		t.Fatalf("project = %#v", project)
+	}
+	ideas, err := module.env.Q.ListAutoResearchIdeas(context.Background(), project.Id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ideas) != 1 || ideas[0].Selected != 1 || ideas[0].Body != question {
+		t.Fatalf("initial ideas = %#v", ideas)
+	}
+}
+
+func TestCreateProjectPreservesManualName(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"  Manual workspace  ","idea_prompt":"A concrete research question"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	module.CreateAutoResearchProject(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var project AutoResearchProject
+	if err := json.Unmarshal(response.Body.Bytes(), &project); err != nil {
+		t.Fatal(err)
+	}
+	if project.Name != "Manual workspace" {
+		t.Fatalf("name = %q", project.Name)
+	}
+}
+
+func TestCreateProjectRejectsBlankQuestion(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"idea_prompt":"  "}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	module.CreateAutoResearchProject(response, request)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "research question is required") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
