@@ -73,13 +73,13 @@ export function GenerationStream({
   usage: AutoResearchUsageSummary;
   reconnecting: boolean;
   streamError: string | null;
-  onStop: () => void;
+  onStop?: () => void;
   controlPending: boolean;
 }) {
   const transcript = events.filter((event) => eventText(event) !== "").slice(-120);
   const current = active.filter((item) => !item.advisor).at(-1);
   const timeline = invocationTimeline(events);
-  const canStop = Boolean(run && ["queued", "planning", "running", "paused", "waiting", "verifying"].includes(run.state));
+  const canStop = Boolean(onStop && run && ["queued", "planning", "running", "paused", "waiting", "verifying"].includes(run.state));
   const status = reconnecting ? "reconnecting" : run?.state ?? "idle";
 
   return (
@@ -145,7 +145,7 @@ export function GenerationStream({
       </div>
       <footer className="arf-stream-footer">
         <span>{events.length.toLocaleString()} events retained</span>
-        {canStop ? <button type="button" className="arf-stop-button" disabled={controlPending} onClick={onStop}>Stop run</button> : null}
+        {canStop && onStop ? <button type="button" className="arf-stop-button" disabled={controlPending} onClick={onStop}>Stop run</button> : null}
       </footer>
     </aside>
   );

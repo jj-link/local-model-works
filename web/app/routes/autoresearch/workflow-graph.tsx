@@ -1,3 +1,4 @@
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import workflowImage from "../../../../third_party/agon/figures/figure_xp.png";
 import type { ActiveInvocation } from "./events";
@@ -57,7 +58,7 @@ function roleLabel(hotspot: Hotspot): string {
   return hotspot.node.split(".").at(-1)?.replaceAll("-", " ") ?? hotspot.label;
 }
 
-export function WorkflowGraph({ active, paused = false }: { active: ActiveInvocation[]; paused?: boolean }) {
+export function WorkflowGraph({ active, paused = false, emptyState }: { active: ActiveInvocation[]; paused?: boolean; emptyState?: ReactNode }) {
   const primary = active.filter((invocation) => !invocation.advisor);
   const advisors = active.filter((invocation) => invocation.advisor);
   const represented = new Set(HOTSPOTS.map((hotspot) => hotspot.node));
@@ -98,7 +99,7 @@ export function WorkflowGraph({ active, paused = false }: { active: ActiveInvoca
                   "--x": `${hotspot.x}%`,
                   "--y": `${hotspot.y}%`,
                   "--size": `${hotspot.size ?? 7}%`,
-                } as React.CSSProperties}
+                } as CSSProperties}
               >
                 <span className="arf-node-shell">
                   <span className="arf-node-avatar">{hotspot.glyph}</span>
@@ -108,6 +109,7 @@ export function WorkflowGraph({ active, paused = false }: { active: ActiveInvoca
               </button>
             );
           })}
+          {emptyState ? <div className="arf-topology-empty">{emptyState}</div> : null}
         </div>
       </div>
       <footer className="arf-chart-attribution">

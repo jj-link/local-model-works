@@ -43,6 +43,15 @@ const TAB_LABELS: Record<WorkspaceTab, string> = {
   settings: "Role controls",
 };
 
+const EMPTY_USAGE = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  costUsd: null,
+  outputRate: null,
+  contextPercent: null,
+};
+
 function statusTone(status: string | undefined): "healthy" | "running" | "waiting" | "failed" | "info" {
   if (status === "completed" || status === "succeeded") return "healthy";
   if (status === "running") return "running";
@@ -215,13 +224,26 @@ export default function AutoResearchRoute() {
 
       {!projectId || !project.data ? (
         <div className="arf-workspace">
-          <section className="arf-panel arf-empty-workspace">
-            <div>
-              <h2>No research project selected</h2>
-              <p>Create a project with a direct idea, or begin with bounded candidate generation and verified sources.</p>
-              <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
-            </div>
-          </section>
+          <WorkflowGraph
+            active={[]}
+            emptyState={(
+              <>
+                <div>
+                  <strong>No research project selected</strong>
+                  <span>Create a project with a direct idea, or begin with bounded candidate generation and verified sources.</span>
+                </div>
+                <button type="button" className="arf-utility-button" onClick={() => setDialogOpen(true)}><Plus aria-hidden /> New project</button>
+              </>
+            )}
+          />
+          <GenerationStream
+            events={[]}
+            active={[]}
+            usage={EMPTY_USAGE}
+            reconnecting={false}
+            streamError={null}
+            controlPending={false}
+          />
         </div>
       ) : (
         <>

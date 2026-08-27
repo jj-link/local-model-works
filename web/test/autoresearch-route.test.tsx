@@ -93,6 +93,12 @@ describe("AutoResearchRoute", () => {
     expect(hero.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(composer.compareDocumentPosition(workspace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(composer).getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(within(workspace).getByLabelText("Live Agon workflow")).toBeVisible();
+    expect(within(workspace).getByLabelText("Generation stream")).toBeVisible();
+    expect(within(workspace).getByRole("heading", { name: "Research topology" })).toBeVisible();
+    expect(within(workspace).getByRole("heading", { name: "Generation stream" })).toBeVisible();
+    expect(within(workspace).getByRole("button", { name: /Idea creator.*waiting/i })).toBeVisible();
+    expect(workspace).not.toHaveTextContent(/QWEN-3\.5|\$1\.84|#018/);
     await user.click(screen.getAllByRole("button", { name: "New project" })[0]);
     expect(screen.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
     expect(screen.getByLabelText("Project name")).toBeEnabled();

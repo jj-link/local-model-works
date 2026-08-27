@@ -224,14 +224,42 @@ test("current navigation exposes real and skeleton destinations on desktop and m
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("AutoResearch Factory keeps the approved empty composition and usable mobile dialog", async ({ page }) => {
+test("AutoResearch Factory preserves topology and stream in the empty state", async ({ page }) => {
   await installAPI(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/autoresearch");
   await expect(page.getByText("No research project selected")).toBeVisible();
+  await expect(page.getByLabel("Live Agon workflow")).toBeVisible();
+  await expect(page.getByLabel("Generation stream")).toBeVisible();
+  const desktop = await page.locator(".arf-workspace").evaluate((workspace) => {
+    const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
+    const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
+    return {
+      display: getComputedStyle(workspace).display,
+      streamNarrower: stream.clientWidth < graph.clientWidth,
+    };
+  });
+  expect(desktop).toEqual({ display: "grid", streamNarrower: true });
+  await expect(page.locator(".arf-canvas")).not.toContainText(/QWEN-3\.5|\$1\.84|#018/);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await page.locator(".arf-workspace").evaluate((workspace) => {
+    const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
+    const stream = workspace.querySelector(".arf-stream-panel") as HTMLElement;
+    const empty = workspace.querySelector(".arf-topology-empty") as HTMLElement;
+    return {
+      display: getComputedStyle(workspace).display,
+      stacked: stream.getBoundingClientRect().top > graph.getBoundingClientRect().bottom,
+      graphScrolls: graph.scrollWidth > graph.clientWidth,
+      emptyVisible: empty.getBoundingClientRect().left >= graph.getBoundingClientRect().left &&
+        empty.getBoundingClientRect().right <= graph.getBoundingClientRect().right + 1,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+  });
+  expect(mobile).toEqual({ display: "block", stacked: true, graphScrolls: true, emptyVisible: true, overflow: 0 });
   const verticalOrder = await page.locator(".arf-hero, .arf-composer, .arf-workspace").evaluateAll((elements) => elements.map((element) => element.className));
   expect(verticalOrder).toEqual(["arf-hero", "arf-composer", "arf-workspace"]);
-  expect(await page.locator("html").evaluate((element) => element.scrollWidth)).toBe(390);
+
   await page.getByRole("button", { name: "New project", exact: true }).first().click();
   await expect(page.getByRole("dialog", { name: "New AutoResearch project" })).toBeVisible();
   await page.getByLabel("Project name").fill("Mobile research project");
@@ -297,6 +325,7 @@ test("AutoResearch Factory stacks and contains topology overflow on mobile", asy
   await installAPI(page, { autoResearchScenario: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/autoresearch");
+  await expect(page.getByRole("button", { name: "Pause run" })).toBeVisible();
   await expect(page.locator(".arf-workspace")).toBeVisible();
   const mobileGeometry = await page.locator(".arf-workspace").evaluate((workspace) => {
     const graph = workspace.querySelector(".arf-flow-panel") as HTMLElement;
