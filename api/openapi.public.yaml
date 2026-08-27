@@ -1073,6 +1073,102 @@ paths:
           description: Packaged draft
       tags:
         - recipes
+  /recipe-repositories:
+    get:
+      operationId: listRecipeRepositories
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/RecipeRepository'
+                type: array
+          description: One logical recipe per normalized Git repository and source path
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      tags:
+        - recipes
+  /recipe-repositories/{id}:
+    get:
+      operationId: getRecipeRepository
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeRepositoryDetail'
+          description: Repository recipe and hardware using older versions
+        "404":
+          $ref: '#/components/responses/NotFound'
+      tags:
+        - recipes
+  /recipe-repositories/{id}/update:
+    post:
+      operationId: startRecipeRepositoryUpdate
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRepositoryUpdateRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdateAccepted'
+          description: Durable recipe update run accepted
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - recipes
+  /recipe-repositories/{id}/update/plan:
+    post:
+      operationId: planRecipeRepositoryUpdate
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRepositoryUpdatePlanRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdatePlan'
+          description: Exact hardware replacement preview
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - recipes
   /recipes:
     get:
       operationId: listRecipes
@@ -1536,6 +1632,27 @@ components:
         - name
         - uuid
         - memory_bytes
+      type: object
+    AffectedHardware:
+      properties:
+        deployment_ids:
+          items:
+            type: string
+          type: array
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+        state:
+          type: string
+      required:
+        - node_id
+        - node_name
+        - node_status
+        - deployment_ids
+        - state
       type: object
     Artifact:
       properties:
@@ -2794,6 +2911,101 @@ components:
       required:
         - source
       type: object
+    RecipeRepository:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        current_recipe:
+          $ref: '#/components/schemas/Recipe'
+        head_checked_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        installed_commit:
+          type: string
+        observed_head_commit:
+          type: string
+        observed_head_tree:
+          type: string
+        source_path:
+          type: string
+        source_url:
+          type: string
+        tracking_ref:
+          type: string
+        update_available:
+          type: boolean
+        update_diagnostic:
+          type: string
+        update_supported:
+          type: boolean
+        updated_at:
+          format: date-time
+          type: string
+        versions:
+          items:
+            $ref: '#/components/schemas/RecipeRepositoryVersion'
+          type: array
+      required:
+        - id
+        - source_url
+        - source_path
+        - tracking_ref
+        - update_available
+        - update_supported
+        - versions
+        - created_at
+        - updated_at
+      type: object
+    RecipeRepositoryDetail:
+      allOf:
+        - $ref: '#/components/schemas/RecipeRepository'
+        - properties:
+            affected_hardware:
+              items:
+                $ref: '#/components/schemas/AffectedHardware'
+              type: array
+          required:
+            - affected_hardware
+          type: object
+    RecipeRepositoryUpdatePlanRequest:
+      properties:
+        expected_head_commit:
+          type: string
+      required:
+        - expected_head_commit
+      type: object
+    RecipeRepositoryUpdateRequest:
+      properties:
+        expected_head_commit:
+          type: string
+        plan_digest:
+          type: string
+      required:
+        - expected_head_commit
+        - plan_digest
+      type: object
+    RecipeRepositoryVersion:
+      properties:
+        canonical:
+          type: boolean
+        commit_sha:
+          type: string
+        installed_at:
+          format: date-time
+          type: string
+        recipe:
+          $ref: '#/components/schemas/Recipe'
+        tree_sha:
+          type: string
+      required:
+        - recipe
+        - commit_sha
+        - canonical
+        - installed_at
+      type: object
     RecipeSource:
       properties:
         path:
@@ -2829,6 +3041,34 @@ components:
         - trust_state
         - permission_diff_accepted
       type: object
+    RecipeUpdateAccepted:
+      properties:
+        run_id:
+          format: uuid
+          type: string
+      required:
+        - run_id
+      type: object
+    RecipeUpdatePlan:
+      properties:
+        diagnostics:
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+          type: array
+        plan_digest:
+          type: string
+        ready:
+          type: boolean
+        targets:
+          items:
+            $ref: '#/components/schemas/RecipeUpdateTarget'
+          type: array
+      required:
+        - plan_digest
+        - ready
+        - targets
+        - diagnostics
+      type: object
     RecipeUpdateStatus:
       properties:
         candidate_revision:
@@ -2858,6 +3098,66 @@ components:
         - tracking_ref
         - installed_revision
         - checked_at
+      type: object
+    RecipeUpdateTarget:
+      properties:
+        current_step:
+          type: integer
+        error_code:
+          type: string
+        error_message:
+          type: string
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+        phase:
+          enum:
+            - fetching
+            - validating
+            - installing_recipe
+            - stopping_old
+            - waiting_offline
+            - preparing
+            - pulling
+            - starting
+            - verifying
+            - ready
+            - rolling_back
+            - restoring_old
+            - restored
+            - skipped
+            - rollback_failed
+          type: string
+        rank:
+          format: int32
+          type: integer
+        replacement_deployment_id:
+          type: string
+        source_deployment_id:
+          type: string
+        status:
+          enum:
+            - pending
+            - running
+            - waiting
+            - succeeded
+            - failed
+          type: string
+        total_steps:
+          type: integer
+      required:
+        - source_deployment_id
+        - node_id
+        - node_name
+        - node_status
+        - rank
+        - status
+        - phase
+        - current_step
+        - total_steps
       type: object
     Run:
       properties:
@@ -2895,6 +3195,9 @@ components:
           additionalProperties: true
           nullable: true
           type: object
+        progress:
+          additionalProperties: true
+          type: object
         resources:
           properties:
             accelerators:
@@ -2921,6 +3224,7 @@ components:
         - module
         - kind
         - state
+        - progress
       type: object
     RunAccepted:
       properties:

@@ -86,6 +86,41 @@ func (q *Queries) ActiveLeases(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const activeLeasesWithOwners = `-- name: ActiveLeasesWithOwners :many
+SELECT resource, owner_kind, owner_id
+FROM leases
+WHERE state = 'active'
+`
+
+type ActiveLeasesWithOwnersRow struct {
+	Resource  string `json:"resource"`
+	OwnerKind string `json:"owner_kind"`
+	OwnerID   string `json:"owner_id"`
+}
+
+func (q *Queries) ActiveLeasesWithOwners(ctx context.Context) ([]ActiveLeasesWithOwnersRow, error) {
+	rows, err := q.db.QueryContext(ctx, activeLeasesWithOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActiveLeasesWithOwnersRow
+	for rows.Next() {
+		var i ActiveLeasesWithOwnersRow
+		if err := rows.Scan(&i.Resource, &i.OwnerKind, &i.OwnerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appendEvent = `-- name: AppendEvent :one
 INSERT INTO events (type, node_id, payload) VALUES (?, ?, ?)
 RETURNING id
@@ -110,6 +145,54 @@ UPDATE nodes SET status = 'online' WHERE id = ? AND status = 'pending'
 
 func (q *Queries) ApproveNode(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, approveNode, id)
+	return err
+}
+
+const attachRecipeRepositoryVersion = `-- name: AttachRecipeRepositoryVersion :exec
+INSERT INTO recipe_repository_versions (
+    repository_id, recipe_digest, commit_sha, tree_sha, canonical, installed_at
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(repository_id, recipe_digest) DO UPDATE SET
+    commit_sha = excluded.commit_sha,
+    tree_sha = excluded.tree_sha,
+    canonical = excluded.canonical,
+    installed_at = excluded.installed_at
+`
+
+type AttachRecipeRepositoryVersionParams struct {
+	RepositoryID string         `json:"repository_id"`
+	RecipeDigest string         `json:"recipe_digest"`
+	CommitSha    string         `json:"commit_sha"`
+	TreeSha      sql.NullString `json:"tree_sha"`
+	Canonical    int64          `json:"canonical"`
+	InstalledAt  string         `json:"installed_at"`
+}
+
+func (q *Queries) AttachRecipeRepositoryVersion(ctx context.Context, arg AttachRecipeRepositoryVersionParams) error {
+	_, err := q.db.ExecContext(ctx, attachRecipeRepositoryVersion,
+		arg.RepositoryID,
+		arg.RecipeDigest,
+		arg.CommitSha,
+		arg.TreeSha,
+		arg.Canonical,
+		arg.InstalledAt,
+	)
+	return err
+}
+
+const clearCanonicalRecipeRepositoryCommit = `-- name: ClearCanonicalRecipeRepositoryCommit :exec
+UPDATE recipe_repository_versions
+SET canonical = 0
+WHERE repository_id = ? AND commit_sha = ? AND canonical = 1
+`
+
+type ClearCanonicalRecipeRepositoryCommitParams struct {
+	RepositoryID string `json:"repository_id"`
+	CommitSha    string `json:"commit_sha"`
+}
+
+func (q *Queries) ClearCanonicalRecipeRepositoryCommit(ctx context.Context, arg ClearCanonicalRecipeRepositoryCommitParams) error {
+	_, err := q.db.ExecContext(ctx, clearCanonicalRecipeRepositoryCommit, arg.RepositoryID, arg.CommitSha)
 	return err
 }
 
@@ -485,6 +568,24 @@ func (q *Queries) DeleteRecipe(ctx context.Context, digest string) error {
 	return err
 }
 
+const deleteRecipeRepository = `-- name: DeleteRecipeRepository :exec
+DELETE FROM recipe_repositories WHERE id = ?
+`
+
+func (q *Queries) DeleteRecipeRepository(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteRecipeRepository, id)
+	return err
+}
+
+const deleteRecipeRepositoryVersionByDigest = `-- name: DeleteRecipeRepositoryVersionByDigest :exec
+DELETE FROM recipe_repository_versions WHERE recipe_digest = ?
+`
+
+func (q *Queries) DeleteRecipeRepositoryVersionByDigest(ctx context.Context, recipeDigest string) error {
+	_, err := q.db.ExecContext(ctx, deleteRecipeRepositoryVersionByDigest, recipeDigest)
+	return err
+}
+
 const deleteSecret = `-- name: DeleteSecret :exec
 DELETE FROM secrets WHERE id = ?
 `
@@ -611,6 +712,64 @@ type GetDeploymentRow struct {
 func (q *Queries) GetDeployment(ctx context.Context, id string) (GetDeploymentRow, error) {
 	row := q.db.QueryRowContext(ctx, getDeployment, id)
 	var i GetDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.RecipeDigest,
+		&i.Profile,
+		&i.Placement,
+		&i.Fabric,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.Endpoint,
+		&i.EndpointModel,
+		&i.EndpointPath,
+		&i.ModelCapabilities,
+		&i.Diagnostics,
+		&i.RunID,
+		&i.Dispatch,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDeploymentByRecipeProfilePlacement = `-- name: GetDeploymentByRecipeProfilePlacement :one
+SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
+       dispatch, created_at, updated_at
+FROM deployments
+WHERE recipe_digest = ? AND profile = ? AND placement = ?
+`
+
+type GetDeploymentByRecipeProfilePlacementParams struct {
+	RecipeDigest string `json:"recipe_digest"`
+	Profile      string `json:"profile"`
+	Placement    string `json:"placement"`
+}
+
+type GetDeploymentByRecipeProfilePlacementRow struct {
+	ID                string         `json:"id"`
+	RecipeDigest      string         `json:"recipe_digest"`
+	Profile           string         `json:"profile"`
+	Placement         string         `json:"placement"`
+	Fabric            sql.NullString `json:"fabric"`
+	DesiredState      string         `json:"desired_state"`
+	ObservedState     string         `json:"observed_state"`
+	Endpoint          sql.NullString `json:"endpoint"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
+	ModelCapabilities sql.NullString `json:"model_capabilities"`
+	Diagnostics       string         `json:"diagnostics"`
+	RunID             sql.NullString `json:"run_id"`
+	Dispatch          string         `json:"dispatch"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
+}
+
+func (q *Queries) GetDeploymentByRecipeProfilePlacement(ctx context.Context, arg GetDeploymentByRecipeProfilePlacementParams) (GetDeploymentByRecipeProfilePlacementRow, error) {
+	row := q.db.QueryRowContext(ctx, getDeploymentByRecipeProfilePlacement, arg.RecipeDigest, arg.Profile, arg.Placement)
+	var i GetDeploymentByRecipeProfilePlacementRow
 	err := row.Scan(
 		&i.ID,
 		&i.RecipeDigest,
@@ -870,25 +1029,48 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 	return i, err
 }
 
-const getRecipeUpdateCheck = `-- name: GetRecipeUpdateCheck :one
-SELECT recipe_digest, remote, tracking_ref, path, installed_revision,
-       candidate_revision, state, checked_at, error
-FROM recipe_update_checks WHERE recipe_digest = ?
+const getRecipeRepository = `-- name: GetRecipeRepository :one
+SELECT id, source_url, source_path, tracking_ref, current_digest,
+       observed_head_commit, observed_head_tree, head_checked_at,
+       created_at, updated_at
+FROM recipe_repositories
+WHERE id = ?
 `
 
-func (q *Queries) GetRecipeUpdateCheck(ctx context.Context, recipeDigest string) (RecipeUpdateCheck, error) {
-	row := q.db.QueryRowContext(ctx, getRecipeUpdateCheck, recipeDigest)
-	var i RecipeUpdateCheck
+func (q *Queries) GetRecipeRepository(ctx context.Context, id string) (RecipeRepository, error) {
+	row := q.db.QueryRowContext(ctx, getRecipeRepository, id)
+	var i RecipeRepository
 	err := row.Scan(
-		&i.RecipeDigest,
-		&i.Remote,
+		&i.ID,
+		&i.SourceUrl,
+		&i.SourcePath,
 		&i.TrackingRef,
-		&i.Path,
-		&i.InstalledRevision,
-		&i.CandidateRevision,
-		&i.State,
-		&i.CheckedAt,
-		&i.Error,
+		&i.CurrentDigest,
+		&i.ObservedHeadCommit,
+		&i.ObservedHeadTree,
+		&i.HeadCheckedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRecipeRepositoryVersionByDigest = `-- name: GetRecipeRepositoryVersionByDigest :one
+SELECT repository_id, recipe_digest, commit_sha, tree_sha, canonical, installed_at
+FROM recipe_repository_versions
+WHERE recipe_digest = ?
+`
+
+func (q *Queries) GetRecipeRepositoryVersionByDigest(ctx context.Context, recipeDigest string) (RecipeRepositoryVersion, error) {
+	row := q.db.QueryRowContext(ctx, getRecipeRepositoryVersionByDigest, recipeDigest)
+	var i RecipeRepositoryVersion
+	err := row.Scan(
+		&i.RepositoryID,
+		&i.RecipeDigest,
+		&i.CommitSha,
+		&i.TreeSha,
+		&i.Canonical,
+		&i.InstalledAt,
 	)
 	return i, err
 }
@@ -896,7 +1078,7 @@ func (q *Queries) GetRecipeUpdateCheck(ctx context.Context, recipeDigest string)
 const getRun = `-- name: GetRun :one
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs WHERE id = ?
 `
 
@@ -918,6 +1100,7 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.Progress,
 	)
 	return i, err
 }
@@ -1776,7 +1959,7 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 const listNonTerminalRuns = `-- name: ListNonTerminalRuns :many
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs
 WHERE state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted')
 `
@@ -1805,6 +1988,7 @@ func (q *Queries) ListNonTerminalRuns(ctx context.Context) ([]Run, error) {
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Progress,
 		); err != nil {
 			return nil, err
 		}
@@ -1932,23 +2116,92 @@ func (q *Queries) ListPlacementsOnNode(ctx context.Context, nodeID string) ([]Ar
 	return items, nil
 }
 
-const listRecipeVersions = `-- name: ListRecipeVersions :many
-SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
-FROM recipes WHERE name = ? ORDER BY installed_at DESC
+const listRecipeRepositories = `-- name: ListRecipeRepositories :many
+SELECT id, source_url, source_path, tracking_ref, current_digest,
+       observed_head_commit, observed_head_tree, head_checked_at,
+       created_at, updated_at
+FROM recipe_repositories
+ORDER BY updated_at DESC, id
 `
 
-func (q *Queries) ListRecipeVersions(ctx context.Context, name string) ([]Recipe, error) {
-	rows, err := q.db.QueryContext(ctx, listRecipeVersions, name)
+func (q *Queries) ListRecipeRepositories(ctx context.Context) ([]RecipeRepository, error) {
+	rows, err := q.db.QueryContext(ctx, listRecipeRepositories)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Recipe
+	var items []RecipeRepository
 	for rows.Next() {
-		var i Recipe
+		var i RecipeRepository
 		if err := rows.Scan(
-			&i.Digest,
+			&i.ID,
+			&i.SourceUrl,
+			&i.SourcePath,
+			&i.TrackingRef,
+			&i.CurrentDigest,
+			&i.ObservedHeadCommit,
+			&i.ObservedHeadTree,
+			&i.HeadCheckedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecipeRepositoryVersions = `-- name: ListRecipeRepositoryVersions :many
+SELECT v.repository_id, v.recipe_digest, v.commit_sha, v.tree_sha,
+       v.canonical, v.installed_at,
+       r.name, r.version, r.display_name, r.description, r.license,
+       r.source, r.trust_state, r.manifest
+FROM recipe_repository_versions v
+JOIN recipes r ON r.digest = v.recipe_digest
+WHERE v.repository_id = ?
+ORDER BY v.installed_at DESC, v.recipe_digest DESC
+`
+
+type ListRecipeRepositoryVersionsRow struct {
+	RepositoryID string         `json:"repository_id"`
+	RecipeDigest string         `json:"recipe_digest"`
+	CommitSha    string         `json:"commit_sha"`
+	TreeSha      sql.NullString `json:"tree_sha"`
+	Canonical    int64          `json:"canonical"`
+	InstalledAt  string         `json:"installed_at"`
+	Name         string         `json:"name"`
+	Version      string         `json:"version"`
+	DisplayName  sql.NullString `json:"display_name"`
+	Description  sql.NullString `json:"description"`
+	License      sql.NullString `json:"license"`
+	Source       string         `json:"source"`
+	TrustState   string         `json:"trust_state"`
+	Manifest     string         `json:"manifest"`
+}
+
+func (q *Queries) ListRecipeRepositoryVersions(ctx context.Context, repositoryID string) ([]ListRecipeRepositoryVersionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRecipeRepositoryVersions, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecipeRepositoryVersionsRow
+	for rows.Next() {
+		var i ListRecipeRepositoryVersionsRow
+		if err := rows.Scan(
+			&i.RepositoryID,
+			&i.RecipeDigest,
+			&i.CommitSha,
+			&i.TreeSha,
+			&i.Canonical,
+			&i.InstalledAt,
 			&i.Name,
 			&i.Version,
 			&i.DisplayName,
@@ -1957,7 +2210,55 @@ func (q *Queries) ListRecipeVersions(ctx context.Context, name string) ([]Recipe
 			&i.Source,
 			&i.TrustState,
 			&i.Manifest,
-			&i.InstalledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecipeUpdateRuns = `-- name: ListRecipeUpdateRuns :many
+SELECT id, module, kind, state, resources, input, output, error_code,
+       error_message, deployment_id, legacy_identity, created_at, started_at,
+       finished_at, progress
+FROM runs
+WHERE kind = 'recipe-update'
+  AND state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted')
+ORDER BY created_at, id
+`
+
+func (q *Queries) ListRecipeUpdateRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listRecipeUpdateRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.Module,
+			&i.Kind,
+			&i.State,
+			&i.Resources,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.DeploymentID,
+			&i.LegacyIdentity,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Progress,
 		); err != nil {
 			return nil, err
 		}
@@ -2012,10 +2313,85 @@ func (q *Queries) ListRecipes(ctx context.Context) ([]Recipe, error) {
 	return items, nil
 }
 
+const listRepositoryActiveDeployments = `-- name: ListRepositoryActiveDeployments :many
+SELECT d.id, d.recipe_digest, d.profile, d.placement, d.fabric,
+       d.desired_state, d.observed_state, d.endpoint, d.endpoint_model,
+       d.endpoint_path, d.model_capabilities, d.diagnostics, d.run_id,
+       d.dispatch, d.created_at, d.updated_at
+FROM deployments d
+WHERE d.desired_state = 'running'
+  AND EXISTS (
+      SELECT 1
+      FROM recipe_repository_versions v
+      WHERE v.recipe_digest = d.recipe_digest
+        AND v.repository_id = ?
+  )
+ORDER BY d.id
+`
+
+type ListRepositoryActiveDeploymentsRow struct {
+	ID                string         `json:"id"`
+	RecipeDigest      string         `json:"recipe_digest"`
+	Profile           string         `json:"profile"`
+	Placement         string         `json:"placement"`
+	Fabric            sql.NullString `json:"fabric"`
+	DesiredState      string         `json:"desired_state"`
+	ObservedState     string         `json:"observed_state"`
+	Endpoint          sql.NullString `json:"endpoint"`
+	EndpointModel     sql.NullString `json:"endpoint_model"`
+	EndpointPath      sql.NullString `json:"endpoint_path"`
+	ModelCapabilities sql.NullString `json:"model_capabilities"`
+	Diagnostics       string         `json:"diagnostics"`
+	RunID             sql.NullString `json:"run_id"`
+	Dispatch          string         `json:"dispatch"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
+}
+
+func (q *Queries) ListRepositoryActiveDeployments(ctx context.Context, repositoryID string) ([]ListRepositoryActiveDeploymentsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRepositoryActiveDeployments, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepositoryActiveDeploymentsRow
+	for rows.Next() {
+		var i ListRepositoryActiveDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RecipeDigest,
+			&i.Profile,
+			&i.Placement,
+			&i.Fabric,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.Endpoint,
+			&i.EndpointModel,
+			&i.EndpointPath,
+			&i.ModelCapabilities,
+			&i.Diagnostics,
+			&i.RunID,
+			&i.Dispatch,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuns = `-- name: ListRuns :many
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs
 WHERE (?1 IS NULL OR module = ?1)
   AND (?2 IS NULL OR state = ?2)
@@ -2060,6 +2436,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Progress,
 		); err != nil {
 			return nil, err
 		}
@@ -2138,6 +2515,50 @@ func (q *Queries) ListTransfers(ctx context.Context) ([]Transfer, error) {
 			&i.Diagnostic,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnlinkedRecipes = `-- name: ListUnlinkedRecipes :many
+SELECT r.digest, r.name, r.version, r.display_name, r.description, r.license,
+       r.source, r.trust_state, r.manifest, r.installed_at
+FROM recipes r
+WHERE NOT EXISTS (
+    SELECT 1 FROM recipe_repository_versions v WHERE v.recipe_digest = r.digest
+)
+ORDER BY r.installed_at DESC, r.digest DESC
+`
+
+func (q *Queries) ListUnlinkedRecipes(ctx context.Context) ([]Recipe, error) {
+	rows, err := q.db.QueryContext(ctx, listUnlinkedRecipes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Recipe
+	for rows.Next() {
+		var i Recipe
+		if err := rows.Scan(
+			&i.Digest,
+			&i.Name,
+			&i.Version,
+			&i.DisplayName,
+			&i.Description,
+			&i.License,
+			&i.Source,
+			&i.TrustState,
+			&i.Manifest,
+			&i.InstalledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2327,6 +2748,67 @@ func (q *Queries) SetNodeVersion(ctx context.Context, arg SetNodeVersionParams) 
 	return err
 }
 
+const setRecipeRepositoryCurrent = `-- name: SetRecipeRepositoryCurrent :exec
+UPDATE recipe_repositories
+SET current_digest = ?, updated_at = ?
+WHERE id = ?
+`
+
+type SetRecipeRepositoryCurrentParams struct {
+	CurrentDigest sql.NullString `json:"current_digest"`
+	UpdatedAt     string         `json:"updated_at"`
+	ID            string         `json:"id"`
+}
+
+func (q *Queries) SetRecipeRepositoryCurrent(ctx context.Context, arg SetRecipeRepositoryCurrentParams) error {
+	_, err := q.db.ExecContext(ctx, setRecipeRepositoryCurrent, arg.CurrentDigest, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setRecipeRepositoryHead = `-- name: SetRecipeRepositoryHead :exec
+UPDATE recipe_repositories
+SET tracking_ref = ?, observed_head_commit = ?, observed_head_tree = ?,
+    head_checked_at = ?, updated_at = ?
+WHERE id = ?
+`
+
+type SetRecipeRepositoryHeadParams struct {
+	TrackingRef        string         `json:"tracking_ref"`
+	ObservedHeadCommit sql.NullString `json:"observed_head_commit"`
+	ObservedHeadTree   sql.NullString `json:"observed_head_tree"`
+	HeadCheckedAt      sql.NullString `json:"head_checked_at"`
+	UpdatedAt          string         `json:"updated_at"`
+	ID                 string         `json:"id"`
+}
+
+func (q *Queries) SetRecipeRepositoryHead(ctx context.Context, arg SetRecipeRepositoryHeadParams) error {
+	_, err := q.db.ExecContext(ctx, setRecipeRepositoryHead,
+		arg.TrackingRef,
+		arg.ObservedHeadCommit,
+		arg.ObservedHeadTree,
+		arg.HeadCheckedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const setRecipeRepositoryVersionCanonical = `-- name: SetRecipeRepositoryVersionCanonical :exec
+UPDATE recipe_repository_versions
+SET canonical = 1
+WHERE repository_id = ? AND recipe_digest = ?
+`
+
+type SetRecipeRepositoryVersionCanonicalParams struct {
+	RepositoryID string `json:"repository_id"`
+	RecipeDigest string `json:"recipe_digest"`
+}
+
+func (q *Queries) SetRecipeRepositoryVersionCanonical(ctx context.Context, arg SetRecipeRepositoryVersionCanonicalParams) error {
+	_, err := q.db.ExecContext(ctx, setRecipeRepositoryVersionCanonical, arg.RepositoryID, arg.RecipeDigest)
+	return err
+}
+
 const setRunOutput = `-- name: SetRunOutput :exec
 UPDATE runs SET output = ? WHERE id = ?
 `
@@ -2338,6 +2820,20 @@ type SetRunOutputParams struct {
 
 func (q *Queries) SetRunOutput(ctx context.Context, arg SetRunOutputParams) error {
 	_, err := q.db.ExecContext(ctx, setRunOutput, arg.Output, arg.ID)
+	return err
+}
+
+const setRunProgress = `-- name: SetRunProgress :exec
+UPDATE runs SET progress = ? WHERE id = ?
+`
+
+type SetRunProgressParams struct {
+	Progress string `json:"progress"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) SetRunProgress(ctx context.Context, arg SetRunProgressParams) error {
+	_, err := q.db.ExecContext(ctx, setRunProgress, arg.Progress, arg.ID)
 	return err
 }
 
@@ -2641,45 +3137,32 @@ func (q *Queries) UpsertPlacement(ctx context.Context, arg UpsertPlacementParams
 	return err
 }
 
-const upsertRecipeUpdateCheck = `-- name: UpsertRecipeUpdateCheck :exec
-INSERT INTO recipe_update_checks (
-    recipe_digest, remote, tracking_ref, path, installed_revision,
-    candidate_revision, state, checked_at, error
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(recipe_digest) DO UPDATE SET
-    remote = excluded.remote,
+const upsertRecipeRepository = `-- name: UpsertRecipeRepository :exec
+INSERT INTO recipe_repositories (
+    id, source_url, source_path, tracking_ref, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(source_url, source_path) DO UPDATE SET
     tracking_ref = excluded.tracking_ref,
-    path = excluded.path,
-    installed_revision = excluded.installed_revision,
-    candidate_revision = excluded.candidate_revision,
-    state = excluded.state,
-    checked_at = excluded.checked_at,
-    error = excluded.error
+    updated_at = excluded.updated_at
 `
 
-type UpsertRecipeUpdateCheckParams struct {
-	RecipeDigest      string         `json:"recipe_digest"`
-	Remote            string         `json:"remote"`
-	TrackingRef       string         `json:"tracking_ref"`
-	Path              string         `json:"path"`
-	InstalledRevision string         `json:"installed_revision"`
-	CandidateRevision sql.NullString `json:"candidate_revision"`
-	State             string         `json:"state"`
-	CheckedAt         string         `json:"checked_at"`
-	Error             sql.NullString `json:"error"`
+type UpsertRecipeRepositoryParams struct {
+	ID          string `json:"id"`
+	SourceUrl   string `json:"source_url"`
+	SourcePath  string `json:"source_path"`
+	TrackingRef string `json:"tracking_ref"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
-func (q *Queries) UpsertRecipeUpdateCheck(ctx context.Context, arg UpsertRecipeUpdateCheckParams) error {
-	_, err := q.db.ExecContext(ctx, upsertRecipeUpdateCheck,
-		arg.RecipeDigest,
-		arg.Remote,
+func (q *Queries) UpsertRecipeRepository(ctx context.Context, arg UpsertRecipeRepositoryParams) error {
+	_, err := q.db.ExecContext(ctx, upsertRecipeRepository,
+		arg.ID,
+		arg.SourceUrl,
+		arg.SourcePath,
 		arg.TrackingRef,
-		arg.Path,
-		arg.InstalledRevision,
-		arg.CandidateRevision,
-		arg.State,
-		arg.CheckedAt,
-		arg.Error,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	return err
 }

@@ -30,6 +30,8 @@ export const qk = {
   fabric: (id: string) => ["fabrics", id] as const,
   recipes: ["recipes"] as const,
   recipe: (digest: string) => ["recipes", digest] as const,
+  recipeRepositories: ["recipes", "repositories"] as const,
+  recipeRepository: (id: string) => ["recipes", "repositories", id] as const,
   artifacts: ["artifacts"] as const,
   placements: (id: string) => ["artifacts", id, "placements"] as const,
   transfers: ["transfers"] as const,
@@ -89,6 +91,23 @@ export function useFabric(id: string | undefined) {
 
 export function useRecipes() {
   return useQuery({ queryKey: qk.recipes, queryFn: ({ signal }) => api.listRecipes({ signal }), staleTime: CATALOG });
+}
+
+export function useRecipeRepositories() {
+  return useQuery({
+    queryKey: qk.recipeRepositories,
+    queryFn: ({ signal }) => api.listRecipeRepositories({ signal }),
+    staleTime: CATALOG,
+  });
+}
+
+export function useRecipeRepository(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.recipeRepository(id ?? ""),
+    enabled: !!id,
+    queryFn: ({ signal }) => api.getRecipeRepository(id as string, { signal }),
+    staleTime: LIVE,
+  });
 }
 
 export function useRecipe(digest: string | undefined) {
@@ -200,6 +219,10 @@ export function useRun(id: string | undefined) {
     enabled: !!id,
     queryFn: ({ signal }) => api.getRun(id as string, { signal }),
     staleTime: LIVE,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state && ["succeeded", "failed", "cancelled", "interrupted"].includes(state) ? false : 1_000;
+    },
   });
 }
 
@@ -334,6 +357,31 @@ export function useCheckRecipeUpdates() {
   return useMutation({
     mutationFn: api.checkRecipeUpdates,
     onSuccess: () => invalidates(qk.recipes)(qc),
+  });
+}
+
+export function usePlanRecipeRepositoryUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, expected_head_commit }: { id: string; expected_head_commit: string }) =>
+      api.planRecipeRepositoryUpdate(id, { expected_head_commit }),
+    onSuccess: (_plan, request) => {
+      invalidates(qk.recipeRepositories)(qc);
+      invalidates(qk.recipeRepository(request.id))(qc);
+    },
+  });
+}
+
+export function useStartRecipeRepositoryUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & api.RecipeRepositoryUpdateRequest) =>
+      api.startRecipeRepositoryUpdate(id, body),
+    onSuccess: (accepted) => {
+      invalidates(qk.recipeRepositories)(qc);
+      invalidates(qk.deployments)(qc);
+      invalidates(qk.run(accepted.run_id))(qc);
+    },
   });
 }
 

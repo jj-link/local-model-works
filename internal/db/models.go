@@ -177,16 +177,26 @@ type RecipeDraft struct {
 	UpdatedAt      string         `json:"updated_at"`
 }
 
-type RecipeUpdateCheck struct {
-	RecipeDigest      string         `json:"recipe_digest"`
-	Remote            string         `json:"remote"`
-	TrackingRef       string         `json:"tracking_ref"`
-	Path              string         `json:"path"`
-	InstalledRevision string         `json:"installed_revision"`
-	CandidateRevision sql.NullString `json:"candidate_revision"`
-	State             string         `json:"state"`
-	CheckedAt         string         `json:"checked_at"`
-	Error             sql.NullString `json:"error"`
+type RecipeRepository struct {
+	ID                 string         `json:"id"`
+	SourceUrl          string         `json:"source_url"`
+	SourcePath         string         `json:"source_path"`
+	TrackingRef        string         `json:"tracking_ref"`
+	CurrentDigest      sql.NullString `json:"current_digest"`
+	ObservedHeadCommit sql.NullString `json:"observed_head_commit"`
+	ObservedHeadTree   sql.NullString `json:"observed_head_tree"`
+	HeadCheckedAt      sql.NullString `json:"head_checked_at"`
+	CreatedAt          string         `json:"created_at"`
+	UpdatedAt          string         `json:"updated_at"`
+}
+
+type RecipeRepositoryVersion struct {
+	RepositoryID string         `json:"repository_id"`
+	RecipeDigest string         `json:"recipe_digest"`
+	CommitSha    string         `json:"commit_sha"`
+	TreeSha      sql.NullString `json:"tree_sha"`
+	Canonical    int64          `json:"canonical"`
+	InstalledAt  string         `json:"installed_at"`
 }
 
 type Run struct {
@@ -204,6 +214,7 @@ type Run struct {
 	CreatedAt      string         `json:"created_at"`
 	StartedAt      sql.NullString `json:"started_at"`
 	FinishedAt     sql.NullString `json:"finished_at"`
+	Progress       string         `json:"progress"`
 }
 
 type SchemaMigration struct {

@@ -28,6 +28,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/modules"
 	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/recipe/repositorycompiler"
 	"github.com/jj-link/local-model-works/internal/recipebuilder"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/servingtelemetry"
@@ -97,6 +98,7 @@ func New(d Deps) *Server {
 	runRoot := d.Cfg.RunRoot()
 	runsSvc := runs.New(d.DB, d.Q, bus, runRoot)
 	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes, d.CA)
+	go deploys.RunRepositoryUpdateCoordinator(d.Ctx)
 	fabrics := fabric.New(d.Q, bus)
 	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx, d.DB, d.Q)
 	settingsReg := settings.New(d.Q)
@@ -113,6 +115,7 @@ func New(d Deps) *Server {
 	if err != nil {
 		panic(fmt.Sprintf("recipe store: %v", err))
 	}
+	recipes.SetRepositoryCompilerRegistry(repositorycompiler.NewRegistry(v))
 	recipes.SetInstallHook(func() {
 		nodes.Broadcast(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_ReconcileRequest{
 			ReconcileRequest: &agentv1.ReconcileRequest{Reason: "artifact.rescan"},

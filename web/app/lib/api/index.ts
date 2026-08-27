@@ -17,6 +17,13 @@ export type CreateFabricRequest = Schemas["CreateFabricRequest"];
 export type Recipe = Schemas["Recipe"];
 export type RecipeDetail = Schemas["RecipeDetail"];
 export type RecipeUpdateStatus = Schemas["RecipeUpdateStatus"];
+export type RecipeRepository = Schemas["RecipeRepository"];
+export type RecipeRepositoryDetail = Schemas["RecipeRepositoryDetail"];
+export type RecipeRepositoryUpdatePlanRequest = Schemas["RecipeRepositoryUpdatePlanRequest"];
+export type RecipeRepositoryUpdateRequest = Schemas["RecipeRepositoryUpdateRequest"];
+export type RecipeUpdatePlan = Schemas["RecipeUpdatePlan"];
+export type RecipeUpdateTarget = Schemas["RecipeUpdateTarget"];
+export type RecipeUpdateAccepted = Schemas["RecipeUpdateAccepted"];
 export type RecipeSource = Schemas["RecipeSource"];
 export type RecipeImport = Schemas["RecipeImport"];
 export type RecipeTrustRequest = Schemas["RecipeTrustRequest"];
@@ -133,6 +140,22 @@ export const deleteFabric = (id: string, ifMatch: string) =>
 /* ------------------------------------------------------------------ */
 /* recipes                                                             */
 /* ------------------------------------------------------------------ */
+
+export const listRecipeRepositories = ({ signal }: Sig = {}) =>
+  http.get<RecipeRepository[]>("/recipe-repositories", { signal });
+
+export const getRecipeRepository = (id: string, { signal }: Sig = {}) =>
+  http.get<RecipeRepositoryDetail>(`/recipe-repositories/${encodeURIComponent(id)}`, { signal });
+
+export const planRecipeRepositoryUpdate = (
+  id: string,
+  body: RecipeRepositoryUpdatePlanRequest,
+) => http.post<RecipeUpdatePlan>(`/recipe-repositories/${encodeURIComponent(id)}/update/plan`, body);
+
+export const startRecipeRepositoryUpdate = (
+  id: string,
+  body: RecipeRepositoryUpdateRequest,
+) => http.post<RecipeUpdateAccepted>(`/recipe-repositories/${encodeURIComponent(id)}/update`, body);
 
 export const listRecipes = ({ signal }: Sig = {}) => http.get<Recipe[]>("/recipes", { signal });
 

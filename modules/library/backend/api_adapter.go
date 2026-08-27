@@ -23,6 +23,19 @@ func (m *Module) InstallRecipeDraft(w http.ResponseWriter, r *http.Request, _ ID
 func (m *Module) PackageRecipeDraft(w http.ResponseWriter, r *http.Request, _ ID) {
 	m.packageDraft(w, r)
 }
+func (m *Module) ListRecipeRepositories(w http.ResponseWriter, r *http.Request) {
+	m.listRecipeRepositories(w, r)
+}
+func (m *Module) GetRecipeRepository(w http.ResponseWriter, r *http.Request, _ string) {
+	m.getRecipeRepository(w, r)
+}
+func (m *Module) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, _ string) {
+	m.planRecipeRepositoryUpdate(w, r)
+}
+func (m *Module) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, _ string) {
+	m.startRecipeRepositoryUpdate(w, r)
+}
+
 func (m *Module) ListRecipes(w http.ResponseWriter, r *http.Request) { m.listRecipes(w, r) }
 func (m *Module) CheckRecipeUpdates(w http.ResponseWriter, r *http.Request) {
 	m.checkRecipeUpdates(w, r)

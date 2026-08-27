@@ -607,6 +607,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipe-repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRecipeRepositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRecipeRepository"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startRecipeRepositoryUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}/update/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["planRecipeRepositoryUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipes": {
         parameters: {
             query?: never;
@@ -871,6 +935,13 @@ export interface components {
             uuid: string;
             /** @description Vendor-neutral capability field, e.g. nvidia, amd, intel */
             vendor: string;
+        };
+        AffectedHardware: {
+            deployment_ids: string[];
+            node_id: string;
+            node_name: string;
+            node_status: string;
+            state: string;
         };
         Artifact: {
             digest?: string | null;
@@ -1426,6 +1497,44 @@ export interface components {
         RecipeImport: {
             source: components["schemas"]["RecipeSource"];
         };
+        RecipeRepository: {
+            /** Format: date-time */
+            created_at: string;
+            current_recipe?: components["schemas"]["Recipe"];
+            /** Format: date-time */
+            head_checked_at?: string;
+            id: string;
+            installed_commit?: string;
+            observed_head_commit?: string;
+            observed_head_tree?: string;
+            source_path: string;
+            source_url: string;
+            tracking_ref: string;
+            update_available: boolean;
+            update_diagnostic?: string;
+            update_supported: boolean;
+            /** Format: date-time */
+            updated_at: string;
+            versions: components["schemas"]["RecipeRepositoryVersion"][];
+        };
+        RecipeRepositoryDetail: components["schemas"]["RecipeRepository"] & {
+            affected_hardware: components["schemas"]["AffectedHardware"][];
+        };
+        RecipeRepositoryUpdatePlanRequest: {
+            expected_head_commit: string;
+        };
+        RecipeRepositoryUpdateRequest: {
+            expected_head_commit: string;
+            plan_digest: string;
+        };
+        RecipeRepositoryVersion: {
+            canonical: boolean;
+            commit_sha: string;
+            /** Format: date-time */
+            installed_at: string;
+            recipe: components["schemas"]["Recipe"];
+            tree_sha?: string;
+        };
         RecipeSource: {
             path?: string;
             reference?: string;
@@ -1440,6 +1549,16 @@ export interface components {
             /** @enum {string} */
             trust_state: "local" | "untrusted";
         };
+        RecipeUpdateAccepted: {
+            /** Format: uuid */
+            run_id: string;
+        };
+        RecipeUpdatePlan: {
+            diagnostics: components["schemas"]["Diagnostic"][];
+            plan_digest: string;
+            ready: boolean;
+            targets: components["schemas"]["RecipeUpdateTarget"][];
+        };
         RecipeUpdateStatus: {
             candidate_revision?: string;
             /** Format: date-time */
@@ -1451,6 +1570,23 @@ export interface components {
             /** @enum {string} */
             state: "current" | "available" | "error";
             tracking_ref: string;
+        };
+        RecipeUpdateTarget: {
+            current_step: number;
+            error_code?: string;
+            error_message?: string;
+            node_id: string;
+            node_name: string;
+            node_status: string;
+            /** @enum {string} */
+            phase: "fetching" | "validating" | "installing_recipe" | "stopping_old" | "waiting_offline" | "preparing" | "pulling" | "starting" | "verifying" | "ready" | "rolling_back" | "restoring_old" | "restored" | "skipped" | "rollback_failed";
+            /** Format: int32 */
+            rank: number;
+            replacement_deployment_id?: string;
+            source_deployment_id: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "waiting" | "succeeded" | "failed";
+            total_steps: number;
         };
         Run: {
             /** Format: date-time */
@@ -1472,6 +1608,9 @@ export interface components {
             output?: {
                 [key: string]: unknown;
             } | null;
+            progress: {
+                [key: string]: unknown;
+            };
             resources?: {
                 accelerators?: string[];
                 fabrics?: string[];
@@ -2885,6 +3024,108 @@ export interface operations {
                     "application/json": components["schemas"]["RecipeDraft"];
                 };
             };
+        };
+    };
+    listRecipeRepositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One logical recipe per normalized Git repository and source path */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeRepository"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getRecipeRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repository recipe and hardware using older versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeRepositoryDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    startRecipeRepositoryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeRepositoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Durable recipe update run accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdateAccepted"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    planRecipeRepositoryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeRepositoryUpdatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact hardware replacement preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdatePlan"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
         };
     };
     listRecipes: {

@@ -2,6 +2,8 @@ package recipe
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -32,14 +34,14 @@ func TestCheckUpdatesCachesGitHubHeadAcrossRecipes(t *testing.T) {
 
 	installed := strings.Repeat("a", 40)
 	candidate := strings.Repeat("b", 40)
-	createUpdateRecipe(t, ctx, queries, "alpha", installed, "https://github.com/MiaAI-Lab/shared")
-	createUpdateRecipe(t, ctx, queries, "beta", candidate, "https://github.com/MiaAI-Lab/shared.git")
-	createUpdateRecipe(t, ctx, queries, "local-only", installed, "https://fixtures.local/local-only")
+	createUpdateRecipe(t, ctx, queries, "alpha", installed, "https://github.com/MiaAI-Lab/shared", "alpha")
+	createUpdateRecipe(t, ctx, queries, "beta", candidate, "https://github.com/MiaAI-Lab/shared.git", "beta")
+	createUpdateRecipe(t, ctx, queries, "local-only", installed, "https://fixtures.local/local-only", ".")
 
 	resolveCalls := 0
 	service.resolveGitHead = func(_ context.Context, remote string) (string, string, error) {
 		resolveCalls++
-		if remote != "https://github.com/MiaAI-Lab/shared.git" {
+		if remote != "https://github.com/MiaAI-Lab/shared" {
 			t.Fatalf("normalized remote = %q", remote)
 		}
 		return "main", candidate, nil
@@ -62,7 +64,7 @@ func TestCheckUpdatesCachesGitHubHeadAcrossRecipes(t *testing.T) {
 	if status := byRevision[installed]; status.State != "available" || status.CandidateRevision != candidate {
 		t.Fatalf("available status = %+v", status)
 	}
-	if status := byRevision[candidate]; status.State != "current" || status.CandidateRevision != "" {
+	if status := byRevision[candidate]; status.State != "current" || status.CandidateRevision != candidate {
 		t.Fatalf("current status = %+v", status)
 	}
 
@@ -94,7 +96,7 @@ func TestCheckUpdatesCachesGitHubHeadAcrossRecipes(t *testing.T) {
 
 func TestNormalizeGitHubRemoteRejectsUnsafeSources(t *testing.T) {
 	valid, ok := normalizeGitHubRemote("https://github.com/MiaAI-Lab/example")
-	if !ok || valid != "https://github.com/MiaAI-Lab/example.git" {
+	if !ok || valid != "https://github.com/MiaAI-Lab/example" {
 		t.Fatalf("valid remote = %q, %t", valid, ok)
 	}
 	for _, raw := range []string{
@@ -110,9 +112,9 @@ func TestNormalizeGitHubRemoteRejectsUnsafeSources(t *testing.T) {
 	}
 }
 
-func createUpdateRecipe(t *testing.T, ctx context.Context, queries *db.Queries, name, revision, remote string) {
+func createUpdateRecipe(t *testing.T, ctx context.Context, queries *db.Queries, name, revision, remote, sourcePath string) {
 	t.Helper()
-	manifest, err := json.Marshal(Manifest{
+	manifest := &Manifest{
 		APIVersion: APIVersion,
 		Kind:       "Recipe",
 		Metadata: Metadata{
@@ -121,19 +123,28 @@ func createUpdateRecipe(t *testing.T, ctx context.Context, queries *db.Queries, 
 			DisplayName: name,
 			Description: "update fixture",
 			License:     "MIT",
-			Source:      &Source{URL: remote, Revision: revision, Path: "."},
+			Source:      &Source{URL: remote, Revision: revision, Path: sourcePath},
 		},
 		Artifacts: []Artifact{},
 		Workloads: []Workload{},
-	})
+	}
+	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := "sha256:" + strings.Repeat(string(rune('c'+len(name)%10)), 64)
+	sum := sha256.Sum256([]byte(name))
+	digest := "sha256:" + hex.EncodeToString(sum[:])
 	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: name, Version: "1.0.0", Source: `{"type":"local","path":"fixture"}`,
-		TrustState: TrustLocal, Manifest: string(manifest),
+		TrustState: TrustLocal, Manifest: string(manifestJSON),
 	}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := queries.GetRecipe(ctx, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attachRepositoryVersion(ctx, queries, manifest, digest, "", row.InstalledAt); err != nil {
 		t.Fatal(err)
 	}
 }

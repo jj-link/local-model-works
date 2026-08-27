@@ -177,37 +177,95 @@ FROM recipes WHERE digest = ?;
 SELECT digest, name, version, display_name, description, license, source,
        trust_state, manifest, installed_at
 FROM recipes ORDER BY installed_at DESC;
+-- name: ListUnlinkedRecipes :many
+SELECT r.digest, r.name, r.version, r.display_name, r.description, r.license,
+       r.source, r.trust_state, r.manifest, r.installed_at
+FROM recipes r
+WHERE NOT EXISTS (
+    SELECT 1 FROM recipe_repository_versions v WHERE v.recipe_digest = r.digest
+)
+ORDER BY r.installed_at DESC, r.digest DESC;
 
--- name: ListRecipeVersions :many
-SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
-FROM recipes WHERE name = ? ORDER BY installed_at DESC;
 
--- name: GetRecipeUpdateCheck :one
-SELECT recipe_digest, remote, tracking_ref, path, installed_revision,
-       candidate_revision, state, checked_at, error
-FROM recipe_update_checks WHERE recipe_digest = ?;
+-- name: ListRecipeRepositories :many
+SELECT id, source_url, source_path, tracking_ref, current_digest,
+       observed_head_commit, observed_head_tree, head_checked_at,
+       created_at, updated_at
+FROM recipe_repositories
+ORDER BY updated_at DESC, id;
 
--- name: UpsertRecipeUpdateCheck :exec
-INSERT INTO recipe_update_checks (
-    recipe_digest, remote, tracking_ref, path, installed_revision,
-    candidate_revision, state, checked_at, error
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(recipe_digest) DO UPDATE SET
-    remote = excluded.remote,
+-- name: GetRecipeRepository :one
+SELECT id, source_url, source_path, tracking_ref, current_digest,
+       observed_head_commit, observed_head_tree, head_checked_at,
+       created_at, updated_at
+FROM recipe_repositories
+WHERE id = ?;
+
+-- name: ListRecipeRepositoryVersions :many
+SELECT v.repository_id, v.recipe_digest, v.commit_sha, v.tree_sha,
+       v.canonical, v.installed_at,
+       r.name, r.version, r.display_name, r.description, r.license,
+       r.source, r.trust_state, r.manifest
+FROM recipe_repository_versions v
+JOIN recipes r ON r.digest = v.recipe_digest
+WHERE v.repository_id = ?
+ORDER BY v.installed_at DESC, v.recipe_digest DESC;
+
+-- name: GetRecipeRepositoryVersionByDigest :one
+SELECT repository_id, recipe_digest, commit_sha, tree_sha, canonical, installed_at
+FROM recipe_repository_versions
+WHERE recipe_digest = ?;
+
+-- name: UpsertRecipeRepository :exec
+INSERT INTO recipe_repositories (
+    id, source_url, source_path, tracking_ref, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(source_url, source_path) DO UPDATE SET
     tracking_ref = excluded.tracking_ref,
-    path = excluded.path,
-    installed_revision = excluded.installed_revision,
-    candidate_revision = excluded.candidate_revision,
-    state = excluded.state,
-    checked_at = excluded.checked_at,
-    error = excluded.error;
+    updated_at = excluded.updated_at;
+
+-- name: AttachRecipeRepositoryVersion :exec
+INSERT INTO recipe_repository_versions (
+    repository_id, recipe_digest, commit_sha, tree_sha, canonical, installed_at
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(repository_id, recipe_digest) DO UPDATE SET
+    commit_sha = excluded.commit_sha,
+    tree_sha = excluded.tree_sha,
+    canonical = excluded.canonical,
+    installed_at = excluded.installed_at;
+-- name: ClearCanonicalRecipeRepositoryCommit :exec
+UPDATE recipe_repository_versions
+SET canonical = 0
+WHERE repository_id = ? AND commit_sha = ? AND canonical = 1;
+
+
+-- name: SetRecipeRepositoryCurrent :exec
+UPDATE recipe_repositories
+SET current_digest = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: SetRecipeRepositoryHead :exec
+UPDATE recipe_repositories
+SET tracking_ref = ?, observed_head_commit = ?, observed_head_tree = ?,
+    head_checked_at = ?, updated_at = ?
+WHERE id = ?;
 
 -- name: UpdateRecipeTrust :exec
 UPDATE recipes SET trust_state = ? WHERE digest = ?;
 
 -- name: DeleteRecipe :exec
 DELETE FROM recipes WHERE digest = ?;
+
+-- name: DeleteRecipeRepositoryVersionByDigest :exec
+DELETE FROM recipe_repository_versions WHERE recipe_digest = ?;
+
+-- name: SetRecipeRepositoryVersionCanonical :exec
+UPDATE recipe_repository_versions
+SET canonical = 1
+WHERE repository_id = ? AND recipe_digest = ?;
+
+-- name: DeleteRecipeRepository :exec
+DELETE FROM recipe_repositories WHERE id = ?;
 
 -- name: RecipeReferencedByDeployments :one
 SELECT COUNT(*) FROM deployments WHERE recipe_digest = ?;
@@ -242,12 +300,35 @@ WHERE desired_state = 'running'
   AND observed_state IN ('healthy', 'degraded')
   AND endpoint IS NOT NULL AND endpoint != '';
 
+-- name: GetDeploymentByRecipeProfilePlacement :one
+SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+       observed_state, endpoint, endpoint_model, endpoint_path,
+       model_capabilities, diagnostics, run_id,
+       dispatch, created_at, updated_at
+FROM deployments
+WHERE recipe_digest = ? AND profile = ? AND placement = ?;
+
 -- name: ListActiveDeployments :many
 SELECT id, recipe_digest, profile, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE desired_state = 'running';
+-- name: ListRepositoryActiveDeployments :many
+SELECT d.id, d.recipe_digest, d.profile, d.placement, d.fabric,
+       d.desired_state, d.observed_state, d.endpoint, d.endpoint_model,
+       d.endpoint_path, d.model_capabilities, d.diagnostics, d.run_id,
+       d.dispatch, d.created_at, d.updated_at
+FROM deployments d
+WHERE d.desired_state = 'running'
+  AND EXISTS (
+      SELECT 1
+      FROM recipe_repository_versions v
+      WHERE v.recipe_digest = d.recipe_digest
+        AND v.repository_id = ?
+  )
+ORDER BY d.id;
+
 
 -- name: UpdateDeploymentState :exec
 UPDATE deployments SET desired_state = ?,
@@ -284,13 +365,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 -- name: GetRun :one
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs WHERE id = ?;
 
 -- name: ListRuns :many
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs
 WHERE (:module IS NULL OR module = :module)
   AND (:state IS NULL OR state = :state)
@@ -301,9 +382,18 @@ LIMIT :limit;
 -- name: ListNonTerminalRuns :many
 SELECT id, module, kind, state, resources, input, output, error_code,
        error_message, deployment_id, legacy_identity, created_at, started_at,
-       finished_at
+       finished_at, progress
 FROM runs
 WHERE state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted');
+
+-- name: ListRecipeUpdateRuns :many
+SELECT id, module, kind, state, resources, input, output, error_code,
+       error_message, deployment_id, legacy_identity, created_at, started_at,
+       finished_at, progress
+FROM runs
+WHERE kind = 'recipe-update'
+  AND state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted')
+ORDER BY created_at, id;
 
 -- name: UpdateRunState :exec
 UPDATE runs SET state = ?,
@@ -315,6 +405,9 @@ WHERE id = ?;
 
 -- name: SetRunOutput :exec
 UPDATE runs SET output = ? WHERE id = ?;
+
+-- name: SetRunProgress :exec
+UPDATE runs SET progress = ? WHERE id = ?;
 
 -- name: GetModuleSettings :one
 SELECT module, settings, version, updated_at FROM module_settings WHERE module = ?;
@@ -474,6 +567,11 @@ WHERE id = ?;
 
 -- name: ActiveLeases :many
 SELECT resource FROM leases WHERE state = 'active';
+
+-- name: ActiveLeasesWithOwners :many
+SELECT resource, owner_kind, owner_id
+FROM leases
+WHERE state = 'active';
 
 
 -- name: UpdateDeploymentEndpointMetadata :exec

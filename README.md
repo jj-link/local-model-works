@@ -64,7 +64,7 @@ lmw recipe validate ./recipe
 lmw recipe pack ./recipe --output ./recipe.oci
 ```
 
-Imported Git recipes remain untrusted until an operator approves the stored digest. The Library builder can inspect a source tree, select assets, validate the complete manifest, and package it through a resumable run.
+Imported Git recipes remain untrusted until an operator approves the stored digest. The Library builder remains an authoring surface for inspecting source trees, selecting assets, validating manifests, and packaging resumable runs. Installed Git repositories are cataloged once by normalized URL and source path, with immutable commits beneath them. For native recipe bundles and registered deterministic compilers, the Library can preview the exact hardware using older commits, install a pinned newer commit without modifying or executing the third-party repository, replace deployments on the same nodes and ranks, and report durable per-hardware progress with automatic restoration on failure or cancellation.
 
 ## Migration
 

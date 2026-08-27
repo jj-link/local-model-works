@@ -3,7 +3,6 @@ package recipe
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -20,16 +19,17 @@ const (
 	gitUpdateCheckTimeout      = 20 * time.Second
 )
 
-// UpdateStatus is the cached comparison between an installed immutable recipe
-// revision and the tracked upstream repository head.
+// UpdateStatus is the cached comparison between the installed repository
+// version and the last observed upstream HEAD.
 type UpdateStatus struct {
 	State             string `json:"state"`
+	RepositoryID      string `json:"repository_id"`
 	Remote            string `json:"remote"`
 	TrackingRef       string `json:"tracking_ref"`
 	Path              string `json:"path,omitempty"`
 	InstalledRevision string `json:"installed_revision"`
 	CandidateRevision string `json:"candidate_revision,omitempty"`
-	CheckedAt         string `json:"checked_at"`
+	CheckedAt         string `json:"checked_at,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -39,20 +39,28 @@ type gitHead struct {
 	err      error
 }
 
-// UpdateStatus returns the last persisted upstream comparison for a recipe.
+// UpdateStatus returns the repository-level upstream comparison for a recipe
+// digest. Unlinked local packages have no update status.
 func (s *Service) UpdateStatus(ctx context.Context, digest string) (*UpdateStatus, error) {
-	row, err := s.q.GetRecipeUpdateCheck(ctx, digest)
+	version, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, digest)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errorsIsNoRows(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	status := updateStatusFromRow(row)
+	repository, err := s.q.GetRecipeRepository(ctx, version.RepositoryID)
+	if err != nil {
+		return nil, err
+	}
+	if !repository.HeadCheckedAt.Valid {
+		return nil, nil
+	}
+	status := updateStatusFromRepository(repository, version.CommitSha)
 	return &status, nil
 }
 
-// CheckUpdatesNow synchronously refreshes every current GitHub-backed recipe.
+// CheckUpdatesNow synchronously refreshes every repository-backed recipe.
 func (s *Service) CheckUpdatesNow(ctx context.Context) ([]UpdateStatus, error) {
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
@@ -95,42 +103,42 @@ func (s *Service) RunUpdateChecker(ctx context.Context, interval time.Duration) 
 }
 
 func (s *Service) checkUpdates(ctx context.Context, maxAge time.Duration, force bool) ([]UpdateStatus, error) {
-	rows, err := s.q.ListRecipes(ctx)
+	repositories, err := s.q.ListRecipeRepositories(ctx)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	seenNames := make(map[string]struct{}, len(rows))
-	heads := make(map[string]gitHead)
-	statuses := make([]UpdateStatus, 0, len(rows))
+	heads := make(map[string]gitHead, len(repositories))
+	statuses := make([]UpdateStatus, 0, len(repositories))
 
-	for i := range rows {
-		row := rows[i]
-		if _, seen := seenNames[row.Name]; seen {
+	for _, repository := range repositories {
+		if !repository.CurrentDigest.Valid {
 			continue
 		}
-		seenNames[row.Name] = struct{}{}
-
-		var manifest Manifest
-		if err := json.Unmarshal([]byte(row.Manifest), &manifest); err != nil || manifest.Metadata.Source == nil {
+		versions, err := s.q.ListRecipeRepositoryVersions(ctx, repository.ID)
+		if err != nil {
+			return nil, err
+		}
+		installedCommit := ""
+		for _, version := range versions {
+			if version.RecipeDigest == repository.CurrentDigest.String {
+				installedCommit = version.CommitSha
+				break
+			}
+		}
+		if installedCommit == "" {
 			continue
 		}
-		source := manifest.Metadata.Source
-		remote, ok := normalizeGitHubRemote(source.URL)
-		if !ok || !sha40.MatchString(source.Revision) {
+		remote, ok := normalizeGitHubRemote(repository.SourceUrl)
+		if !ok || !sha40.MatchString(installedCommit) {
 			continue
 		}
 
-		if !force {
-			cached, cacheErr := s.q.GetRecipeUpdateCheck(ctx, row.Digest)
-			if cacheErr == nil && cached.Remote == remote && cached.InstalledRevision == source.Revision {
-				checkedAt, parseErr := time.Parse(time.RFC3339Nano, cached.CheckedAt)
-				if parseErr == nil && maxAge > 0 && now.Sub(checkedAt) < maxAge {
-					statuses = append(statuses, updateStatusFromRow(cached))
-					continue
-				}
-			} else if cacheErr != nil && cacheErr != sql.ErrNoRows {
-				return nil, cacheErr
+		if !force && repository.HeadCheckedAt.Valid {
+			checkedAt, parseErr := time.Parse(time.RFC3339Nano, repository.HeadCheckedAt.String)
+			if parseErr == nil && maxAge > 0 && now.Sub(checkedAt) < maxAge {
+				statuses = append(statuses, updateStatusFromRepository(repository, installedCommit))
+				continue
 			}
 		}
 
@@ -144,70 +152,74 @@ func (s *Service) checkUpdates(ctx context.Context, maxAge time.Duration, force 
 
 		status := UpdateStatus{
 			State:             "current",
-			Remote:            remote,
+			RepositoryID:      repository.ID,
+			Remote:            repository.SourceUrl,
 			TrackingRef:       head.ref,
-			Path:              source.Path,
-			InstalledRevision: strings.ToLower(source.Revision),
+			Path:              repository.SourcePath,
+			InstalledRevision: installedCommit,
 			CheckedAt:         now.Format(time.RFC3339Nano),
 		}
 		if head.err != nil {
 			status.State = "error"
-			status.TrackingRef = "HEAD"
+			status.TrackingRef = repository.TrackingRef
 			status.Error = head.err.Error()
-		} else if !strings.EqualFold(head.revision, source.Revision) {
-			status.State = "available"
+		} else {
 			status.CandidateRevision = head.revision
-		}
-		if err := s.persistUpdateStatus(ctx, row.Digest, status); err != nil {
-			return nil, err
+			if !strings.EqualFold(head.revision, installedCommit) {
+				status.State = "available"
+			}
+			if err := s.q.SetRecipeRepositoryHead(ctx, db.SetRecipeRepositoryHeadParams{
+				TrackingRef:        head.ref,
+				ObservedHeadCommit: nullableString(head.revision),
+				ObservedHeadTree:   sql.NullString{},
+				HeadCheckedAt:      nullableString(status.CheckedAt),
+				UpdatedAt:          status.CheckedAt,
+				ID:                 repository.ID,
+			}); err != nil {
+				return nil, err
+			}
 		}
 		statuses = append(statuses, status)
-		s.bus.Publish(ctx, "recipe.update_checked", row.Digest, mustJSON(status))
+		s.bus.Publish(ctx, "recipe.update_checked", repository.ID, mustJSON(status))
 	}
 	return statuses, nil
 }
 
-func (s *Service) persistUpdateStatus(ctx context.Context, digest string, status UpdateStatus) error {
-	return s.q.UpsertRecipeUpdateCheck(ctx, db.UpsertRecipeUpdateCheckParams{
-		RecipeDigest:      digest,
-		Remote:            status.Remote,
-		TrackingRef:       status.TrackingRef,
-		Path:              status.Path,
-		InstalledRevision: status.InstalledRevision,
-		CandidateRevision: nullableString(status.CandidateRevision),
-		State:             status.State,
-		CheckedAt:         status.CheckedAt,
-		Error:             nullableString(status.Error),
-	})
-}
-
-func updateStatusFromRow(row db.RecipeUpdateCheck) UpdateStatus {
-	return UpdateStatus{
-		State:             row.State,
-		Remote:            row.Remote,
+func updateStatusFromRepository(row db.RecipeRepository, installedCommit string) UpdateStatus {
+	status := UpdateStatus{
+		State:             "current",
+		RepositoryID:      row.ID,
+		Remote:            row.SourceUrl,
 		TrackingRef:       row.TrackingRef,
-		Path:              row.Path,
-		InstalledRevision: row.InstalledRevision,
-		CandidateRevision: nullStrValue(row.CandidateRevision),
-		CheckedAt:         row.CheckedAt,
-		Error:             nullStrValue(row.Error),
+		Path:              row.SourcePath,
+		InstalledRevision: installedCommit,
+		CandidateRevision: nullStrValue(row.ObservedHeadCommit),
+		CheckedAt:         nullStrValue(row.HeadCheckedAt),
 	}
+	if row.ObservedHeadCommit.Valid && !strings.EqualFold(row.ObservedHeadCommit.String, installedCommit) {
+		status.State = "available"
+	}
+	return status
 }
 
 func nullableString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
 
+func errorsIsNoRows(err error) bool {
+	return err == sql.ErrNoRows
+}
+
 func normalizeGitHubRemote(raw string) (string, bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "github.com") || u.User != nil || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || !strings.EqualFold(u.Hostname(), "github.com") || u.User != nil || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", false
 	}
 	parts := strings.Split(strings.Trim(strings.TrimSuffix(u.Path, ".git"), "/"), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", false
 	}
-	return "https://github.com/" + parts[0] + "/" + parts[1] + ".git", true
+	return "https://github.com/" + parts[0] + "/" + parts[1], true
 }
 
 func resolveGitHEAD(ctx context.Context, remote string) (string, string, error) {

@@ -57,6 +57,8 @@ type Service struct {
 	transferInflight map[string]string
 	rankStates       map[string]map[int32]string
 	dispatchMu       sync.Mutex
+	updateMu         sync.Mutex
+	updateLive       map[string]bool
 }
 
 func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender, ca *ca.CA) *Service {
@@ -70,6 +72,7 @@ func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service
 		inflight:         map[string]*inflightCmd{},
 		transferInflight: map[string]string{},
 		rankStates:       map[string]map[int32]string{},
+		updateLive:       map[string]bool{},
 	}
 }
 
@@ -77,13 +80,17 @@ func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service
 
 // Plan previews a deployment from the current fleet state.
 func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
+	return s.plan(ctx, req, nil, false)
+}
+
+func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, allowUntrusted bool) (*Plan, error) {
 	row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
 	}
 	// Trust gate: an untrusted recipe is inspectable but not launchable.
 	// Plan (and thus Create) blocks before any run or deployment row exists.
-	if row.TrustState == recipe.TrustUntrusted {
+	if row.TrustState == recipe.TrustUntrusted && !allowUntrusted {
 		return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
 	}
 	m, err := recipe.Parse([]byte(row.Manifest))
@@ -108,12 +115,15 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 		return nil, err
 	}
 	leased := map[string]bool{}
-	leases, err := s.q.ActiveLeases(ctx)
+	leases, err := s.q.ActiveLeasesWithOwners(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range leases {
-		leased[r] = true
+	for _, lease := range leases {
+		if lease.OwnerKind == "deployment" && ignoredDeployments[lease.OwnerID] {
+			continue
+		}
+		leased[lease.Resource] = true
 	}
 
 	reqAcc := s.accelRequirement(m)
@@ -514,6 +524,9 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 			return nil, err
 		}
 		for _, d := range active {
+			if ignoredDeployments[d.ID] {
+				continue
+			}
 			if !d.Endpoint.Valid || d.Endpoint.String == "" {
 				continue
 			}
@@ -920,6 +933,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 		return nil, fmt.Errorf("%w: %v", ErrNotReady, diag.Decode(diag.Encode(plan.Diagnostics)))
 	}
 
+	return s.createPlanned(ctx, plan)
+}
+
+func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -2317,16 +2334,16 @@ func (s *Service) Stop(ctx context.Context, depID string) (*Deployment, error) {
 	if row.RunID.Valid {
 		runID = row.RunID.String
 	}
+	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
+		ObservedState: "stopping",
+		ID:            depID,
+	})
 	ps := ParsePlacementSet(row.Placement)
 	for _, rank := range ps.AllRanks() {
 		if e := ps.EntryFor(rank); e != nil {
 			s.dispatchNext(ctx, depID, rank, runID, *e)
 		}
 	}
-	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
-		ObservedState: "stopping",
-		ID:            depID,
-	})
 	s.bus.Publish(ctx, "deployment.stopping", depID, mustJSON(map[string]any{"deployment_id": depID}))
 	return s.Get(ctx, depID)
 }
@@ -2359,6 +2376,7 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 		RecipeDigest: row.RecipeDigest,
 		Profile:      row.Profile,
 		Placements:   overrides,
+		Variants:     ps.Variants,
 	})
 	if err != nil {
 		return nil, err

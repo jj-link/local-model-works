@@ -65,7 +65,7 @@ var transitions = map[State][]State{
 
 // IsOneShot reports whether a run kind cannot outlive its work: on
 // controller restart one-shot nonterminal runs become interrupted.
-func IsOneShot(kind string) bool { return kind != "serve" }
+func IsOneShot(kind string) bool { return kind != "serve" && kind != "recipe-update" }
 
 // ErrUnknown is a run that does not exist.
 var ErrUnknown = errors.New("unknown run")
@@ -90,6 +90,7 @@ type Run struct {
 	State          string         `json:"state"`
 	Resources      Resources      `json:"resources"`
 	Input          map[string]any `json:"input"`
+	Progress       map[string]any `json:"progress"`
 	Output         map[string]any `json:"output,omitempty"`
 	ErrorCode      *string        `json:"error_code,omitempty"`
 	ErrorMessage   *string        `json:"error_message,omitempty"`
@@ -164,6 +165,34 @@ func (s *Service) Create(ctx context.Context, module, kind string, input map[str
 		"run_id": rid, "module": module, "kind": kind,
 	}))
 	return rid, nil
+}
+
+// SetProgress persists a canonical progress snapshot and publishes it.
+func (s *Service) SetProgress(ctx context.Context, rid string, progress map[string]any) error {
+	encoded, err := cjson.Marshal(progress)
+	if err != nil {
+		return fmt.Errorf("run progress: %w", err)
+	}
+	if err := s.q.SetRunProgress(ctx, db.SetRunProgressParams{Progress: string(encoded), ID: rid}); err != nil {
+		return err
+	}
+	return s.bus.Publish(ctx, "run.progress", "", mustJSON(map[string]any{
+		"run_id": rid, "progress": progress,
+	}))
+}
+
+// SetOutput persists canonical executor/coordinator output.
+func (s *Service) SetOutput(ctx context.Context, rid string, output map[string]any) error {
+	encoded, err := cjson.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("run output: %w", err)
+	}
+	if err := s.q.SetRunOutput(ctx, db.SetRunOutputParams{Output: sql.NullString{String: string(encoded), Valid: true}, ID: rid}); err != nil {
+		return err
+	}
+	return s.bus.Publish(ctx, "run.state", "", mustJSON(map[string]any{
+		"run_id": rid, "output_updated": true,
+	}))
 }
 
 // Get returns one run.
@@ -526,6 +555,8 @@ func (s *Service) WaitLogEnd(ctx context.Context, runID, deploymentID string, ra
 func (s *Service) view(ctx context.Context, row db.Run) (Run, error) {
 	in := map[string]any{}
 	_ = json.Unmarshal([]byte(row.Input), &in)
+	progress := map[string]any{}
+	_ = json.Unmarshal([]byte(row.Progress), &progress)
 	out := map[string]any{}
 	if row.Output.Valid {
 		_ = json.Unmarshal([]byte(row.Output.String), &out)
@@ -553,6 +584,7 @@ func (s *Service) view(ctx context.Context, row db.Run) (Run, error) {
 		State:     row.State,
 		Resources: res,
 		Input:     in,
+		Progress:  progress,
 		CreatedAt: row.CreatedAt,
 	}
 	if out != nil {

@@ -1,8 +1,7 @@
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
-import { useNavigate } from "react-router";
-import { useCreateRecipeDraft, useDeleteRecipe, useRecipe, useSetRecipeTrust } from "~/lib/queries";
+import { useDeleteRecipe, useRecipe, useSetRecipeTrust } from "~/lib/queries";
 import { EmptyState } from "~/components/empty-state";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
 import { HighlightedPre } from "~/components/json-viewer";
@@ -21,12 +20,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Recipe detail: metadata panel, trust actions, and the manifest document. */
 export default function RecipeDetailRoute() {
-  const navigate = useNavigate();
   const id = useTailPathParam();
   const { data: recipe, isPending, isError, error, refetch } = useRecipe(id);
   const setTrust = useSetRecipeTrust();
   const remove = useDeleteRecipe();
-  const createDraft = useCreateRecipeDraft();
 
   if (isPending) {
     return <p className="py-10 text-center font-mono text-xs text-faint">loading recipe…</p>;
@@ -50,23 +47,6 @@ export default function RecipeDetailRoute() {
       .then((r) => toast.success(`Trust set to ${r.trust_state}`))
       .catch((e) => toast.error(e instanceof Error ? e.message : "trust update failed"));
 
-  const inspectUpdate = async () => {
-    const update = recipe.update;
-    if (!update?.candidate_revision) return;
-    try {
-      await createDraft.mutateAsync({
-        remote: update.remote,
-        revision: update.candidate_revision,
-        ...(update.path ? { path: update.path } : {}),
-      });
-      toast.success("Update inspection queued", {
-        description: `${update.tracking_ref} · ${update.candidate_revision.slice(0, 12)}`,
-      });
-      navigate("/library/builder");
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Update inspection failed");
-    }
-  };
 
   return (
     <div className="grid gap-4">
@@ -217,11 +197,6 @@ export default function RecipeDetailRoute() {
               </p>
               {recipe.update.error ? <p className="text-warn">{recipe.update.error}</p> : null}
             </div>
-            {recipe.update.state === "available" && recipe.update.candidate_revision ? (
-              <Button disabled={createDraft.isPending} onClick={() => void inspectUpdate()}>
-                {createDraft.isPending ? "queuing inspection…" : "Inspect update in builder"}
-              </Button>
-            ) : null}
           </div>
         </Section>
       ) : null}

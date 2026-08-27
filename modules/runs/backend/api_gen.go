@@ -77,6 +77,7 @@ type Run struct {
 	LegacyIdentity *string                 `json:"legacy_identity,omitempty"`
 	Module         string                  `json:"module"`
 	Output         *map[string]interface{} `json:"output,omitempty"`
+	Progress       map[string]interface{}  `json:"progress"`
 	Resources      *struct {
 		Accelerators *[]string `json:"accelerators,omitempty"`
 		Fabrics      *[]string `json:"fabrics,omitempty"`

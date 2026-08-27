@@ -107,7 +107,7 @@ components:
 
     Run:
       type: object
-      required: [id, module, kind, state]
+      required: [id, module, kind, state, progress]
       properties:
         id:
           type: string
@@ -134,6 +134,9 @@ components:
               items:
                 type: string
         input:
+          type: object
+          additionalProperties: true
+        progress:
           type: object
           additionalProperties: true
         output:

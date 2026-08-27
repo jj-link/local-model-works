@@ -311,6 +311,11 @@ func (r *Registry) start(module string, spec Spec, runID, ws string, input map[s
 					}
 				}
 			}
+			if to == runs.Succeeded && out != nil {
+				if persistErr := r.runs.SetOutput(lc, runID, out); persistErr != nil {
+					to, code, msg = runs.Failed, "run.output_persist", persistErr.Error()
+				}
+			}
 			// A cancel already moved the run to cancelling: land there.
 			if row, gErr := r.runs.Get(lc, runID); gErr == nil && row.State == string(runs.Cancelling) && !to.Terminal() {
 				to, code = runs.Cancelled, "run.cancelled"

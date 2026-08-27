@@ -248,6 +248,90 @@ func (e RecipeUpdateStatusState) Valid() bool {
 	}
 }
 
+// Defines values for RecipeUpdateTargetPhase.
+const (
+	RecipeUpdateTargetPhaseFetching         RecipeUpdateTargetPhase = "fetching"
+	RecipeUpdateTargetPhaseInstallingRecipe RecipeUpdateTargetPhase = "installing_recipe"
+	RecipeUpdateTargetPhasePreparing        RecipeUpdateTargetPhase = "preparing"
+	RecipeUpdateTargetPhasePulling          RecipeUpdateTargetPhase = "pulling"
+	RecipeUpdateTargetPhaseReady            RecipeUpdateTargetPhase = "ready"
+	RecipeUpdateTargetPhaseRestored         RecipeUpdateTargetPhase = "restored"
+	RecipeUpdateTargetPhaseRestoringOld     RecipeUpdateTargetPhase = "restoring_old"
+	RecipeUpdateTargetPhaseRollbackFailed   RecipeUpdateTargetPhase = "rollback_failed"
+	RecipeUpdateTargetPhaseRollingBack      RecipeUpdateTargetPhase = "rolling_back"
+	RecipeUpdateTargetPhaseSkipped          RecipeUpdateTargetPhase = "skipped"
+	RecipeUpdateTargetPhaseStarting         RecipeUpdateTargetPhase = "starting"
+	RecipeUpdateTargetPhaseStoppingOld      RecipeUpdateTargetPhase = "stopping_old"
+	RecipeUpdateTargetPhaseValidating       RecipeUpdateTargetPhase = "validating"
+	RecipeUpdateTargetPhaseVerifying        RecipeUpdateTargetPhase = "verifying"
+	RecipeUpdateTargetPhaseWaitingOffline   RecipeUpdateTargetPhase = "waiting_offline"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateTargetPhase enum.
+func (e RecipeUpdateTargetPhase) Valid() bool {
+	switch e {
+	case RecipeUpdateTargetPhaseFetching:
+		return true
+	case RecipeUpdateTargetPhaseInstallingRecipe:
+		return true
+	case RecipeUpdateTargetPhasePreparing:
+		return true
+	case RecipeUpdateTargetPhasePulling:
+		return true
+	case RecipeUpdateTargetPhaseReady:
+		return true
+	case RecipeUpdateTargetPhaseRestored:
+		return true
+	case RecipeUpdateTargetPhaseRestoringOld:
+		return true
+	case RecipeUpdateTargetPhaseRollbackFailed:
+		return true
+	case RecipeUpdateTargetPhaseRollingBack:
+		return true
+	case RecipeUpdateTargetPhaseSkipped:
+		return true
+	case RecipeUpdateTargetPhaseStarting:
+		return true
+	case RecipeUpdateTargetPhaseStoppingOld:
+		return true
+	case RecipeUpdateTargetPhaseValidating:
+		return true
+	case RecipeUpdateTargetPhaseVerifying:
+		return true
+	case RecipeUpdateTargetPhaseWaitingOffline:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeUpdateTargetStatus.
+const (
+	RecipeUpdateTargetStatusFailed    RecipeUpdateTargetStatus = "failed"
+	RecipeUpdateTargetStatusPending   RecipeUpdateTargetStatus = "pending"
+	RecipeUpdateTargetStatusRunning   RecipeUpdateTargetStatus = "running"
+	RecipeUpdateTargetStatusSucceeded RecipeUpdateTargetStatus = "succeeded"
+	RecipeUpdateTargetStatusWaiting   RecipeUpdateTargetStatus = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateTargetStatus enum.
+func (e RecipeUpdateTargetStatus) Valid() bool {
+	switch e {
+	case RecipeUpdateTargetStatusFailed:
+		return true
+	case RecipeUpdateTargetStatusPending:
+		return true
+	case RecipeUpdateTargetStatusRunning:
+		return true
+	case RecipeUpdateTargetStatusSucceeded:
+		return true
+	case RecipeUpdateTargetStatusWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TransferState.
 const (
 	TransferStateCancelled    TransferState = "cancelled"
@@ -276,6 +360,15 @@ func (e TransferState) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AffectedHardware defines model for AffectedHardware.
+type AffectedHardware struct {
+	DeploymentIds []string `json:"deployment_ids"`
+	NodeId        string   `json:"node_id"`
+	NodeName      string   `json:"node_name"`
+	NodeStatus    string   `json:"node_status"`
+	State         string   `json:"state"`
 }
 
 // Artifact defines model for Artifact.
@@ -429,6 +522,65 @@ type RecipeImport struct {
 	Source RecipeSource `json:"source"`
 }
 
+// RecipeRepository defines model for RecipeRepository.
+type RecipeRepository struct {
+	CreatedAt          time.Time                 `json:"created_at"`
+	CurrentRecipe      *Recipe                   `json:"current_recipe,omitempty"`
+	HeadCheckedAt      *time.Time                `json:"head_checked_at,omitempty"`
+	Id                 string                    `json:"id"`
+	InstalledCommit    *string                   `json:"installed_commit,omitempty"`
+	ObservedHeadCommit *string                   `json:"observed_head_commit,omitempty"`
+	ObservedHeadTree   *string                   `json:"observed_head_tree,omitempty"`
+	SourcePath         string                    `json:"source_path"`
+	SourceUrl          string                    `json:"source_url"`
+	TrackingRef        string                    `json:"tracking_ref"`
+	UpdateAvailable    bool                      `json:"update_available"`
+	UpdateDiagnostic   *string                   `json:"update_diagnostic,omitempty"`
+	UpdateSupported    bool                      `json:"update_supported"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
+	Versions           []RecipeRepositoryVersion `json:"versions"`
+}
+
+// RecipeRepositoryDetail defines model for RecipeRepositoryDetail.
+type RecipeRepositoryDetail struct {
+	AffectedHardware   []AffectedHardware        `json:"affected_hardware"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	CurrentRecipe      *Recipe                   `json:"current_recipe,omitempty"`
+	HeadCheckedAt      *time.Time                `json:"head_checked_at,omitempty"`
+	Id                 string                    `json:"id"`
+	InstalledCommit    *string                   `json:"installed_commit,omitempty"`
+	ObservedHeadCommit *string                   `json:"observed_head_commit,omitempty"`
+	ObservedHeadTree   *string                   `json:"observed_head_tree,omitempty"`
+	SourcePath         string                    `json:"source_path"`
+	SourceUrl          string                    `json:"source_url"`
+	TrackingRef        string                    `json:"tracking_ref"`
+	UpdateAvailable    bool                      `json:"update_available"`
+	UpdateDiagnostic   *string                   `json:"update_diagnostic,omitempty"`
+	UpdateSupported    bool                      `json:"update_supported"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
+	Versions           []RecipeRepositoryVersion `json:"versions"`
+}
+
+// RecipeRepositoryUpdatePlanRequest defines model for RecipeRepositoryUpdatePlanRequest.
+type RecipeRepositoryUpdatePlanRequest struct {
+	ExpectedHeadCommit string `json:"expected_head_commit"`
+}
+
+// RecipeRepositoryUpdateRequest defines model for RecipeRepositoryUpdateRequest.
+type RecipeRepositoryUpdateRequest struct {
+	ExpectedHeadCommit string `json:"expected_head_commit"`
+	PlanDigest         string `json:"plan_digest"`
+}
+
+// RecipeRepositoryVersion defines model for RecipeRepositoryVersion.
+type RecipeRepositoryVersion struct {
+	Canonical   bool      `json:"canonical"`
+	CommitSha   string    `json:"commit_sha"`
+	InstalledAt time.Time `json:"installed_at"`
+	Recipe      Recipe    `json:"recipe"`
+	TreeSha     *string   `json:"tree_sha,omitempty"`
+}
+
 // RecipeSource defines model for RecipeSource.
 type RecipeSource struct {
 	Path      *string          `json:"path,omitempty"`
@@ -451,6 +603,19 @@ type RecipeTrustRequest struct {
 // RecipeTrustRequestTrustState defines model for RecipeTrustRequest.TrustState.
 type RecipeTrustRequestTrustState string
 
+// RecipeUpdateAccepted defines model for RecipeUpdateAccepted.
+type RecipeUpdateAccepted struct {
+	RunId openapi_types.UUID `json:"run_id"`
+}
+
+// RecipeUpdatePlan defines model for RecipeUpdatePlan.
+type RecipeUpdatePlan struct {
+	Diagnostics []Diagnostic         `json:"diagnostics"`
+	PlanDigest  string               `json:"plan_digest"`
+	Ready       bool                 `json:"ready"`
+	Targets     []RecipeUpdateTarget `json:"targets"`
+}
+
 // RecipeUpdateStatus defines model for RecipeUpdateStatus.
 type RecipeUpdateStatus struct {
 	CandidateRevision *string                 `json:"candidate_revision,omitempty"`
@@ -465,6 +630,28 @@ type RecipeUpdateStatus struct {
 
 // RecipeUpdateStatusState defines model for RecipeUpdateStatus.State.
 type RecipeUpdateStatusState string
+
+// RecipeUpdateTarget defines model for RecipeUpdateTarget.
+type RecipeUpdateTarget struct {
+	CurrentStep             int                      `json:"current_step"`
+	ErrorCode               *string                  `json:"error_code,omitempty"`
+	ErrorMessage            *string                  `json:"error_message,omitempty"`
+	NodeId                  string                   `json:"node_id"`
+	NodeName                string                   `json:"node_name"`
+	NodeStatus              string                   `json:"node_status"`
+	Phase                   RecipeUpdateTargetPhase  `json:"phase"`
+	Rank                    int32                    `json:"rank"`
+	ReplacementDeploymentId *string                  `json:"replacement_deployment_id,omitempty"`
+	SourceDeploymentId      string                   `json:"source_deployment_id"`
+	Status                  RecipeUpdateTargetStatus `json:"status"`
+	TotalSteps              int                      `json:"total_steps"`
+}
+
+// RecipeUpdateTargetPhase defines model for RecipeUpdateTarget.Phase.
+type RecipeUpdateTargetPhase string
+
+// RecipeUpdateTargetStatus defines model for RecipeUpdateTarget.Status.
+type RecipeUpdateTargetStatus string
 
 // Transfer defines model for Transfer.
 type Transfer struct {
@@ -547,6 +734,12 @@ type UpdateRecipeDraftJSONRequestBody UpdateRecipeDraftJSONBody
 // InstallRecipeDraftJSONRequestBody defines body for InstallRecipeDraft for application/json ContentType.
 type InstallRecipeDraftJSONRequestBody InstallRecipeDraftJSONBody
 
+// StartRecipeRepositoryUpdateJSONRequestBody defines body for StartRecipeRepositoryUpdate for application/json ContentType.
+type StartRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdateRequest
+
+// PlanRecipeRepositoryUpdateJSONRequestBody defines body for PlanRecipeRepositoryUpdate for application/json ContentType.
+type PlanRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdatePlanRequest
+
 // ImportRecipeJSONRequestBody defines body for ImportRecipe for application/json ContentType.
 type ImportRecipeJSONRequestBody = RecipeImport
 
@@ -585,6 +778,18 @@ type ServerInterface interface {
 
 	// (POST /recipe-drafts/{id}/package)
 	PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
+
+	// (GET /recipe-repositories)
+	ListRecipeRepositories(w http.ResponseWriter, r *http.Request)
+
+	// (GET /recipe-repositories/{id})
+	GetRecipeRepository(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /recipe-repositories/{id}/update)
+	StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /recipe-repositories/{id}/update/plan)
+	PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
 
 	// (GET /recipes)
 	ListRecipes(w http.ResponseWriter, r *http.Request)
@@ -663,6 +868,26 @@ func (_ Unimplemented) InstallRecipeDraft(w http.ResponseWriter, r *http.Request
 
 // (POST /recipe-drafts/{id}/package)
 func (_ Unimplemented) PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-repositories)
+func (_ Unimplemented) ListRecipeRepositories(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-repositories/{id})
+func (_ Unimplemented) GetRecipeRepository(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-repositories/{id}/update)
+func (_ Unimplemented) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-repositories/{id}/update/plan)
+func (_ Unimplemented) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -979,6 +1204,98 @@ func (siw *ServerInterfaceWrapper) PackageRecipeDraft(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PackageRecipeDraft(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecipeRepositories operation middleware
+func (siw *ServerInterfaceWrapper) ListRecipeRepositories(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecipeRepositories(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeRepository operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeRepository(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeRepository(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartRecipeRepositoryUpdate operation middleware
+func (siw *ServerInterfaceWrapper) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRecipeRepositoryUpdate(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanRecipeRepositoryUpdate operation middleware
+func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanRecipeRepositoryUpdate(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1355,6 +1672,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipe-drafts/{id}/package", wrapper.PackageRecipeDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-repositories", wrapper.ListRecipeRepositories)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-repositories/{id}", wrapper.GetRecipeRepository)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/update", wrapper.StartRecipeRepositoryUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/update/plan", wrapper.PlanRecipeRepositoryUpdate)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipes", wrapper.ListRecipes)

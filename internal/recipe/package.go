@@ -513,6 +513,16 @@ func readBlob(dir string, d ociDescriptor) error {
 // PackFromDir reads a recipe directory (recipe.yaml + declared assets),
 // validates it, and returns the pack result.
 func PackFromDir(dir string, v *Validator) (manifest *Manifest, res *PackResult, err error) {
+	return packFromDir(dir, v, nil)
+}
+
+// PackRepositoryDir packages a native repository bundle while pinning its
+// canonical metadata.source to the exact checked-out commit.
+func PackRepositoryDir(dir string, v *Validator, source Source) (manifest *Manifest, res *PackResult, err error) {
+	return packFromDir(dir, v, &source)
+}
+
+func packFromDir(dir string, v *Validator, source *Source) (manifest *Manifest, res *PackResult, err error) {
 	raw, err := os.ReadFile(path.Join(dir, "recipe.yaml"))
 	if os.IsNotExist(err) {
 		raw, err = os.ReadFile(path.Join(dir, "recipe.json"))
@@ -530,6 +540,19 @@ func PackFromDir(dir string, v *Validator) (manifest *Manifest, res *PackResult,
 	}
 	if len(diags) > 0 {
 		return nil, nil, fmt.Errorf("recipe invalid: %v", diags)
+	}
+	if source != nil {
+		m.Metadata.Source = source
+		doc, err = json.Marshal(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, diags, err = v.ValidateStrict(doc); err != nil {
+			return nil, nil, err
+		}
+		if len(diags) > 0 {
+			return nil, nil, fmt.Errorf("recipe invalid: %v", diags)
+		}
 	}
 	assets := map[string][]byte{}
 	for _, a := range m.Assets {

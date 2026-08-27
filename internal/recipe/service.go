@@ -95,17 +95,18 @@ type RecipeDetail struct {
 }
 
 type Service struct {
-	db             *sql.DB
-	q              *db.Queries
-	bus            *events.EventBus
-	validator      *Validator
-	catalogSchema  *jsonschema.Schema
-	trustKey       []byte // PEM, empty when unconfigured
-	catalogRoot    string
-	packageRoot    string
-	onInstalled    func()
-	updateMu       sync.Mutex
-	resolveGitHead func(context.Context, string) (string, string, error)
+	db                  *sql.DB
+	q                   *db.Queries
+	bus                 *events.EventBus
+	validator           *Validator
+	catalogSchema       *jsonschema.Schema
+	trustKey            []byte // PEM, empty when unconfigured
+	catalogRoot         string
+	packageRoot         string
+	onInstalled         func()
+	updateMu            sync.Mutex
+	resolveGitHead      func(context.Context, string) (string, string, error)
+	repositoryCompilers RepositoryCompilerRegistry
 }
 
 // New builds the store. packageRoot holds complete immutable OCI packages.
@@ -239,6 +240,13 @@ func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeS
 		return Recipe{}, err
 	}
 	if err == nil {
+		if _, linkErr := qtx.GetRecipeRepositoryVersionByDigest(ctx, digest); errors.Is(linkErr, sql.ErrNoRows) {
+			if linkErr = attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, row.InstalledAt); linkErr != nil {
+				return Recipe{}, linkErr
+			}
+		} else if linkErr != nil {
+			return Recipe{}, linkErr
+		}
 		if err := tx.Commit(); err != nil {
 			return Recipe{}, err
 		}
@@ -303,6 +311,13 @@ func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeS
 		License: nullStr(manifest.Metadata.License), Source: string(srcJSON),
 		TrustState: trustState, Manifest: string(mj),
 	}); err != nil {
+		return Recipe{}, err
+	}
+	createdRow, err := qtx.GetRecipe(ctx, digest)
+	if err != nil {
+		return Recipe{}, err
+	}
+	if err := attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, createdRow.InstalledAt); err != nil {
 		return Recipe{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -377,29 +392,33 @@ func (s *Service) Get(ctx context.Context, digest string) (RecipeDetail, error) 
 	return RecipeDetail{Recipe: base, Manifest: json.RawMessage(row.Manifest)}, nil
 }
 
-// List returns the most recently installed version of each recipe name.
-// Older immutable versions remain addressable by digest for existing deployments.
+// List returns one current package per repository plus unlinked local packages.
+// Repository versions remain addressable by digest.
 func (s *Service) List(ctx context.Context) ([]Recipe, error) {
-	rows, err := s.q.ListRecipes(ctx)
+	repositories, err := s.ListRepositories(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Recipe, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
-	for i := range rows {
-		if _, ok := seen[rows[i].Name]; ok {
-			continue
+	out := make([]Recipe, 0, len(repositories))
+	for _, repository := range repositories {
+		if repository.Current != nil {
+			out = append(out, *repository.Current)
 		}
-		seen[rows[i].Name] = struct{}{}
-		var m *Manifest
-		if err := json.Unmarshal([]byte(rows[i].Manifest), &m); err != nil {
+	}
+	rows, err := s.q.ListUnlinkedRecipes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		var manifest *Manifest
+		if err := json.Unmarshal([]byte(row.Manifest), &manifest); err != nil {
 			return nil, err
 		}
-		v, err := s.render(ctx, rows[i], m)
+		rendered, err := s.render(ctx, row, manifest)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, v)
+		out = append(out, rendered)
 	}
 	return out, nil
 }
@@ -477,6 +496,9 @@ func (s *Service) Delete(ctx context.Context, digest, ifMatch string) error {
 		if err == nil && runRefs > 0 {
 			err = fmt.Errorf("%w: %d run(s) reference this recipe", ErrReference, runRefs)
 		}
+	}
+	if err == nil {
+		err = detachRepositoryVersion(ctx, qtx, digest)
 	}
 	if err == nil {
 		err = qtx.DeleteRecipe(ctx, digest)
@@ -728,9 +750,15 @@ func toSpecDesc(d ociDescriptor) ocispec.Descriptor {
 
 // render fills the API view from a store row + parsed manifest.
 func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recipe, error) {
-	versions, err := s.q.ListRecipeVersions(ctx, m.Metadata.Name)
-	if err != nil {
-		return Recipe{}, err
+	versionCount := 1
+	if link, linkErr := s.q.GetRecipeRepositoryVersionByDigest(ctx, row.Digest); linkErr == nil {
+		versions, versionsErr := s.q.ListRecipeRepositoryVersions(ctx, link.RepositoryID)
+		if versionsErr != nil {
+			return Recipe{}, versionsErr
+		}
+		versionCount = len(versions)
+	} else if !errors.Is(linkErr, sql.ErrNoRows) {
+		return Recipe{}, linkErr
 	}
 	v := Recipe{
 		Digest:        row.Digest,
@@ -746,7 +774,7 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 		ArtifactCount: len(m.Artifacts),
 		HighRisk:      m.HighRiskPermissions(),
 		InstalledAt:   row.InstalledAt,
-		VersionCount:  len(versions),
+		VersionCount:  versionCount,
 	}
 	update, err := s.UpdateStatus(ctx, row.Digest)
 	if err != nil {

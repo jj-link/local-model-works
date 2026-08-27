@@ -131,6 +131,102 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /recipe-repositories:
+    get:
+      tags: [recipes]
+      operationId: listRecipeRepositories
+      responses:
+        '200':
+          description: One logical recipe per normalized Git repository and source path
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecipeRepository'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /recipe-repositories/{id}:
+    get:
+      tags: [recipes]
+      operationId: getRecipeRepository
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Repository recipe and hardware using older versions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeRepositoryDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /recipe-repositories/{id}/update/plan:
+    post:
+      tags: [recipes]
+      operationId: planRecipeRepositoryUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRepositoryUpdatePlanRequest'
+      responses:
+        '200':
+          description: Exact hardware replacement preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdatePlan'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /recipe-repositories/{id}/update:
+    post:
+      tags: [recipes]
+      operationId: startRecipeRepositoryUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRepositoryUpdateRequest'
+      responses:
+        '202':
+          description: Durable recipe update run accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdateAccepted'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
   /recipes:
     get:
       tags: [recipes]
@@ -487,6 +583,170 @@ components:
         created_at:
           type: string
           format: date-time
+
+    RecipeRepositoryVersion:
+      type: object
+      required: [recipe, commit_sha, canonical, installed_at]
+      properties:
+        recipe:
+          $ref: '#/components/schemas/Recipe'
+        commit_sha:
+          type: string
+        tree_sha:
+          type: string
+        canonical:
+          type: boolean
+        installed_at:
+          type: string
+          format: date-time
+
+    RecipeRepository:
+      type: object
+      required:
+        [id, source_url, source_path, tracking_ref, update_available,
+         update_supported, versions, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        source_url:
+          type: string
+        source_path:
+          type: string
+        tracking_ref:
+          type: string
+        current_recipe:
+          $ref: '#/components/schemas/Recipe'
+        installed_commit:
+          type: string
+        observed_head_commit:
+          type: string
+        observed_head_tree:
+          type: string
+        head_checked_at:
+          type: string
+          format: date-time
+        update_available:
+          type: boolean
+        update_supported:
+          type: boolean
+        update_diagnostic:
+          type: string
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipeRepositoryVersion'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AffectedHardware:
+      type: object
+      required: [node_id, node_name, node_status, deployment_ids, state]
+      properties:
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+        deployment_ids:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+
+    RecipeRepositoryDetail:
+      allOf:
+        - $ref: '#/components/schemas/RecipeRepository'
+        - type: object
+          required: [affected_hardware]
+          properties:
+            affected_hardware:
+              type: array
+              items:
+                $ref: '#/components/schemas/AffectedHardware'
+
+    RecipeRepositoryUpdatePlanRequest:
+      type: object
+      required: [expected_head_commit]
+      properties:
+        expected_head_commit:
+          type: string
+
+    RecipeRepositoryUpdateRequest:
+      type: object
+      required: [expected_head_commit, plan_digest]
+      properties:
+        expected_head_commit:
+          type: string
+        plan_digest:
+          type: string
+
+    RecipeUpdateTarget:
+      type: object
+      required:
+        [source_deployment_id, node_id, node_name, node_status, rank,
+         status, phase, current_step, total_steps]
+      properties:
+        source_deployment_id:
+          type: string
+        replacement_deployment_id:
+          type: string
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+        rank:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum: [pending, running, waiting, succeeded, failed]
+        phase:
+          type: string
+          enum:
+            [fetching, validating, installing_recipe, stopping_old,
+             waiting_offline, preparing, pulling, starting, verifying, ready,
+             rolling_back, restoring_old, restored, skipped, rollback_failed]
+        current_step:
+          type: integer
+        total_steps:
+          type: integer
+        error_code:
+          type: string
+        error_message:
+          type: string
+
+    RecipeUpdatePlan:
+      type: object
+      required: [plan_digest, ready, targets, diagnostics]
+      properties:
+        plan_digest:
+          type: string
+        ready:
+          type: boolean
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipeUpdateTarget'
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
+    RecipeUpdateAccepted:
+      type: object
+      required: [run_id]
+      properties:
+        run_id:
+          type: string
+          format: uuid
 
     RecipeSource:
       type: object

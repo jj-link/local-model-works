@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -64,6 +66,44 @@ type Source struct {
 	URL      string `json:"url"`
 	Revision string `json:"revision,omitempty"`
 	Path     string `json:"path,omitempty"`
+}
+
+// RepositoryIdentity returns the stable identity of a repository-backed
+// recipe. Commits are versions and are deliberately excluded from identity.
+func RepositoryIdentity(source Source) (id, normalizedURL, normalizedPath string, err error) {
+	rawURL := strings.TrimSpace(source.URL)
+	if rawURL == "" {
+		return "", "", "", fmt.Errorf("recipe repository: source URL is required")
+	}
+
+	normalizedURL = strings.TrimRight(rawURL, "/")
+	parsed, parseErr := url.Parse(rawURL)
+	if parseErr == nil && strings.EqualFold(parsed.Scheme, "https") && strings.EqualFold(parsed.Hostname(), "github.com") {
+		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", "", "", fmt.Errorf("recipe repository: GitHub URL must not contain credentials, query, or fragment")
+		}
+		parsed.Scheme = "https"
+		parsed.Host = "github.com"
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		if strings.HasSuffix(strings.ToLower(parsed.Path), ".git") {
+			parsed.Path = parsed.Path[:len(parsed.Path)-4]
+		}
+		normalizedURL = parsed.String()
+	}
+	if normalizedURL == "" {
+		return "", "", "", fmt.Errorf("recipe repository: source URL is required")
+	}
+
+	rawPath := strings.ReplaceAll(strings.TrimSpace(source.Path), "\\", "/")
+	normalizedPath = path.Clean(rawPath)
+	if rawPath == "" {
+		normalizedPath = "."
+	}
+	if normalizedPath == ".." || strings.HasPrefix(normalizedPath, "../") || path.IsAbs(normalizedPath) {
+		return "", "", "", fmt.Errorf("recipe repository: source path %q escapes the repository", source.Path)
+	}
+	id = "repo-" + hex.EncodeToString([]byte(normalizedURL+"\n"+normalizedPath))
+	return id, normalizedURL, normalizedPath, nil
 }
 
 type Compatibility struct {

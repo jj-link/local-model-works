@@ -91,11 +91,28 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 // cancel — POST /runs/{id}/cancel
 func (m *Module) cancel(w http.ResponseWriter, r *http.Request) {
 	rid := chi.URLParam(r, "id")
-	if err := m.env.Runs.Cancel(r.Context(), rid); err != nil {
+	run, err := m.env.Runs.Get(r.Context(), rid)
+	if err != nil {
 		httpx.HandleErr(w, err)
 		return
 	}
-	run, err := m.env.Runs.Get(r.Context(), rid)
+	switch run.Kind {
+	case "recipe-update":
+		err = m.env.Deploy.CancelRepositoryUpdate(r.Context(), rid)
+	case "serve":
+		if run.DeploymentID == nil {
+			err = fmt.Errorf("serve run %s has no deployment", rid)
+		} else {
+			_, err = m.env.Deploy.Stop(r.Context(), *run.DeploymentID)
+		}
+	default:
+		err = m.env.Jobs.Cancel(r.Context(), rid)
+	}
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	run, err = m.env.Runs.Get(r.Context(), rid)
 	if err != nil {
 		httpx.HandleErr(w, err)
 		return
