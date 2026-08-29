@@ -409,6 +409,22 @@ func pathWithin(path, root string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
+func makeTransferredArtifactMountable(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.IsDir():
+			return os.Chmod(path, info.Mode().Perm()|0o055)
+		case info.Mode().IsRegular():
+			return os.Chmod(path, info.Mode().Perm()|0o044)
+		default:
+			return nil
+		}
+	})
+}
+
 func (a *Agent) handleTransfer(ctx context.Context, command *agentv1.TransferCommand) {
 	if command.GetRole() != "dest" {
 		return
@@ -451,7 +467,7 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		return fmt.Errorf("manifest: %w", err)
 	}
 	staging := filepath.Join(a.cfg.TransferDir(), ".untrusted-"+command.GetTransferId())
-	if err := os.MkdirAll(staging, 0o750); err != nil {
+	if err := os.MkdirAll(staging, 0o755); err != nil {
 		return err
 	}
 	var done uint64
@@ -464,7 +480,7 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		if entry.GetSymlinkTarget() != "" {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 			return err
 		}
 		offset := uint64(0)
@@ -524,7 +540,7 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		if filepath.IsAbs(target) || !pathWithin(filepath.Join(filepath.Dir(link), target), staging) {
 			return fmt.Errorf("unsafe symlink target for %s", entry.GetPath())
 		}
-		if err := os.MkdirAll(filepath.Dir(link), 0o750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 			return err
 		}
 		if err := os.Symlink(filepath.ToSlash(target), link); err != nil && !os.IsExist(err) {
@@ -543,7 +559,7 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 	if _, err := os.Stat(final); err == nil {
 		return fmt.Errorf("destination already exists")
 	}
-	if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return err
 	}
 	rootFile := len(manifestResponse.Msg.GetFiles()) == 1 && manifestResponse.Msg.GetFiles()[0].GetPath() == transferRootFile
@@ -556,6 +572,9 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		}
 	} else if err := os.Rename(staging, final); err != nil {
 		return err
+	}
+	if err := makeTransferredArtifactMountable(final); err != nil {
+		return fmt.Errorf("make transferred artifact mountable: %w", err)
 	}
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_PlacementReport{
 		PlacementReport: &agentv1.PlacementReport{

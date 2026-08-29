@@ -100,7 +100,7 @@
     "templateString": {
       "type": "string",
       "maxLength": 8192,
-      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.address|artifact\\.[a-z0-9][a-z0-9_]*\\.path|profile\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
+      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.(?:address|node_address|interface|rdma_device|gid_index)|artifact\\.[a-z0-9][a-z0-9_]*\\.path|profile\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
     },
     "variantSource": {
 
@@ -135,6 +135,7 @@
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
         "kind": { "type": "string", "enum": ["model", "dataset", "adapter", "checkpoint", "file"] },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
         "source": { "$ref": "#/$defs/variantSource" },
         "defaultVariant": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
         "variants": {

@@ -1,10 +1,12 @@
 /// <reference types="@testing-library/jest-dom" />
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
+import { CreateFabricDialog } from "~/components/dialogs/create-fabric-dialog";
 import NodesRoute from "~/routes/fleet/nodes/index";
 import DeploymentsRoute from "~/routes/serving/deployments/index";
 import { server } from "../msw/server";
@@ -129,7 +131,10 @@ describe("Fleet and Serving workload views", () => {
     installHandlers();
     renderRoute(<DeploymentsRoute />, "/serving/deployments");
 
-    const table = await screen.findByRole("table");
+    const table = (await screen.findAllByRole("table")).find((candidate) =>
+      within(candidate).queryByRole("columnheader", { name: "Deployment" }));
+    expect(table).toBeDefined();
+    if (!table) throw new Error("deployment table not found");
     expect(within(table).getByRole("columnheader", { name: "Model" })).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Engine" })).toBeInTheDocument();
     const rows = within(table).getAllByRole("row").slice(1);
@@ -144,5 +149,111 @@ describe("Fleet and Serving workload views", () => {
     expect(rows[0]).toHaveTextContent("healthy");
     expect(rows[1]).toHaveTextContent("Not reported");
     expect(rows[1]).toHaveTextContent("degraded");
+  });
+
+  it("auto-selects each node's RDMA interface and IPv4-mapped GID", async () => {
+    const head = {
+      ...idleNode,
+      display_name: "Spark Head",
+      inventory: {
+        arch: "arm64",
+        hostname: "spark2",
+        os: "linux",
+        interfaces: [
+          { name: "tailscale0", addresses: ["100.92.139.82"] },
+          { name: "enp1s0f1np1", addresses: ["10.0.0.1"] },
+        ],
+        rdma_devices: [{
+          name: "rocep1s0f1",
+          network_interfaces: ["enp1s0f1np1"],
+          ports: [{
+            name: "1",
+            gids: [
+              { index: 3, value: "0000:0000:0000:0000:0000:0000:0000:0000", type: "RoCE v2" },
+              { index: 4, value: "0000:0000:0000:0000:0000:ffff:0a00:0001", type: "IB/RoCE v1" },
+              { index: 5, value: "0000:0000:0000:0000:0000:ffff:0a00:0001", type: "RoCE v2" },
+            ],
+          }],
+        }],
+      },
+    };
+    const worker = {
+      ...busyNode,
+      display_name: "Spark Worker",
+      inventory: {
+        ...busyNode.inventory,
+        arch: "arm64",
+        hostname: "spark3",
+        interfaces: [
+          { name: "tailscale0", addresses: ["100.121.117.65"] },
+          { name: "enp1s0f0np0", addresses: ["10.0.0.2"] },
+        ],
+        rdma_devices: [{
+          name: "rocep1s0f0",
+          network_interfaces: ["enp1s0f0np0"],
+          ports: [{
+            name: "1",
+            gids: [
+              { index: 3, value: "0000:0000:0000:0000:0000:0000:0000:0000", type: "RoCE v2" },
+              { index: 5, value: "0000:0000:0000:0000:0000:ffff:0a00:0002", type: "IB/RoCE v1" },
+              { index: 6, value: "0000:0000:0000:0000:0000:ffff:0a00:0002", type: "RoCE v2" },
+            ],
+          }],
+        }],
+      },
+    };
+    let requestBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("*/api/v1/nodes", () => HttpResponse.json([head, worker])),
+      http.post("*/api/v1/fabrics", async ({ request }) => {
+        requestBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          id: "66666666-6666-4666-8666-666666666666",
+          name: "spark-p2p",
+          transport: "roce",
+          members: [head.id, worker.id],
+          bindings: requestBody.bindings,
+          state: "ok",
+          version: "v1",
+          created_at: "2026-01-03T00:00:00Z",
+          updated_at: "2026-01-03T00:00:00Z",
+        }, { status: 201 });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderRoute(
+      <CreateFabricDialog open onOpenChange={() => undefined} />,
+      "/fleet/fabrics",
+    );
+    await user.type(await screen.findByLabelText("Name"), "spark-p2p");
+    await user.click(screen.getByRole("button", { name: "Add Spark Head" }));
+    await user.click(screen.getByRole("button", { name: "Add Spark Worker" }));
+
+    expect(screen.getByLabelText("Spark Head interface")).toHaveValue("enp1s0f1np1");
+    expect(screen.getByLabelText("Spark Head fabric address")).toHaveValue("10.0.0.1");
+    expect(screen.getByLabelText("Spark Head RDMA device")).toHaveValue("rocep1s0f1");
+    expect(screen.getByLabelText("Spark Head GID index")).toHaveValue("5");
+    expect(screen.getByLabelText("Spark Worker interface")).toHaveValue("enp1s0f0np0");
+    expect(screen.getByLabelText("Spark Worker GID index")).toHaveValue("6");
+    await user.click(screen.getByRole("button", { name: "Create & validate" }));
+
+    await waitFor(() => expect(requestBody).toBeDefined());
+    expect(requestBody?.bindings).toEqual([
+      {
+        node_id: head.id,
+        interface_name: "enp1s0f1np1",
+        address: "10.0.0.1",
+        rdma_device: "rocep1s0f1",
+        gid_index: 5,
+      },
+      {
+        node_id: worker.id,
+        interface_name: "enp1s0f0np0",
+        address: "10.0.0.2",
+        rdma_device: "rocep1s0f0",
+        gid_index: 6,
+      },
+    ]);
   });
 });

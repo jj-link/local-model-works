@@ -64,6 +64,7 @@ message AgentMessage {
     TransferProgress transfer_progress = 8;
     RotateCertificateRequest rotate_certificate = 9;
     Ack ack = 10;
+    ArtifactProgress artifact_progress = 11;
   }
 }
 
@@ -139,17 +140,24 @@ message NetworkInterface {
   uint32 mtu = 3;
   uint32 link_mbps = 4;
 }
-
 message RdmaDevice {
   string name = 1;
   string vendor = 2;
   repeated RdmaPort ports = 3;
+  repeated string network_interfaces = 4;
 }
 
 message RdmaPort {
   string name = 1;
   string state = 2;
   uint32 link_rate_gbps = 3;
+  repeated RdmaGID gids = 4;
+}
+
+message RdmaGID {
+  int32 index = 1;
+  string value = 2;
+  string type = 3;
 }
 
 message CacheRoot {
@@ -285,6 +293,7 @@ enum ArtifactOp {
   ARTIFACT_OP_UNSPECIFIED = 0;
   ARTIFACT_OP_VALIDATE = 1;
   ARTIFACT_OP_FETCH = 2;
+  ARTIFACT_OP_CANCEL = 3;
 }
 
 message ArtifactCommand {
@@ -296,6 +305,8 @@ message ArtifactCommand {
   string cache_root = 4;
   // Scoped bearer token lives only in this mTLS command.
   string bearer_token = 5;
+  // Original fetch/validate command to cancel when op is CANCEL.
+  string target_command_id = 6;
 }
 message PlacementReport {
   string artifact_id = 1;
@@ -319,6 +330,17 @@ message TransferProgress {
   string transfer_id = 1;
   uint64 bytes_done = 2;
   uint64 bytes_total = 3;
+}
+
+message ArtifactProgress {
+  string command_id = 1;
+  string artifact_identity = 2;
+  string phase = 3; // metadata | downloading | validating | complete
+  string current_file = 4;
+  uint64 bytes_done = 5;
+  uint64 bytes_total = 6;
+  uint32 files_done = 7;
+  uint32 files_total = 8;
 }
 
 message RotateCertificateRequest {

@@ -15,7 +15,6 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
 	"github.com/jj-link/local-model-works/internal/hardware"
-	"github.com/jj-link/local-model-works/internal/hf"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -362,18 +361,12 @@ func placementCandidates(ctx context.Context, root string) []placementCandidate 
 					continue
 				}
 				snapshotDir := filepath.Join(modelDir, "snapshots", snapshot.Name())
-				diagnostics := hf.ValidateSnapshot(snapshotDir, modelDir)
 				candidate := placementCandidate{
-					Identity: identity,
-					Path:     modelDir,
-					Size:     regularTreeSize(ctx, modelDir),
-					State:    "valid",
-				}
-				for _, diagnostic := range diagnostics {
-					candidate.Diagnostics = append(candidate.Diagnostics, &agentv1.Diagnostic{
-						Code: diagnostic.Code, Severity: diagnostic.Severity,
-						Message: diagnostic.Message, Resource: diagnostic.Path,
-					})
+					Identity:    identity,
+					Path:        modelDir,
+					Size:        regularTreeSize(ctx, modelDir),
+					State:       "valid",
+					Diagnostics: hfSnapshotDiagnostics(ctx, identity, modelDir, snapshotDir),
 				}
 				if len(candidate.Diagnostics) > 0 {
 					candidate.State = "invalid"

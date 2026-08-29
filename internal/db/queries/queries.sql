@@ -100,27 +100,21 @@ FROM nodes WHERE status = 'pending' ORDER BY created_at;
 
 -- name: CreateFabric :exec
 INSERT INTO fabrics (id, name, transport, interface_name, address, rdma_device,
-                     members, state, diagnostics, version)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'incomplete', '[]', ?);
+                     members, bindings, state, diagnostics, version)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'incomplete', '[]', ?);
 
 -- name: GetFabric :one
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics WHERE id = ?;
+SELECT * FROM fabrics WHERE id = ?;
 
 -- name: GetFabricByIfMatch :one
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics WHERE id = ? AND version = ?;
+SELECT * FROM fabrics WHERE id = ? AND version = ?;
 
 -- name: ListFabrics :many
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics ORDER BY name;
+SELECT * FROM fabrics ORDER BY name;
 
 -- name: UpdateFabric :exec
 UPDATE fabrics SET transport = ?, interface_name = ?, address = ?, rdma_device = ?,
-                   members = ?, state = ?, diagnostics = ?, version = ?,
+                   members = ?, bindings = ?, state = ?, diagnostics = ?, version = ?,
                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ? AND version = ?;
 
@@ -386,6 +380,11 @@ WHERE id = ? AND desired_state = 'stopped' AND observed_state = 'stopped';
 
 -- name: UpdateDeploymentFabric :exec
 UPDATE deployments SET fabric = ? WHERE id = ?;
+
+-- name: UpdateDeploymentPlacement :exec
+UPDATE deployments SET placement = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
 
 -- name: UpdateDeploymentRunID :exec
 UPDATE deployments SET run_id = ?,

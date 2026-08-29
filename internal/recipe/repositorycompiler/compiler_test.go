@@ -94,6 +94,55 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 		CommitSHA: strings.Repeat("c", 40), TreeSHA: strings.Repeat("d", 40),
 	}
 	assertDeterministic(t, &MiaDeepSeekDSparkCompiler{validator: validator}, deepSource, deepCheckout)
+
+	glmCheckout := t.TempDir()
+	for _, name := range []string{"Dockerfile", "start.sh", ".env.example"} {
+		target := filepath.Join(glmCheckout, name)
+		if err := os.WriteFile(target, []byte("# pinned upstream contract\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for asset := range glm53UpstreamAssets {
+		target := filepath.Join(glmCheckout, filepath.FromSlash(asset))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("# reviewed upstream asset\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	glmSource := recipe.RepositorySource{
+		RepositoryID: repositoryID(t, GLM53RepositoryURL), URL: GLM53RepositoryURL, Path: ".",
+		CommitSHA: strings.Repeat("e", 40), TreeSHA: strings.Repeat("f", 40),
+	}
+	glmCompiler := &MiaGLM53EXL3Compiler{validator: validator}
+	assertDeterministic(t, glmCompiler, glmSource, glmCheckout)
+	compiledGLM, err := glmCompiler.Compile(context.Background(), glmSource, glmCheckout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	glmManifest, err := recipe.Parse(compiledGLM.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if glmManifest.Metadata.Name != "glm53-flash-exl3-dflash2-spark-tp2" ||
+		glmManifest.Metadata.Model != "GLM-5.3-Flash-EXL3" ||
+		glmManifest.Metadata.License != "MIT" ||
+		glmManifest.Compatibility.NodeCount != 2 ||
+		len(glmManifest.Artifacts) != 2 ||
+		glmManifest.Artifacts[0].SizeBytes == 0 {
+		t.Fatalf("managed GLM contract = %+v", glmManifest)
+	}
+	if got := glmManifest.Workloads[0].Image.Digest; got != "sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58" {
+		t.Fatalf("GLM image digest = %q", got)
+	}
+	if err := os.Remove(filepath.Join(glmCheckout, "overlay", "patch_glm5_drafter_group.py")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = glmCompiler.Compile(context.Background(), glmSource, glmCheckout, nil)
+	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
+		t.Fatalf("GLM layout error = %v", err)
+	}
 }
 
 func TestRegistryRejectsUnsupportedImperativeRepository(t *testing.T) {

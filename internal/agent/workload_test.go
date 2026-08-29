@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jj-link/local-model-works/internal/config"
 	"github.com/jj-link/local-model-works/internal/runtime"
@@ -221,6 +222,34 @@ func TestExitedStateCarriesCrashMetadata(t *testing.T) {
 		}
 	default:
 		t.Fatal("missing state update")
+	}
+}
+
+func TestRunningStateRefreshesWithoutTransition(t *testing.T) {
+	info := &runtime.ContainerInfo{
+		ID:     "container-running",
+		State:  "running",
+		Labels: runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "serving"),
+	}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", &ownershipRuntime{info: info}, nil)
+
+	a.workloads.reportState(info)
+	<-a.sendQ
+
+	a.workloads.mu.Lock()
+	last := a.workloads.last[info.ID]
+	last.reportedAt = time.Now().Add(-stateRefreshPeriod)
+	a.workloads.last[info.ID] = last
+	a.workloads.mu.Unlock()
+
+	a.workloads.reportState(info)
+	select {
+	case message := <-a.sendQ:
+		if update := message.GetStateUpdate(); update == nil || update.GetState() != "running" {
+			t.Fatalf("refresh message = %+v, want running state update", message)
+		}
+	default:
+		t.Fatal("missing periodic running state refresh")
 	}
 }
 

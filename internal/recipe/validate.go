@@ -415,9 +415,9 @@ func checkTemplateVar(tv string, m *Manifest, profileNames []string) error {
 	switch tv {
 	case TemplNodeID, TemplNodeRank, TemplNodeAddress:
 		return nil
-	case TemplFabricAddr:
+	case TemplFabricAddr, TemplFabricNodeAddr, TemplFabricInterface, TemplFabricRDMADevice, TemplFabricGIDIndex:
 		if !m.HasFabricRequirement() {
-			return fmt.Errorf("fabric address template used by a recipe without a fabric requirement")
+			return fmt.Errorf("fabric template used by a recipe without a fabric requirement")
 		}
 		return nil
 	}

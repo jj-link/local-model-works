@@ -40,13 +40,17 @@ func toProtoInventory(inv hardware.Inventory) *agentv1.Inventory {
 		})
 	}
 	for _, d := range inv.RDMADevices {
-		p := &agentv1.RdmaDevice{Name: d.Name, Vendor: d.Vendor}
+		p := &agentv1.RdmaDevice{
+			Name: d.Name, Vendor: d.Vendor, NetworkInterfaces: d.NetworkInterfaces,
+		}
 		for _, port := range d.Ports {
-			p.Ports = append(p.Ports, &agentv1.RdmaPort{
-				Name:         port.Name,
-				State:        port.State,
-				LinkRateGbps: uint32(port.LinkRateGbps),
-			})
+			converted := &agentv1.RdmaPort{
+				Name: port.Name, State: port.State, LinkRateGbps: uint32(port.LinkRateGbps),
+			}
+			for _, gid := range port.GIDs {
+				converted.Gids = append(converted.Gids, &agentv1.RdmaGID{Index: int32(gid.Index), Value: gid.Value, Type: gid.Type})
+			}
+			p.Ports = append(p.Ports, converted)
 		}
 		out.RdmaDevices = append(out.RdmaDevices, p)
 	}
@@ -77,10 +81,10 @@ func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 			SwapUsedBytes: t.SwapUsedBytes,
 		},
 		Network: &agentv1.NetworkTelemetry{
-			RxBytes:           t.NetRxBytes,
-			TxBytes:           t.NetTxBytes,
-			RxBytesPerSecond:  t.NetRxBytesPerSec,
-			TxBytesPerSecond:  t.NetTxBytesPerSec,
+			RxBytes:          t.NetRxBytes,
+			TxBytes:          t.NetTxBytes,
+			RxBytesPerSecond: t.NetRxBytesPerSec,
+			TxBytesPerSecond: t.NetTxBytesPerSec,
 		},
 	}
 	for _, fs := range t.Filesystems {
@@ -92,7 +96,7 @@ func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 	}
 	for _, ni := range t.NetworkInterfaces {
 		out.Network.Interfaces = append(out.Network.Interfaces, &agentv1.NetworkInterfaceTelemetry{
-			Name:          ni.Name,
+			Name:             ni.Name,
 			RxBytesPerSecond: ni.RxBytesPerSec,
 			TxBytesPerSecond: ni.TxBytesPerSec,
 		})
@@ -110,8 +114,8 @@ func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 		}
 		for _, p := range a.Processes {
 			at.Processes = append(at.Processes, &agentv1.AcceleratorProcess{
-				Pid:               p.PID,
-				Name:              p.Name,
+				Pid:                p.PID,
+				Name:               p.Name,
 				UsedGpuMemoryBytes: p.UsedGpuMem,
 			})
 		}

@@ -109,6 +109,7 @@ type Fabric struct {
 	Version       string         `json:"version"`
 	CreatedAt     string         `json:"created_at"`
 	UpdatedAt     string         `json:"updated_at"`
+	Bindings      string         `json:"bindings"`
 }
 
 type Lease struct {

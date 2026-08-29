@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
-import { RefreshCcw } from "lucide-react";
+import { Pencil, RefreshCcw } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
 import {
@@ -16,6 +17,7 @@ import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { DiagnosticsList } from "~/components/diagnostics-list";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
+import { CreateFabricDialog } from "~/components/dialogs/create-fabric-dialog";
 import { shortId } from "~/lib/format";
 
 /**
@@ -28,6 +30,7 @@ export default function FabricDetailRoute() {
   const { data: nodes } = useNodes();
   const update = useUpdateFabric();
   const remove = useDeleteFabric();
+  const [editOpen, setEditOpen] = useState(false);
 
   const nodeName = (nid: string) => nodes?.find((n) => n.id === nid);
 
@@ -39,9 +42,7 @@ export default function FabricDetailRoute() {
         name: fabric.name,
         transport: fabric.transport,
         members: fabric.members,
-        ...(fabric.interface_name ? { interface_name: fabric.interface_name } : {}),
-        ...(fabric.address ? { address: fabric.address } : {}),
-        ...(fabric.rdma_device ? { rdma_device: fabric.rdma_device } : {}),
+        bindings: fabric.bindings,
         ifMatch: fabric.version,
       });
       toast.success("Fabric re-validated", { description: `${f.name} · ${f.state}` });
@@ -73,12 +74,12 @@ export default function FabricDetailRoute() {
             <StatusDot state={fabric.state} />
           </div>
           <span className="font-mono text-[11px] text-faint">
-            {fabric.transport}
-            {fabric.interface_name ? ` · ${fabric.interface_name}` : ""}
-            {fabric.rdma_device ? ` · ${fabric.rdma_device}` : ""}
-            {fabric.address ? ` · ${fabric.address}` : ""}
+            {fabric.transport} · {fabric.members.length} members · node-specific bindings
           </span>
           <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+              <Pencil aria-hidden /> edit wiring
+            </Button>
             <Button size="sm" variant="outline" onClick={() => void revalidate()} disabled={update.isPending || !fabric.version}>
               <RefreshCcw aria-hidden /> {update.isPending ? "validating…" : "re-validate"}
             </Button>
@@ -106,29 +107,34 @@ export default function FabricDetailRoute() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Rank</TableHead>
+                <TableHead>Role</TableHead>
                 <TableHead>Node</TableHead>
+                <TableHead>Interface / address</TableHead>
+                <TableHead>RDMA / GID</TableHead>
                 <TableHead>State</TableHead>
-                <TableHead>Heartbeat</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {fabric.members.map((nid, i) => {
                 const n = nodeName(nid);
+                const binding = fabric.bindings.find((candidate) => candidate.node_id === nid);
                 return (
                   <TableRow key={`${nid}-${i}`}>
-                    <TableCell className="font-mono text-xs">{i}</TableCell>
+                    <TableCell className="font-mono text-xs">{i === 0 ? "Head · API" : `Worker ${i}`}</TableCell>
                     <TableCell>
                       <Link to={`/fleet/nodes/${nid}`} className="control hover:text-foreground">
                         {n?.display_name ?? shortId(nid)}
                       </Link>
                     </TableCell>
-                    <TableCell>
-                      <StatusDot state={n?.status ?? "unknown"} />
+                    <TableCell className="font-mono text-[11px]">
+                      <span className="block">{binding?.interface_name || "not configured"}</span>
+                      <span className="text-muted">{binding?.address || "address missing"}</span>
                     </TableCell>
-                    <TableCell className="font-mono text-[11px] text-muted">
-                      {n ? new Date(n.last_heartbeat ?? 0).toLocaleString() : "unknown"}
+                    <TableCell className="font-mono text-[11px]">
+                      <span className="block">{binding?.rdma_device || (fabric.transport === "roce" ? "not configured" : "not required")}</span>
+                      <span className="text-muted">GID {binding?.gid_index ?? "—"}</span>
                     </TableCell>
+                    <TableCell><StatusDot state={n?.status ?? "unknown"} /></TableCell>
                   </TableRow>
                 );
               })}
@@ -143,6 +149,7 @@ export default function FabricDetailRoute() {
           </div>
         ) : null}
       </div>
+      <CreateFabricDialog open={editOpen} onOpenChange={setEditOpen} existing={fabric} />
     </div>
   );
 }

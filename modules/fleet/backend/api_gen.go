@@ -145,6 +145,14 @@ type Accelerator struct {
 	Vendor string `json:"vendor"`
 }
 
+// CacheRoot defines model for CacheRoot.
+type CacheRoot struct {
+	Backend      string    `json:"backend"`
+	Path         string    `json:"path"`
+	Repositories *[]string `json:"repositories,omitempty"`
+	SizeBytes    *int64    `json:"size_bytes,omitempty"`
+}
+
 // CertificateInfo defines model for CertificateInfo.
 type CertificateInfo struct {
 	ExpiresAt time.Time  `json:"expires_at"`
@@ -154,15 +162,13 @@ type CertificateInfo struct {
 
 // CreateFabricRequest defines model for CreateFabricRequest.
 type CreateFabricRequest struct {
-	// Address Interface address of the first member
-	Address       *string `json:"address,omitempty"`
-	InterfaceName *string `json:"interface_name,omitempty"`
+	// Bindings Node-specific transport wiring in member/rank order
+	Bindings []FabricBinding `json:"bindings"`
 
 	// Members Ordered node IDs; index is the fabric rank
-	Members    []string                     `json:"members"`
-	Name       string                       `json:"name"`
-	RdmaDevice *string                      `json:"rdma_device,omitempty"`
-	Transport  CreateFabricRequestTransport `json:"transport"`
+	Members   []string                     `json:"members"`
+	Name      string                       `json:"name"`
+	Transport CreateFabricRequestTransport `json:"transport"`
 }
 
 // CreateFabricRequestTransport defines model for CreateFabricRequest.Transport.
@@ -189,15 +195,13 @@ type Error struct {
 
 // Fabric defines model for Fabric.
 type Fabric struct {
-	Address       *string            `json:"address,omitempty"`
-	Diagnostics   *[]Diagnostic      `json:"diagnostics,omitempty"`
-	Id            openapi_types.UUID `json:"id"`
-	InterfaceName *string            `json:"interface_name,omitempty"`
-	Members       []string           `json:"members"`
-	Name          string             `json:"name"`
-	RdmaDevice    *string            `json:"rdma_device,omitempty"`
-	State         FabricState        `json:"state"`
-	Transport     FabricTransport    `json:"transport"`
+	Bindings    []FabricBinding    `json:"bindings"`
+	Diagnostics *[]Diagnostic      `json:"diagnostics,omitempty"`
+	Id          openapi_types.UUID `json:"id"`
+	Members     []string           `json:"members"`
+	Name        string             `json:"name"`
+	State       FabricState        `json:"state"`
+	Transport   FabricTransport    `json:"transport"`
 
 	// Version ETag for optimistic concurrency
 	Version *string `json:"version,omitempty"`
@@ -209,11 +213,20 @@ type FabricState string
 // FabricTransport defines model for Fabric.Transport.
 type FabricTransport string
 
+// FabricBinding defines model for FabricBinding.
+type FabricBinding struct {
+	Address       string             `json:"address"`
+	GidIndex      *int               `json:"gid_index,omitempty"`
+	InterfaceName string             `json:"interface_name"`
+	NodeId        openapi_types.UUID `json:"node_id"`
+	RdmaDevice    *string            `json:"rdma_device,omitempty"`
+}
+
 // Inventory defines model for Inventory.
 type Inventory struct {
 	Accelerators *[]Accelerator `json:"accelerators,omitempty"`
 	Arch         string         `json:"arch"`
-	CacheRoots   *[]string      `json:"cache_roots,omitempty"`
+	CacheRoots   *[]CacheRoot   `json:"cache_roots,omitempty"`
 	Docker       struct {
 		ApiVersion *string `json:"api_version,omitempty"`
 		Ok         bool    `json:"ok"`
@@ -222,6 +235,7 @@ type Inventory struct {
 	Hostname    string              `json:"hostname"`
 	Interfaces  *[]NetworkInterface `json:"interfaces,omitempty"`
 	Os          string              `json:"os"`
+	PeerListen  *string             `json:"peer_listen,omitempty"`
 	RdmaDevices *[]RdmaDevice       `json:"rdma_devices,omitempty"`
 }
 
@@ -305,13 +319,22 @@ type NodeTelemetrySample struct {
 
 // RdmaDevice defines model for RdmaDevice.
 type RdmaDevice struct {
-	Name  string `json:"name"`
-	Ports []struct {
-		LinkRateGbps *int    `json:"link_rate_gbps,omitempty"`
-		Name         *string `json:"name,omitempty"`
-		State        *string `json:"state,omitempty"`
+	Name              string    `json:"name"`
+	NetworkInterfaces *[]string `json:"network_interfaces,omitempty"`
+	Ports             []struct {
+		Gids         *[]RdmaGID `json:"gids,omitempty"`
+		LinkRateGbps *int       `json:"link_rate_gbps,omitempty"`
+		Name         *string    `json:"name,omitempty"`
+		State        *string    `json:"state,omitempty"`
 	} `json:"ports"`
 	Vendor *string `json:"vendor,omitempty"`
+}
+
+// RdmaGID defines model for RdmaGID.
+type RdmaGID struct {
+	Index int     `json:"index"`
+	Type  *string `json:"type,omitempty"`
+	Value string  `json:"value"`
 }
 
 // UpdateNodeRequest defines model for UpdateNodeRequest.

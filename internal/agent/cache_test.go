@@ -24,6 +24,16 @@ func TestPlacementCandidatesEnumerateAndValidateEveryHFRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(validSnapshot, "config.json"), []byte(`{"model_type":"test"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	validDigest, _, err := digestFile(filepath.Join(validSnapshot, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validIdentity := "hf://Acme/Model@" + validRevision
+	if err := writeHFCompletionManifest(modelRoot, validRevision, validIdentity, []hfSnapshotFile{{
+		Path: "config.json", Size: int64(len(`{"model_type":"test"}`)), Digest: validDigest,
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(invalidSnapshot, "weights.safetensors"), []byte("version https://git-lfs.github.com/spec/v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +49,7 @@ func TestPlacementCandidatesEnumerateAndValidateEveryHFRevision(t *testing.T) {
 			t.Fatalf("placement path = %q, want repository root %q", candidate.Path, modelRoot)
 		}
 	}
-	valid := byIdentity["hf://Acme/Model@"+validRevision]
+	valid := byIdentity[validIdentity]
 	if valid.State != "valid" || len(valid.Diagnostics) != 0 || valid.Size == 0 {
 		t.Fatalf("valid candidate = %+v", valid)
 	}
@@ -59,8 +69,18 @@ func TestPlacementCandidatesRecognizeRootHubLayout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(snapshot, "config.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	digest, _, err := digestFile(filepath.Join(snapshot, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := "hf://Org/Repo@" + revision
+	if err := writeHFCompletionManifest(filepath.Dir(filepath.Dir(snapshot)), revision, identity, []hfSnapshotFile{{
+		Path: "config.json", Size: 2, Digest: digest,
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	candidates := placementCandidates(context.Background(), root)
-	if len(candidates) != 1 || candidates[0].Identity != "hf://Org/Repo@"+revision {
+	if len(candidates) != 1 || candidates[0].Identity != identity || candidates[0].State != "valid" {
 		t.Fatalf("candidates = %+v", candidates)
 	}
 }

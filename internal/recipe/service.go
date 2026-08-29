@@ -49,8 +49,9 @@ var (
 	ErrReference   = errors.New("recipe referenced")
 	ErrTrustState  = errors.New("invalid trust state")
 	ErrDiffPending = errors.New("permission diff not accepted")
-	// ErrUnpinnedRevision — a git source revision is not a full 40-hex
-	// commit. Git installs pin an immutable commit; tags and branches move.
+	// ErrUnpinnedRevision — a non-empty git source revision is not a full
+	// 40-hex commit. An omitted revision is resolved once to the remote's
+	// current default-branch HEAD before cloning and is persisted immutably.
 	// Stable API code: recipe.unpinned_revision (422).
 	ErrUnpinnedRevision = errors.New("unpinned git revision")
 )
@@ -296,7 +297,9 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 				return Recipe{}, fmt.Errorf("artifact %s: %w", artifact.Name, err)
 			}
 			sum := sha256.Sum256([]byte(canonical))
-			metadata, _ := json.Marshal(map[string]any{"name": artifact.Name, "mount": artifact.Mount, "variant": key})
+			metadata, _ := json.Marshal(map[string]any{
+				"name": artifact.Name, "mount": artifact.Mount, "variant": key, "size_bytes": artifact.SizeBytes,
+			})
 			if err := qtx.CreateArtifact(ctx, db.CreateArtifactParams{
 				ID:       "artifact-" + hex.EncodeToString(sum[:8]),
 				Kind:     artifact.Kind,
@@ -678,6 +681,13 @@ func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, erro
 	if src.Remote == "" {
 		return Recipe{}, fmt.Errorf("git source: remote is required")
 	}
+	if strings.TrimSpace(src.Revision) == "" {
+		_, commit, err := s.resolveGitHead(ctx, src.Remote)
+		if err != nil {
+			return Recipe{}, fmt.Errorf("resolve git HEAD: %w", err)
+		}
+		src.Revision = commit
+	}
 	if !sha40.MatchString(src.Revision) {
 		return Recipe{}, fmt.Errorf("%w: %q is not a 40-hex commit", ErrUnpinnedRevision, src.Revision)
 	}
@@ -706,6 +716,35 @@ func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, erro
 	tree, err := runGitOutput(ctx, tmp, "rev-parse", "HEAD^{tree}")
 	if err != nil {
 		return Recipe{}, err
+	}
+	if s.repositoryCompilers != nil {
+		repositoryID, normalizedURL, normalizedPath, identityErr := RepositoryIdentity(Source{
+			URL: src.Remote, Path: src.Path,
+		})
+		if identityErr != nil {
+			return Recipe{}, identityErr
+		}
+		repositorySource := RepositorySource{
+			RepositoryID: repositoryID, URL: normalizedURL, Path: normalizedPath,
+			CommitSHA: commit, TreeSHA: tree,
+		}
+		compiler, ok := s.repositoryCompilers.Lookup(repositorySource, tmp)
+		if !ok {
+			return Recipe{}, &PackError{
+				Code:    RepositoryUnsupportedCode,
+				Message: "repository has no native recipe bundle or registered deterministic compiler",
+			}
+		}
+		packed, compileErr := compiler.Compile(ctx, repositorySource, tmp, nil)
+		if compileErr != nil {
+			return Recipe{}, compileErr
+		}
+		kept := src
+		kept.Remote = normalizedURL
+		kept.Path = normalizedPath
+		kept.Revision = commit
+		kept.Tree = tree
+		return s.storePack(ctx, packed, kept, TrustUntrusted)
 	}
 	target := tmp
 	if src.Path != "" {

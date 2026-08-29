@@ -18,9 +18,20 @@ import (
 const (
 	QwenRepositoryURL     = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
 	DeepSeekRepositoryURL = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
+	GLM53RepositoryURL    = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
 )
 
 const qwenManagedLicense = "patch/sglang/LICENSE"
+
+var glm53UpstreamAssets = map[string]struct{}{
+	"files/chat_template.jinja":                    {},
+	"overlay/patch_glm_video_placeholders.py":      {},
+	"overlay/patch_suppress_stops_in_reasoning.py": {},
+	"overlay/patch_scheduler_decode_floor.py":      {},
+	"overlay/patch_glm5_drafter_group.py":          {},
+	"overlay/patch_hybrid_prefix_hit.py":           {},
+	"scripts/boot-shape-warmup.sh":                 {},
+}
 
 type Compiler = recipe.RepositoryCompiler
 
@@ -33,11 +44,13 @@ type Registry struct {
 func NewRegistry(validator *recipe.Validator) *Registry {
 	qwenID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenRepositoryURL, Path: "."})
 	deepSeekID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: DeepSeekRepositoryURL, Path: "."})
+	glm53ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53RepositoryURL, Path: "."})
 	return &Registry{
 		validator: validator,
 		drivers: map[string]Compiler{
 			qwenID:     &MiaQwenSGLangCompiler{validator: validator},
 			deepSeekID: &MiaDeepSeekDSparkCompiler{validator: validator},
+			glm53ID:    &MiaGLM53EXL3Compiler{validator: validator},
 		},
 	}
 }
@@ -113,7 +126,48 @@ func (c *MiaDeepSeekDSparkCompiler) Compile(_ context.Context, source recipe.Rep
 	return compileManaged(source, checkout, "deepseek-v4-flash-0731-dspark-tp2", false, c.validator)
 }
 
+// MiaGLM53EXL3Compiler maps the upstream two-Spark shell distribution to a
+// rank-local LMW workload while retaining only the exact reviewed overlay
+// files from the pinned commit.
+type MiaGLM53EXL3Compiler struct {
+	validator *recipe.Validator
+}
+
+func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	root, err := checkoutPath(checkout, source.Path)
+	if err != nil {
+		return nil, err
+	}
+	for _, required := range []string{"Dockerfile", "start.sh", ".env.example"} {
+		info, statErr := os.Lstat(filepath.Join(root, required))
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
+		}
+	}
+	return compileManagedAssets(
+		source,
+		checkout,
+		"glm53-flash-exl3-dflash2-spark-tp2",
+		func(asset string) bool {
+			_, ok := glm53UpstreamAssets[filepath.ToSlash(asset)]
+			return ok
+		},
+		false,
+		c.validator,
+	)
+}
+
 func compileManaged(source recipe.RepositorySource, checkout, template string, upstreamPatches bool, validator *recipe.Validator) (*recipe.PackResult, error) {
+	var upstreamAsset func(string) bool
+	if upstreamPatches {
+		upstreamAsset = func(asset string) bool {
+			return strings.HasPrefix(asset, "patch/sglang/") && asset != qwenManagedLicense
+		}
+	}
+	return compileManagedAssets(source, checkout, template, upstreamAsset, upstreamPatches, validator)
+}
+
+func compileManagedAssets(source recipe.RepositorySource, checkout, template string, upstreamAsset func(string) bool, rejectUnexpectedPatches bool, validator *recipe.Validator) (*recipe.PackResult, error) {
 	manifestBytes, err := recipeassets.Templates.ReadFile(template + "/recipe.yaml")
 	if err != nil {
 		return nil, err
@@ -140,7 +194,7 @@ func compileManaged(source recipe.RepositorySource, checkout, template string, u
 	optionalUpstream := map[string]struct{}{qwenManagedLicense: {}}
 	for _, asset := range manifest.Assets {
 		var content []byte
-		if upstreamPatches && strings.HasPrefix(asset, "patch/sglang/") && asset != qwenManagedLicense {
+		if upstreamAsset != nil && upstreamAsset(asset) {
 			requiredUpstream[filepath.ToSlash(asset)] = struct{}{}
 			content, err = readRegular(filepath.Join(root, filepath.FromSlash(asset)))
 		} else {
@@ -151,7 +205,7 @@ func compileManaged(source recipe.RepositorySource, checkout, template string, u
 		}
 		assets[asset] = content
 	}
-	if upstreamPatches {
+	if rejectUnexpectedPatches {
 		if err := rejectUnexpectedPatchFiles(
 			filepath.Join(root, "patch", "sglang"),
 			requiredUpstream,

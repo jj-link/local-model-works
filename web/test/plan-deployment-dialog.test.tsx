@@ -29,10 +29,22 @@ const recipeDetail = {
 };
 
 const nodes = [
-  { id: "n-spark2", display_name: "spark2", status: "online" },
-  { id: "n-spark3", display_name: "spark3", status: "online" },
-  { id: "n-spark1", display_name: "spark1", status: "offline" },
+  { id: "n-spark2", display_name: "spark2", status: "online", inventory: { accelerators: [{ vendor: "nvidia", architecture: "sm_121", memory_bytes: 128_000_000_000 }] } },
+  { id: "n-spark3", display_name: "spark3", status: "online", inventory: { accelerators: [{ vendor: "nvidia", architecture: "sm_121", memory_bytes: 128_000_000_000 }] } },
+  { id: "n-spark1", display_name: "spark1", status: "offline", inventory: { accelerators: [{ vendor: "nvidia", architecture: "sm_121", memory_bytes: 128_000_000_000 }] } },
 ];
+
+const fabric = {
+  id: "fabric-spark",
+  name: "spark-p2p",
+  transport: "roce",
+  members: ["n-spark2", "n-spark3"],
+  bindings: [
+    { node_id: "n-spark2", interface_name: "head-if", address: "10.0.0.1", rdma_device: "head-rdma", gid_index: 3 },
+    { node_id: "n-spark3", interface_name: "worker-if", address: "10.0.0.2", rdma_device: "worker-rdma", gid_index: 3 },
+  ],
+  state: "ok",
+};
 
 const plan = {
   recipe_digest: D,
@@ -43,6 +55,7 @@ const plan = {
     { node_id: "n-spark2", node_name: "spark2", rank: 0 },
     { node_id: "n-spark3", node_name: "spark3", rank: 1 },
   ],
+  fabric: fabric.id,
   transfers: [],
   ports: [{ node_id: "n-spark2", node_name: "spark2", host_port: 8888, container_port: 8888, protocol: "tcp" }],
   endpoint: { host: "spark2", port: 8888 },
@@ -81,7 +94,7 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
-      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([fabric])),
       http.post("*/api/v1/deployments/plan", async ({ request }) => {
         const body = (await request.json()) as { recipe_digest: string; profile: string; placements?: unknown[] };
         return HttpResponse.json({
@@ -117,11 +130,11 @@ describe("PlanDeploymentDialog", () => {
     // preview produces a ready plan
     await user.click(screen.getByRole("button", { name: /preview placement/i }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^launch$/i })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /launch now/i })).toBeEnabled();
     });
 
     // create posts the planned placements and returns the deployment
-    await user.click(screen.getByRole("button", { name: /^launch$/i }));
+    await user.click(screen.getByRole("button", { name: /launch now/i }));
     await waitFor(() => {
       const body = (globalThis as Record<string, unknown>).__createBody as { placements: { rank: number; node_id: string }[] };
       expect(body).toBeTruthy();
@@ -140,7 +153,7 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
-      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([fabric])),
       http.post("*/api/v1/deployments/plan", async ({ request }) => {
         const b = (await request.json()) as { placements?: { rank: number; node_id: string }[] };
         (globalThis as Record<string, unknown>).__planPlacements = b.placements;
@@ -174,7 +187,7 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
-      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([fabric])),
       http.post("*/api/v1/deployments/plan", () =>
         HttpResponse.json({
           ...plan,
@@ -204,7 +217,7 @@ describe("PlanDeploymentDialog", () => {
       "href",
       "/serving/deployments/dep-occupant",
     );
-    expect(screen.getByRole("button", { name: /^launch$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /launch now/i })).toBeDisabled();
   });
 
   it("preselects the caller recipe and resets it on every reopen", async () => {
@@ -213,7 +226,8 @@ describe("PlanDeploymentDialog", () => {
       http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
       http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
       http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
-      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([fabric])),
+      http.post("*/api/v1/deployments/plan", () => HttpResponse.json(plan)),
     );
 
     const view = renderDialog(true, D);

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
@@ -32,31 +33,37 @@ var (
 	ErrValidation      = errors.New("fabric validation failed")
 )
 
+// MemberBinding is the rank-ordered, node-specific transport wiring. Spark
+// pairs commonly use asymmetric interface and RDMA device names.
+type MemberBinding struct {
+	NodeID        string `json:"node_id"`
+	InterfaceName string `json:"interface_name"`
+	Address       string `json:"address"`
+	RDMADevice    string `json:"rdma_device,omitempty"`
+	GIDIndex      *int32 `json:"gid_index,omitempty"`
+}
+
 // Fabric is the API view of one transport group.
 type Fabric struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Transport     string            `json:"transport"`
-	Members       []string          `json:"members"`
-	InterfaceName string            `json:"interface_name,omitempty"`
-	Address       string            `json:"address,omitempty"`
-	RdmaDevice    string            `json:"rdma_device,omitempty"`
-	State         string            `json:"state"`
-	Diagnostics   []diag.Diagnostic `json:"diagnostics,omitempty"`
-	Version       string            `json:"version"`
-	CreatedAt     string            `json:"created_at"`
-	UpdatedAt     string            `json:"updated_at"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Transport   string            `json:"transport"`
+	Members     []string          `json:"members"`
+	Bindings    []MemberBinding   `json:"bindings"`
+	State       string            `json:"state"`
+	Diagnostics []diag.Diagnostic `json:"diagnostics,omitempty"`
+	Version     string            `json:"version"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
 }
 
 // CreateRequest is the operator-supplied group definition. Name is
-// immutable after creation.
+// immutable after creation. Bindings follow Members in the same rank order.
 type CreateRequest struct {
-	Name          string   `json:"name"`
-	Transport     string   `json:"transport"`
-	Members       []string `json:"members"`
-	InterfaceName string   `json:"interface_name,omitempty"`
-	Address       string   `json:"address,omitempty"`
-	RdmaDevice    string   `json:"rdma_device,omitempty"`
+	Name      string          `json:"name"`
+	Transport string          `json:"transport"`
+	Members   []string        `json:"members"`
+	Bindings  []MemberBinding `json:"bindings"`
 }
 
 // Service validates and persists fabrics.
@@ -84,9 +91,9 @@ func (s *Service) Validate(ctx context.Context, excludeID string, req CreateRequ
 		if err != nil {
 			return "", nil, err
 		}
-		for _, r := range rows {
-			if r.Name == name && r.ID != excludeID {
-				ds = append(ds, diag.Error("fabric.name_conflict", fmt.Sprintf("fabric %q already exists (id %s)", name, r.ID)))
+		for _, row := range rows {
+			if row.Name == name && row.ID != excludeID {
+				ds = append(ds, diag.Error("fabric.name_conflict", fmt.Sprintf("fabric %q already exists (id %s)", name, row.ID)))
 				break
 			}
 		}
@@ -96,80 +103,121 @@ func (s *Service) Validate(ctx context.Context, excludeID string, req CreateRequ
 	default:
 		ds = append(ds, diag.Error("fabric.unknown_transport", fmt.Sprintf("transport must be %q or %q", TransportRoCE, TransportTCP)))
 	}
-	seen := map[string]bool{}
 	if len(req.Members) < 2 {
 		ds = append(ds, diag.Error("fabric.too_few_members", "at least two members are required"))
 	}
-	for _, m := range req.Members {
-		if seen[m] {
-			ds = append(ds, diag.Error("fabric.duplicate_member", m))
-		}
-		seen[m] = true
+	if len(req.Bindings) != len(req.Members) {
+		ds = append(ds, diag.Error("fabric.bindings_incomplete", "every ordered member requires one transport binding"))
 	}
+
+	seen := map[string]bool{}
 	nodes, err := s.nodeSet(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	allApproved := true
-	for i, m := range req.Members {
-		n, ok := nodes[m]
+	inventoryReady := true
+	for index, nodeID := range req.Members {
+		if seen[nodeID] {
+			ds = append(ds, diag.Error("fabric.duplicate_member", nodeID))
+		}
+		seen[nodeID] = true
+		node, ok := nodes[nodeID]
 		if !ok {
-			ds = append(ds, diag.Error("fabric.unknown_member", m))
+			ds = append(ds, diag.Error("fabric.unknown_member", nodeID))
 			continue
 		}
-		if n.status == "pending" {
-			allApproved = false
-			ds = append(ds, diag.Warning("fabric.member_unapproved", fmt.Sprintf("member %s is awaiting approval", m)))
+		if node.status == "pending" {
+			inventoryReady = false
+			ds = append(ds, diag.Warning("fabric.member_unapproved", fmt.Sprintf("member %s is awaiting approval", nodeID)))
 		}
-		if n.status == "offline" {
-			ds = append(ds, diag.Warning("fabric.member_offline", fmt.Sprintf("member %s is offline", m)))
+		if node.status == "offline" {
+			ds = append(ds, diag.Warning("fabric.member_offline", fmt.Sprintf("member %s is offline", nodeID)))
 		}
+
 		var inv *inventory.Inventory
-		if n.inventory.Valid && n.inventory.String != "" {
-			inv, err = inventory.Parse(n.inventory.String)
+		if node.inventory.Valid && node.inventory.String != "" {
+			inv, err = inventory.Parse(node.inventory.String)
 			if err != nil {
-				ds = append(ds, diag.Warning("fabric.inventory_unreadable", fmt.Sprintf("member %s inventory: %v", m, err)))
-			} else if inv == nil {
-				ds = append(ds, diag.Warning("fabric.no_inventory", fmt.Sprintf("member %s has no inventory", m)))
+				inventoryReady = false
+				ds = append(ds, diag.Warning("fabric.inventory_unreadable", fmt.Sprintf("member %s inventory: %v", nodeID, err)))
 			}
 		} else {
-			ds = append(ds, diag.Warning("fabric.no_inventory", fmt.Sprintf("member %s has no inventory", m)))
+			inventoryReady = false
+			ds = append(ds, diag.Warning("fabric.no_inventory", fmt.Sprintf("member %s has no inventory", nodeID)))
 		}
-		switch req.Transport {
-		case TransportRoCE:
-			if req.RdmaDevice == "" {
-				if i == 0 {
-					ds = append(ds, diag.Error("fabric.roce_requires_device", "rdma_device is required for RoCE fabrics"))
+
+		if index >= len(req.Bindings) {
+			continue
+		}
+		binding := req.Bindings[index]
+		if binding.NodeID != nodeID {
+			ds = append(ds, diag.Error("fabric.binding_order", fmt.Sprintf("binding %d names %s, want ordered member %s", index, binding.NodeID, nodeID)))
+			continue
+		}
+		if binding.InterfaceName == "" {
+			ds = append(ds, diag.Error("fabric.interface_required", fmt.Sprintf("member %s requires a network interface", nodeID)))
+		} else if inv != nil && !inv.HasInterface(binding.InterfaceName) {
+			ds = append(ds, diag.Error("fabric.member_no_interface", fmt.Sprintf("member %s lacks interface %s", nodeID, binding.InterfaceName)))
+		}
+		if binding.Address == "" {
+			ds = append(ds, diag.Error("fabric.address_required", fmt.Sprintf("member %s requires a fabric address", nodeID)))
+		} else if inv != nil && binding.InterfaceName != "" {
+			found := false
+			for _, address := range inv.InterfaceAddresses(binding.InterfaceName) {
+				if address == binding.Address {
+					found = true
+					break
 				}
-			} else if inv != nil && !inv.HasRdmaDevice(req.RdmaDevice) {
-				ds = append(ds, diag.Warning("fabric.member_no_rdma", fmt.Sprintf("member %s lacks device %s", m, req.RdmaDevice)))
 			}
-		case TransportTCP:
-			if req.InterfaceName == "" {
-				if i == 0 {
-					ds = append(ds, diag.Error("fabric.tcp_requires_interface", "interface_name is required for TCP fabrics"))
-				}
-			} else {
-				if inv != nil && !inv.HasInterface(req.InterfaceName) {
-					ds = append(ds, diag.Warning("fabric.member_no_interface", fmt.Sprintf("member %s lacks interface %s", m, req.InterfaceName)))
-				}
-				if i == 0 && req.Address != "" && inv != nil {
-					found := false
-					for _, a := range inv.InterfaceAddresses(req.InterfaceName) {
-						if a == req.Address {
-							found = true
+			if !found {
+				ds = append(ds, diag.Error("fabric.address_mismatch",
+					fmt.Sprintf("address %s is not assigned to member %s interface %s", binding.Address, nodeID, binding.InterfaceName)))
+			}
+		}
+		if req.Transport == TransportRoCE {
+			if binding.RDMADevice == "" {
+				ds = append(ds, diag.Error("fabric.roce_requires_device", fmt.Sprintf("member %s requires an RDMA device", nodeID)))
+			} else if inv != nil {
+				device := inv.RDMADevice(binding.RDMADevice)
+				if device == nil {
+					ds = append(ds, diag.Error("fabric.member_no_rdma", fmt.Sprintf("member %s lacks device %s", nodeID, binding.RDMADevice)))
+				} else {
+					if len(device.NetworkInterfaces) > 0 {
+						associated := false
+						for _, interfaceName := range device.NetworkInterfaces {
+							associated = associated || interfaceName == binding.InterfaceName
+						}
+						if !associated {
+							ds = append(ds, diag.Error("fabric.rdma_interface_mismatch",
+								fmt.Sprintf("device %s on member %s is not attached to interface %s", binding.RDMADevice, nodeID, binding.InterfaceName)))
 						}
 					}
-					if !found {
-						ds = append(ds, diag.Warning("fabric.address_mismatch",
-							fmt.Sprintf("address %s is not assigned to member %s interface %s", req.Address, m, req.InterfaceName)))
+					if binding.GIDIndex != nil {
+						reported, populated := false, false
+						for _, port := range device.Ports {
+							for _, gid := range port.GIDs {
+								reported = true
+								if gid.Index == *binding.GIDIndex && strings.Trim(gid.Value, ":0") != "" {
+									populated = true
+								}
+							}
+						}
+						if !reported {
+							ds = append(ds, diag.Error("fabric.gids_unreported", fmt.Sprintf("member %s has not reported its RDMA GID table", nodeID)))
+						} else if !populated {
+							ds = append(ds, diag.Error("fabric.gid_unavailable",
+								fmt.Sprintf("GID index %d is empty or absent on member %s device %s", *binding.GIDIndex, nodeID, binding.RDMADevice)))
+						}
 					}
 				}
+			}
+			if binding.GIDIndex == nil || *binding.GIDIndex < 0 || *binding.GIDIndex > 255 {
+				ds = append(ds, diag.Error("fabric.gid_index_required", fmt.Sprintf("member %s requires a GID index from 0 to 255", nodeID)))
 			}
 		}
 	}
 	state := "ok"
-	if diag.HasError(ds) || !allApproved {
+	if diag.HasError(ds) || !inventoryReady {
 		state = "incomplete"
 	}
 	return state, ds, nil
@@ -196,10 +244,14 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Fabric, error)
 	if err != nil {
 		return Fabric{}, err
 	}
+	bindings, err := json.Marshal(req.Bindings)
+	if err != nil {
+		return Fabric{}, err
+	}
 	if err := s.q.CreateFabric(ctx, db.CreateFabricParams{
 		ID: fid, Name: req.Name, Transport: req.Transport,
-		InterfaceName: nullStr(req.InterfaceName), Address: nullStr(req.Address), RdmaDevice: nullStr(req.RdmaDevice),
-		Members: string(members), Version: ver,
+		InterfaceName: sql.NullString{}, Address: sql.NullString{}, RdmaDevice: sql.NullString{},
+		Members: string(members), Bindings: string(bindings), Version: ver,
 	}); err != nil {
 		return Fabric{}, err
 	}
@@ -240,10 +292,12 @@ func (s *Service) Update(ctx context.Context, fid, ifMatch string, req CreateReq
 		return Fabric{}, err
 	}
 	members, _ := json.Marshal(req.Members)
+	bindings, _ := json.Marshal(req.Bindings)
 	if err := s.q.UpdateFabric(ctx, db.UpdateFabricParams{
-		Transport: req.Transport, InterfaceName: nullStr(req.InterfaceName),
-		Address: nullStr(req.Address), RdmaDevice: nullStr(req.RdmaDevice),
-		Members: string(members), State: state, Diagnostics: diag.Encode(ds),
+		Transport: req.Transport, InterfaceName: sql.NullString{},
+		Address: sql.NullString{}, RdmaDevice: sql.NullString{},
+		Members: string(members), Bindings: string(bindings),
+		State: state, Diagnostics: diag.Encode(ds),
 		Version: ver, ID: cur.ID, Version_2: ifMatch,
 	}); err != nil {
 		return Fabric{}, err
@@ -327,8 +381,7 @@ func (s *Service) RevalidateNode(ctx context.Context, nodeID string) error {
 			continue
 		}
 		state, ds, err := s.Validate(ctx, r.ID, CreateRequest{
-			Name: r.Name, Transport: r.Transport, Members: members,
-			InterfaceName: nullStrValue(r.InterfaceName), Address: nullStrValue(r.Address), RdmaDevice: nullStrValue(r.RdmaDevice),
+			Name: r.Name, Transport: r.Transport, Members: members, Bindings: ParseBindings(r.Bindings),
 		})
 		if err != nil {
 			return err
@@ -365,10 +418,20 @@ func render(row db.Fabric) Fabric {
 	_ = json.Unmarshal([]byte(row.Members), &members)
 	return Fabric{
 		ID: row.ID, Name: row.Name, Transport: row.Transport, Members: members,
-		InterfaceName: nullStrValue(row.InterfaceName), Address: nullStrValue(row.Address), RdmaDevice: nullStrValue(row.RdmaDevice),
-		State: row.State, Diagnostics: diag.Decode(row.Diagnostics), Version: row.Version,
+		Bindings: ParseBindings(row.Bindings),
+		State:    row.State, Diagnostics: diag.Decode(row.Diagnostics), Version: row.Version,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
+}
+
+// ParseBindings decodes the persisted member wiring. Malformed data renders
+// as incomplete instead of leaking partially trusted values into workloads.
+func ParseBindings(raw string) []MemberBinding {
+	bindings := []MemberBinding{}
+	if err := json.Unmarshal([]byte(raw), &bindings); err != nil {
+		return []MemberBinding{}
+	}
+	return bindings
 }
 
 func (s *Service) publishChanged(ctx context.Context, fid, name, state string) {

@@ -1799,6 +1799,23 @@ components:
       required:
         - token
       type: object
+    CacheRoot:
+      properties:
+        backend:
+          type: string
+        path:
+          type: string
+        repositories:
+          items:
+            type: string
+          type: array
+        size_bytes:
+          format: int64
+          type: integer
+      required:
+        - path
+        - backend
+      type: object
     CertificateInfo:
       properties:
         expires_at:
@@ -1917,11 +1934,12 @@ components:
       type: object
     CreateFabricRequest:
       properties:
-        address:
-          description: Interface address of the first member
-          type: string
-        interface_name:
-          type: string
+        bindings:
+          description: Node-specific transport wiring in member/rank order
+          items:
+            $ref: '#/components/schemas/FabricBinding'
+          minItems: 2
+          type: array
         members:
           description: Ordered node IDs; index is the fabric rank
           items:
@@ -1929,9 +1947,6 @@ components:
           minItems: 2
           type: array
         name:
-          type: string
-        rdma_device:
-          nullable: true
           type: string
         transport:
           enum:
@@ -1942,6 +1957,7 @@ components:
         - name
         - transport
         - members
+        - bindings
       type: object
     Deployment:
       properties:
@@ -2262,9 +2278,10 @@ components:
       type: object
     Fabric:
       properties:
-        address:
-          nullable: true
-          type: string
+        bindings:
+          items:
+            $ref: '#/components/schemas/FabricBinding'
+          type: array
         diagnostics:
           items:
             $ref: '#/components/schemas/Diagnostic'
@@ -2272,17 +2289,11 @@ components:
         id:
           format: uuid
           type: string
-        interface_name:
-          nullable: true
-          type: string
         members:
           items:
             type: string
           type: array
         name:
-          type: string
-        rdma_device:
-          nullable: true
           type: string
         state:
           enum:
@@ -2302,7 +2313,28 @@ components:
         - name
         - transport
         - members
+        - bindings
         - state
+      type: object
+    FabricBinding:
+      properties:
+        address:
+          type: string
+        gid_index:
+          maximum: 255
+          minimum: 0
+          type: integer
+        interface_name:
+          type: string
+        node_id:
+          format: uuid
+          type: string
+        rdma_device:
+          type: string
+      required:
+        - node_id
+        - interface_name
+        - address
       type: object
     Inventory:
       properties:
@@ -2314,7 +2346,7 @@ components:
           type: string
         cache_roots:
           items:
-            type: string
+            $ref: '#/components/schemas/CacheRoot'
           type: array
         docker:
           properties:
@@ -2335,6 +2367,8 @@ components:
             $ref: '#/components/schemas/NetworkInterface'
           type: array
         os:
+          type: string
+        peer_listen:
           type: string
         rdma_devices:
           items:
@@ -2759,9 +2793,17 @@ components:
       properties:
         name:
           type: string
+        network_interfaces:
+          items:
+            type: string
+          type: array
         ports:
           items:
             properties:
+              gids:
+                items:
+                  $ref: '#/components/schemas/RdmaGID'
+                type: array
               link_rate_gbps:
                 type: integer
               name:
@@ -2775,6 +2817,18 @@ components:
       required:
         - name
         - ports
+      type: object
+    RdmaGID:
+      properties:
+        index:
+          type: integer
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - index
+        - value
       type: object
     Recipe:
       properties:

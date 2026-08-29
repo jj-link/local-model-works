@@ -58,12 +58,12 @@ func TestV4_Enrollment(t *testing.T) {
 	}
 	ethOK := false
 	for _, a := range inv.InterfaceAddresses("lmw-eth0") {
-		if a == "10.0.0.11/24" {
+		if a == "10.0.0.11" {
 			ethOK = true
 		}
 	}
 	if !ethOK {
-		t.Errorf("lmw-eth0 addresses = %v, want 10.0.0.11/24", inv.InterfaceAddresses("lmw-eth0"))
+		t.Errorf("lmw-eth0 addresses = %v, want 10.0.0.11", inv.InterfaceAddresses("lmw-eth0"))
 	}
 	if !inv.HasRdmaDevice("mlx5_0") {
 		t.Errorf("mlx5_0 RDMA device missing from inventory")
@@ -73,8 +73,8 @@ func TestV4_Enrollment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse inventory 2: %v", err)
 	}
-	if len(inv2.InterfaceAddresses("lmw-eth0")) != 1 || inv2.InterfaceAddresses("lmw-eth0")[0] != "10.0.0.12/24" {
-		t.Errorf("node2 lmw-eth0 = %v, want 10.0.0.12/24", inv2.InterfaceAddresses("lmw-eth0"))
+	if len(inv2.InterfaceAddresses("lmw-eth0")) != 1 || inv2.InterfaceAddresses("lmw-eth0")[0] != "10.0.0.12" {
+		t.Errorf("node2 lmw-eth0 = %v, want 10.0.0.12", inv2.InterfaceAddresses("lmw-eth0"))
 	}
 
 	// Token reuse: enrollment tokens are one-use (internal/auth + server
@@ -104,10 +104,9 @@ func TestV4_Enrollment(t *testing.T) {
 	}
 }
 
-// TestV4_Fabric proves fabric validation against stubbed RDMA-like inventory
-// fields: a two-member RoCE fabric with the shared device validates to
-// "ok"; a member lacking the device is a warning (state stays "ok"); a RoCE
-// fabric without a device name is an error (state "incomplete").
+// TestV4_Fabric proves fabric validation against stubbed per-member RoCE
+// bindings: complete interface/address/device/GID wiring validates, while a
+// missing device on either member leaves the fabric incomplete.
 func TestV4_Fabric(t *testing.T) {
 	s := NewServer(t, "", "127.0.0.1:0")
 	fabs := s.Srv.Env().Fabrics
@@ -116,16 +115,23 @@ func TestV4_Fabric(t *testing.T) {
 	a1 := StartAgent(t, s, AgentOpts{Hostname: "spark-1", Token: tok1, IP: "10.0.0.11/24", RDMA: true})
 	a2 := StartAgent(t, s, AgentOpts{Hostname: "spark-2", Token: tok2, IP: "10.0.0.12/24", RDMA: true})
 	a3 := StartAgent(t, s, AgentOpts{Hostname: "spark-3", Token: tok3, IP: "10.0.0.13/24", RDMA: false})
-	_ = a3
 	n1, n2, n3 := a1.NodeID(), a2.NodeID(), a3.NodeID()
 	for _, n := range []string{n1, n2, n3} {
 		s.ApproveNode(t, n)
 		s.WaitOnline(t, n)
 	}
+	gid := int32(3)
+	binding := func(nodeID, address string) fabric.MemberBinding {
+		return fabric.MemberBinding{
+			NodeID: nodeID, InterfaceName: "lmw-eth0", Address: address,
+			RDMADevice: "mlx5_0", GIDIndex: &gid,
+		}
+	}
 
 	f, err := fabs.Create(s.Ctx, fabric.CreateRequest{
-		Name: "spark-p2p", Transport: "roce", RdmaDevice: "mlx5_0",
-		Members: []string{n1, n2},
+		Name: "spark-p2p", Transport: "roce",
+		Members:  []string{n1, n2},
+		Bindings: []fabric.MemberBinding{binding(n1, "10.0.0.11"), binding(n2, "10.0.0.12")},
 	})
 	if err != nil {
 		t.Fatalf("create fabric: %v", err)
@@ -134,25 +140,29 @@ func TestV4_Fabric(t *testing.T) {
 		t.Fatalf("fabric state = %s (diags %v), want ok", f.State, f.Diagnostics)
 	}
 
-	// A member without the RDMA device degrades to a warning only.
+	// A member without the configured RDMA device blocks the fabric.
 	state, ds, err := fabs.Validate(s.Ctx, "", fabric.CreateRequest{
-		Name: "mixed", Transport: "roce", RdmaDevice: "mlx5_0",
-		Members: []string{n1, n3},
+		Name: "mixed", Transport: "roce",
+		Members:  []string{n1, n3},
+		Bindings: []fabric.MemberBinding{binding(n1, "10.0.0.11"), binding(n3, "10.0.0.13")},
 	})
 	if err != nil {
 		t.Fatalf("validate mixed: %v", err)
 	}
-	if state != "ok" {
-		t.Errorf("mixed state = %s, want ok (warnings only)", state)
+	if state != "incomplete" {
+		t.Errorf("mixed state = %s, want incomplete", state)
 	}
 	if !hasDiagCode(ds, "fabric.member_no_rdma") {
 		t.Errorf("mixed diags = %v, want fabric.member_no_rdma", ds)
 	}
 
-	// RoCE without a device name is a hard error.
+	// RoCE bindings without device names are a hard error.
+	first, second := binding(n1, "10.0.0.11"), binding(n2, "10.0.0.12")
+	first.RDMADevice, second.RDMADevice = "", ""
 	state, ds, err = fabs.Validate(s.Ctx, "", fabric.CreateRequest{
 		Name: "nodev", Transport: "roce",
-		Members: []string{n1, n2},
+		Members:  []string{n1, n2},
+		Bindings: []fabric.MemberBinding{first, second},
 	})
 	if err != nil {
 		t.Fatalf("validate nodev: %v", err)
@@ -270,13 +280,28 @@ func TestV4_TwoRankSchedule(t *testing.T) {
 		}
 	}
 
-	// Endpoint: rank 0's node address + base port (host port = 8100 + rank).
+	// Endpoint: rank 0's controller-facing inventory address + base port
+	// (host port = 8100 + rank). Tailscale is preferred when the test host
+	// reports it, so assert inventory membership rather than one fake NIC.
 	if dep.Endpoint == nil {
 		t.Fatalf("no endpoint assigned")
 	}
-	hostOK := dep.Endpoint.Host == "10.0.0.11" || dep.Endpoint.Host == "10.0.0.12"
+	head, err := s.Q.GetNode(s.Ctx, dep.Placements[0].NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headInventory, err := inventory.Parse(head.Inventory.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostOK := false
+	for _, network := range headInventory.Interfaces {
+		for _, address := range network.Addresses {
+			hostOK = hostOK || strings.Split(address, "/")[0] == dep.Endpoint.Host
+		}
+	}
 	if !hostOK {
-		t.Errorf("endpoint host = %s, want a node interface address", dep.Endpoint.Host)
+		t.Errorf("endpoint host = %s, want a rank-0 node interface address", dep.Endpoint.Host)
 	}
 	if dep.Endpoint.Port != 8100 {
 		t.Errorf("endpoint port = %d, want 8100", dep.Endpoint.Port)

@@ -1,14 +1,46 @@
 package fakeagent
 
 import (
+	"crypto/sha256"
 	"encoding/json"
-	"github.com/jj-link/local-model-works/internal/recipe"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jj-link/local-model-works/internal/recipe"
 )
+
+func seedCompletedSnapshot(t *testing.T, modelRoot, revision, identity string) {
+	t.Helper()
+	snapshot := filepath.Join(modelRoot, "snapshots", revision)
+	if err := os.MkdirAll(snapshot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("{}")
+	if err := os.WriteFile(filepath.Join(snapshot, "config.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	manifest, err := json.Marshal(map[string]any{
+		"identity": identity,
+		"files": []map[string]any{{
+			"path": "config.json", "size": len(body), "digest": fmt.Sprintf("sha256:%x", sum),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(modelRoot, ".lmw", "snapshots", revision+".json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestAgentCachePlacementExistsBeforeRecipeInstall(t *testing.T) {
 	server := NewServer(t, "", "127.0.0.1:0")
@@ -16,20 +48,14 @@ func TestAgentCachePlacementExistsBeforeRecipeInstall(t *testing.T) {
 	cache := t.TempDir()
 	revision := strings.Repeat("a", 40)
 	modelRoot := filepath.Join(cache, "hub", "models--Acme--Model")
-	snapshot := filepath.Join(modelRoot, "snapshots", revision)
-	if err := os.MkdirAll(snapshot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(snapshot, "config.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	identity := "hf://Acme/Model@" + revision
+	seedCompletedSnapshot(t, modelRoot, revision, identity)
 	agent := StartAgent(t, server, AgentOpts{
 		Token: server.IssueToken(t), CacheRoots: []string{cache}, Hostname: "cache-node",
 	})
 	nodeID := agent.NodeID()
 	server.ApproveNode(t, nodeID)
 	server.WaitOnline(t, nodeID)
-	identity := "hf://Acme/Model@" + revision
 	Deadline(t, 20*time.Second, func() bool {
 		artifact, err := server.Q.GetArtifactByIdentity(server.Ctx, identity)
 		if err != nil {
@@ -53,13 +79,8 @@ func TestRecipeInstallRequestsConnectedAgentCacheRescan(t *testing.T) {
 
 	revision := strings.Repeat("d", 40)
 	modelRoot := filepath.Join(cache, "hub", "models--Acme--LateModel")
-	snapshot := filepath.Join(modelRoot, "snapshots", revision)
-	if err := os.MkdirAll(snapshot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(snapshot, "config.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	identity := "hf://Acme/LateModel@" + revision
+	seedCompletedSnapshot(t, modelRoot, revision, identity)
 	fixture := FixtureRecipe{
 		Name: "late-cache", Version: "1.0.0", NodeCount: 1,
 		Artifacts: []recipe.Artifact{{
@@ -76,7 +97,6 @@ func TestRecipeInstallRequestsConnectedAgentCacheRescan(t *testing.T) {
 	); err != nil {
 		t.Fatalf("install recipe: %v", err)
 	}
-	identity := "hf://Acme/LateModel@" + revision
 	Deadline(t, 20*time.Second, func() bool {
 		artifact, err := server.Q.GetArtifactByIdentity(server.Ctx, identity)
 		if err != nil {

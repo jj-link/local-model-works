@@ -341,6 +341,24 @@ components:
         cache_roots:
           type: array
           items:
+            $ref: '#/components/schemas/CacheRoot'
+        peer_listen:
+          type: string
+
+    CacheRoot:
+      type: object
+      required: [path, backend]
+      properties:
+        path:
+          type: string
+        backend:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        repositories:
+          type: array
+          items:
             type: string
 
     Accelerator:
@@ -382,6 +400,17 @@ components:
         link_mbps:
           type: integer
 
+    RdmaGID:
+      type: object
+      required: [index, value]
+      properties:
+        index:
+          type: integer
+        value:
+          type: string
+        type:
+          type: string
+
     RdmaDevice:
       type: object
       required: [name, ports]
@@ -390,6 +419,10 @@ components:
           type: string
         vendor:
           type: string
+        network_interfaces:
+          type: array
+          items:
+            type: string
         ports:
           type: array
           items:
@@ -401,7 +434,10 @@ components:
                 type: string
               link_rate_gbps:
                 type: integer
-
+              gids:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RdmaGID'
     UpdateNodeRequest:
       type: object
       required: [display_name]
@@ -426,33 +462,49 @@ components:
           type: string
           format: date-time
 
+    FabricBinding:
+      type: object
+      required: [node_id, interface_name, address]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        interface_name:
+          type: string
+        address:
+          type: string
+        rdma_device:
+          type: string
+        gid_index:
+          type: integer
+          minimum: 0
+          maximum: 255
+
     CreateFabricRequest:
       type: object
-      required: [name, transport, members]
+      required: [name, transport, members, bindings]
       properties:
         name:
           type: string
         transport:
           type: string
           enum: [roce, tcp]
-        interface_name:
-          type: string
-        address:
-          type: string
-          description: Interface address of the first member
-        rdma_device:
-          type: string
-          nullable: true
         members:
           type: array
           description: Ordered node IDs; index is the fabric rank
           minItems: 2
           items:
             type: string
+        bindings:
+          type: array
+          description: Node-specific transport wiring in member/rank order
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/FabricBinding'
 
     Fabric:
       type: object
-      required: [id, name, transport, members, state]
+      required: [id, name, transport, members, bindings, state]
       properties:
         id:
           type: string
@@ -462,19 +514,14 @@ components:
         transport:
           type: string
           enum: [roce, tcp]
-        interface_name:
-          type: string
-          nullable: true
-        address:
-          type: string
-          nullable: true
-        rdma_device:
-          type: string
-          nullable: true
         members:
           type: array
           items:
             type: string
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/FabricBinding'
         state:
           type: string
           enum: [ok, incomplete]

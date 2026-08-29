@@ -3,9 +3,11 @@ package hardware
 import (
 	"bufio"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,13 +20,13 @@ import (
 // safe for concurrent use by multiple samplers; the NVML driver owns exactly
 // one instance for the process.
 type hostSampler struct {
-	mu      sync.Mutex
-	last    time.Time
+	mu       sync.Mutex
+	last     time.Time
 	cpuTotal uint64
 	cpuIdle  uint64
-	aggRx   uint64
-	aggTx   uint64
-	ifaces  map[string][2]uint64 // interface -> [rx, tx] cumulative
+	aggRx    uint64
+	aggTx    uint64
+	ifaces   map[string][2]uint64 // interface -> [rx, tx] cumulative
 }
 
 func newHostSampler() *hostSampler {
@@ -234,7 +236,7 @@ func cpuCumulative(stat []byte) (total, idle uint64) {
 
 // netCounter is one interface's cumulative byte counters.
 type netCounter struct {
-	name  string
+	name   string
 	rx, tx uint64
 }
 
@@ -295,46 +297,66 @@ func ProbeNetwork(inv *Inventory) error {
 	inv.OS = "linux"
 	inv.Arch = runtime.GOARCH
 
-	entries, err := os.ReadDir("/sys/class/net")
+	interfaces, err := net.Interfaces()
 	if err == nil {
-		for _, e := range entries {
-			base := filepath.Join("/sys/class/net", e.Name())
-			ni := NetworkInterface{Name: e.Name()}
-			if addrRaw, err := os.ReadFile(filepath.Join(base, "address")); err == nil {
-				ni.Addresses = append(ni.Addresses, strings.TrimSpace(string(addrRaw)))
+		for _, hostInterface := range interfaces {
+			base := filepath.Join("/sys/class/net", hostInterface.Name)
+			network := NetworkInterface{Name: hostInterface.Name, MTU: hostInterface.MTU}
+			if addresses, addressErr := hostInterface.Addrs(); addressErr == nil {
+				for _, address := range addresses {
+					host := strings.Split(address.String(), "/")[0]
+					if net.ParseIP(host) != nil {
+						network.Addresses = append(network.Addresses, host)
+					}
+				}
 			}
-			if mtuRaw, err := os.ReadFile(filepath.Join(base, "mtu")); err == nil {
-				ni.MTU, _ = strconv.Atoi(strings.TrimSpace(string(mtuRaw)))
+			if speedRaw, speedErr := os.ReadFile(filepath.Join(base, "speed")); speedErr == nil {
+				network.LinkMbps, _ = strconv.Atoi(strings.TrimSpace(string(speedRaw)))
 			}
-			if speedRaw, err := os.ReadFile(filepath.Join(base, "speed")); err == nil {
-				ni.LinkMbps, _ = strconv.Atoi(strings.TrimSpace(string(speedRaw)))
-			}
-			inv.Interfaces = append(inv.Interfaces, ni)
+			inv.Interfaces = append(inv.Interfaces, network)
 		}
 	}
-	if rdmaEntries, err := os.ReadDir("/sys/class/infiniband"); err == nil {
-		for _, e := range rdmaEntries {
-			dev := RdmaDevice{Name: e.Name()}
-			if vendorRaw, err := os.ReadFile(filepath.Join("/sys/class/infiniband", e.Name(), "vendor_part_id")); err == nil {
-				dev.Vendor = strings.TrimSpace(string(vendorRaw))
+	if rdmaEntries, readErr := os.ReadDir("/sys/class/infiniband"); readErr == nil {
+		for _, entry := range rdmaEntries {
+			deviceRoot := filepath.Join("/sys/class/infiniband", entry.Name())
+			device := RdmaDevice{Name: entry.Name()}
+			if vendorRaw, vendorErr := os.ReadFile(filepath.Join(deviceRoot, "vendor_part_id")); vendorErr == nil {
+				device.Vendor = strings.TrimSpace(string(vendorRaw))
 			}
-			portDirs, _ := os.ReadDir(filepath.Join("/sys/class/infiniband", e.Name()))
-			for _, pd := range portDirs {
-				pn := pd.Name()
-				if !strings.HasPrefix(pn, "ports/") {
-					continue
+			if networkEntries, networkErr := os.ReadDir(filepath.Join(deviceRoot, "device", "net")); networkErr == nil {
+				for _, networkEntry := range networkEntries {
+					device.NetworkInterfaces = append(device.NetworkInterfaces, networkEntry.Name())
 				}
-				pn = strings.TrimPrefix(pn, "ports/")
-				port := RdmaPort{Name: pn}
-				if stateRaw, err := os.ReadFile(filepath.Join("/sys/class/infiniband", e.Name(), "ports", pn, "state")); err == nil {
+			}
+			portDirs, _ := os.ReadDir(filepath.Join(deviceRoot, "ports"))
+			for _, portDir := range portDirs {
+				portName := portDir.Name()
+				portRoot := filepath.Join(deviceRoot, "ports", portName)
+				port := RdmaPort{Name: portName}
+				if stateRaw, stateErr := os.ReadFile(filepath.Join(portRoot, "state")); stateErr == nil {
 					port.State = strings.TrimSpace(string(stateRaw))
 				}
-				if rateRaw, err := os.ReadFile(filepath.Join("/sys/class/infiniband", e.Name(), "ports", pn, "rate")); err == nil {
+				if rateRaw, rateErr := os.ReadFile(filepath.Join(portRoot, "rate")); rateErr == nil {
 					port.LinkRateGbps = parseRdmaRate(string(rateRaw))
 				}
-				dev.Ports = append(dev.Ports, port)
+				if gidEntries, gidErr := os.ReadDir(filepath.Join(portRoot, "gids")); gidErr == nil {
+					for _, gidEntry := range gidEntries {
+						index, indexErr := strconv.Atoi(gidEntry.Name())
+						value, valueErr := os.ReadFile(filepath.Join(portRoot, "gids", gidEntry.Name()))
+						gidType, _ := os.ReadFile(filepath.Join(portRoot, "gid_attrs", "types", gidEntry.Name()))
+						if indexErr == nil && valueErr == nil {
+							port.GIDs = append(port.GIDs, RdmaGID{
+								Index: index,
+								Value: strings.TrimSpace(string(value)),
+								Type:  strings.TrimSpace(string(gidType)),
+							})
+						}
+					}
+					sort.Slice(port.GIDs, func(i, j int) bool { return port.GIDs[i].Index < port.GIDs[j].Index })
+				}
+				device.Ports = append(device.Ports, port)
 			}
-			inv.RDMADevices = append(inv.RDMADevices, dev)
+			inv.RDMADevices = append(inv.RDMADevices, device)
 		}
 	}
 	return nil

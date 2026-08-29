@@ -397,6 +397,8 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			s.applyPlacementReport(ctx, nodeID, body.PlacementReport)
 		case *agentv1.AgentMessage_TransferProgress:
 			s.applyTransferProgress(ctx, nodeID, body.TransferProgress)
+		case *agentv1.AgentMessage_ArtifactProgress:
+			s.deploys.OnArtifactProgress(ctx, body.ArtifactProgress)
 		case *agentv1.AgentMessage_RotateCertificate:
 			s.rotateCertificate(ctx, nodeID, conn)
 		case *agentv1.AgentMessage_Ack:

@@ -170,7 +170,7 @@ export default function RecipesRoute() {
                     <button
                       type="button"
                       className="sample-a-card"
-                      aria-label={`Choose installation hardware for ${recipeDisplayName(recipe)}`}
+                      aria-label={`Plan launch for ${recipeDisplayName(recipe)}`}
                       onClick={() => {
                         setSelectedRecipeDigest(recipe.digest);
                         setPlanOpen(true);
@@ -191,10 +191,10 @@ export default function RecipesRoute() {
                           ) : null}
                           {installedCount > 0 ? (
                             <span className="sample-a-install-state is-installed">
-                              Installed on {installedCount} {installedCount === 1 ? "device" : "devices"}
+                              Recipe ready on {installedCount} {installedCount === 1 ? "node" : "nodes"}
                             </span>
                           ) : (
-                            <span className="sample-a-install-state is-not-installed">Not installed</span>
+                            <span className="sample-a-install-state is-not-installed">Recipe package not cached</span>
                           )}
                         </span>
                       </span>
@@ -204,7 +204,7 @@ export default function RecipesRoute() {
                       </span>
                       <span className="sample-a-compat">{compatibility}</span>
                       <span className="sample-a-updrow">
-                        <span className="sample-a-upd">Choose installation hardware →</span>
+                        <span className="sample-a-upd">Plan launch →</span>
                       </span>
                       <span className="sample-a-meta">
                         {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
@@ -230,7 +230,14 @@ export default function RecipesRoute() {
         )}
       </div>
 
-      <ImportRecipeDialog open={importOpen} onOpenChange={setImportOpen} />
+      <ImportRecipeDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onPlan={(recipe) => {
+          setSelectedRecipeDigest(recipe.digest);
+          setPlanOpen(true);
+        }}
+      />
       <PlanDeploymentDialog
         open={planOpen}
         onOpenChange={setPlanOpen}

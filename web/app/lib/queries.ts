@@ -326,8 +326,8 @@ export function useCreateFabric() {
 export function useUpdateFabric() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & api.CreateFabricRequest & { ifMatch: string }) =>
-      api.updateFabric(id, body, body.ifMatch),
+    mutationFn: ({ id, ifMatch, ...body }: { id: string } & api.CreateFabricRequest & { ifMatch: string }) =>
+      api.updateFabric(id, body, ifMatch),
     onSuccess: (f) => {
       invalidates(qk.fabrics)(qc);
       qc.setQueryData<api.Fabric>(qk.fabric(f.id), f);
@@ -389,7 +389,10 @@ export function useImportRecipe() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: api.RecipeImport) => api.importRecipe(body),
-    onSuccess: () => invalidates(qk.recipes)(qc),
+    onSuccess: () => {
+      invalidates(qk.recipes)(qc);
+      invalidates(qk.recipeRepositories)(qc);
+    },
   });
 }
 

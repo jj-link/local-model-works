@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"time"
@@ -30,11 +31,12 @@ type workloads struct {
 }
 
 type containerState struct {
-	state    string
-	reported bool
-	dep      string
-	run      string
-	rank     int32
+	state      string
+	reportedAt time.Time
+	reported   bool
+	dep        string
+	run        string
+	rank       int32
 }
 
 type tailKey struct {
@@ -156,6 +158,10 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, "container.exists: "+name, "", "")
 			return
 		}
+		if err := a.prepareManagedTransferMounts(spec); err != nil {
+			a.result(cmdID, false, 0, fmt.Sprintf("prepare managed transfer mounts: %v", err), "", "")
+			return
+		}
 		id, err := a.rt.Create(ctx, spec)
 		if err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
@@ -229,6 +235,25 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 	}
 }
 
+func (a *Agent) prepareManagedTransferMounts(spec *runtime.ContainerSpec) error {
+	transferRoot, err := filepath.Abs(a.cfg.TransferDir())
+	if err != nil {
+		return err
+	}
+	for _, mount := range spec.Mounts {
+		source, err := filepath.Abs(mount.Source)
+		if err != nil {
+			return err
+		}
+		if pathWithin(source, transferRoot) {
+			if err := makeTransferredArtifactMountable(source); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // resolve finds a managed container by its deterministic name.
 func (a *Agent) resolve(name, deploymentID, runID string, rank int32) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -293,7 +318,10 @@ func labelsOf(c *runtime.ContainerInfo) (deployment, run string, rank int32) {
 
 // startMonitor runs container state monitoring for the session lifetime.
 // It is idempotent: a second call while one is live is a no-op.
-const monitorPeriod = 2 * time.Second
+const (
+	monitorPeriod      = 2 * time.Second
+	stateRefreshPeriod = 5 * time.Second
+)
 
 func (w *workloads) startMonitor(ctx context.Context) {
 	w.mu.Lock()
@@ -367,16 +395,19 @@ func (w *workloads) tick(ctx context.Context) {
 // reportState sends a StateUpdate when a container's observed state changes.
 func (w *workloads) reportState(c *runtime.ContainerInfo) {
 	dep, run, rank := labelsOf(c)
+	now := time.Now()
 	w.mu.Lock()
 	last := w.last[c.ID]
-	changed := !last.reported || last.state != c.State
+	changed := !last.reported || last.state != c.State ||
+		(c.State == "running" && now.Sub(last.reportedAt) >= stateRefreshPeriod)
 	if changed {
 		w.last[c.ID] = containerState{
-			state:    c.State,
-			reported: true,
-			dep:      dep,
-			run:      run,
-			rank:     rank,
+			state:      c.State,
+			reported:   true,
+			reportedAt: now,
+			dep:        dep,
+			run:        run,
+			rank:       rank,
 		}
 	}
 	w.mu.Unlock()

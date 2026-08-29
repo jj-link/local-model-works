@@ -9,7 +9,7 @@ Local Model Works is a self-hosted control plane for a small heterogeneous AI fl
 - `lmw`: offline operator CLI for account bootstrap, recipe authoring, and DGX Dashboard migration.
 - `modules/`: compile-time first-party Fleet, Library, Serving, Benchmarks, Workshop, Runs, and Settings modules.
 
-Recipes and images are digest-pinned. Git sources require full commit hashes. Agents only manage containers bearing Local Model Works ownership labels. Browser mutations require a secure origin-bound session and CSRF token.
+Recipes and images are digest-pinned. Git recipe imports resolve a branch or `HEAD` to one immutable commit before preview or installation; the offline CLI also accepts an explicit full commit hash. Agents only manage containers bearing Local Model Works ownership labels. Browser mutations require a secure origin-bound session and CSRF token.
 
 ## Build and verify
 
@@ -66,9 +66,17 @@ lmw recipe pack ./recipe --output ./recipe.oci
 
 Imported Git recipes remain untrusted until an operator approves the stored digest. The Library builder remains an authoring surface for inspecting source trees, selecting assets, validating manifests, and packaging resumable runs. Installed Git repositories are cataloged once by normalized URL and source path, with immutable commits beneath them. For native recipe bundles and registered deterministic compilers, the Library can preview the exact hardware using older commits, install a pinned newer commit without modifying or executing the third-party repository, replace deployments on the same nodes and ranks, and report durable per-hardware progress with automatic restoration on failure or cancellation.
 
+### GLM-5.3 Flash on two DGX Sparks
+
+The Library has a deterministic compiler for `MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks`. Choose **Import from Git**, paste the repository URL, and review the resolved commit, generated `glm53-flash-exl3-dflash2-spark-tp2` recipe, immutable image/model/drafter identities, artifact sizes, two Spark roles, fabric requirements, and requested permissions before trusting it. The repository is treated as data: LMW does not execute its scripts during import.
+
+Before launch, create or repair a healthy RoCE fabric in **Fleet → Fabrics**. Each selected member records its own fabric address, network interface, RDMA device, and GID index, so asymmetric device names are supported. The deployment planner assigns **Head · API** and **Worker 1**, explains offline/incompatible nodes and conflicts, and links an owning deployment that must be stopped.
+
+Launch from the plan. Each node reports the current artifact file, completed/total bytes, file count, and percentage. Hugging Face snapshots download with bounded concurrency, resume partial files after stop or reconnect, and become eligible for placement only after every pinned file is size/digest validated and a completion manifest is committed. **Stop** cancels active preparation without deleting partial or verified cache data; **Start** revalidates the same placement and resumes it. After the readiness probe passes, use **Verify** for the live health/model check or open the deployment in **Chat** and select `GLM-5.3-Flash-EXL3`.
+
 ## Serving lifecycle
 
-Serving separates deployments that still require operator attention from fully stopped history. An unexpected container exit records the rank, container, exit code, OOM state, runtime error, and persisted run logs; the controller then stops every remaining rank and releases leases only after each workload is confirmed down. Recovery is explicit: open the stopped deployment and choose **Restart** to create a fresh run with a newly planned, transactionally persisted placement. Repeated **Retry stop** actions are safe, and offline ranks retain their leases until reconnect confirms that the hardware is free.
+Serving separates deployments that still require operator attention from fully stopped history. A deployment remains in health check until its configured readiness probe succeeds; a running container alone is not reported healthy. An unexpected container exit records the rank, container, exit code, OOM state, runtime error, and persisted rank-specific logs; the controller then stops every remaining rank and releases leases only after each workload is confirmed down. Recovery is explicit: open the stopped deployment and choose **Restart** to create a fresh run with a newly planned, transactionally persisted placement. Repeated **Retry stop** actions are safe, and offline ranks retain their leases until reconnect confirms that the hardware is free.
 
 ## Migration
 

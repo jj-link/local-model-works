@@ -11,7 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestResumeHTTPFileContinuesVerifiedLength(t *testing.T) {
@@ -64,16 +67,22 @@ func TestResumeHTTPFileRejectsOversizedResponse(t *testing.T) {
 // are downloaded and digest-verified using sizes from the metadata.
 func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 	const (
-		owner     = "acme"
-		repo      = "tiny-model"
-		revision  = "deadbeefcafebabe"
-		regular   = "config.json" // regular git blob (no LFS)
-		lfsFile   = "weights.safetensors"
+		owner    = "acme"
+		repo     = "tiny-model"
+		revision = "deadbeefcafebabe"
+		regular  = "config.json" // regular git blob (no LFS)
+		lfsFile  = "weights.safetensors"
 	)
 	regularBody := []byte(`{"hidden_size":42}`)
 	lfsBody := []byte(strings.Repeat("lfs", 5000))
 
 	sawBlobs := false
+	var resolveCalls atomic.Int32
+	var activeResolves atomic.Int32
+	var maxActiveResolves atomic.Int32
+	var bothResolves sync.Once
+	concurrentResolves := make(chan struct{})
+	var progress []artifactDownloadProgress
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case strings.HasPrefix(request.URL.Path, "/api/models/"):
@@ -86,6 +95,22 @@ func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 				},
 			})
 		case strings.Contains(request.URL.Path, "/resolve/"):
+			resolveCalls.Add(1)
+			active := activeResolves.Add(1)
+			defer activeResolves.Add(-1)
+			for {
+				maxActive := maxActiveResolves.Load()
+				if active <= maxActive || maxActiveResolves.CompareAndSwap(maxActive, active) {
+					break
+				}
+			}
+			if active >= 2 {
+				bothResolves.Do(func() { close(concurrentResolves) })
+			}
+			select {
+			case <-concurrentResolves:
+			case <-time.After(2 * time.Second):
+			}
 			body := lfsBody
 			if strings.HasSuffix(request.URL.Path, regular) {
 				body = regularBody
@@ -102,7 +127,9 @@ func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 	hfBaseURL = base
 
 	cacheRoot := t.TempDir()
-	if err := fetchHFSnapshot(t.Context(), "hf://acme/tiny-model@"+revision, cacheRoot, ""); err != nil {
+	if err := fetchHFSnapshot(t.Context(), "hf://acme/tiny-model@"+revision, cacheRoot, "", func(update artifactDownloadProgress) {
+		progress = append(progress, update)
+	}); err != nil {
 		t.Fatalf("fetchHFSnapshot: %v", err)
 	}
 	if !sawBlobs {
@@ -113,6 +140,24 @@ func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(cacheRoot, "hub", "models--acme--tiny-model", "snapshots", revision, name)); err != nil {
 			t.Errorf("snapshot missing for %s: %v", name, err)
 		}
+	}
+	if len(progress) < 3 || progress[0].Phase != "metadata" || progress[len(progress)-1].Phase != "validating" {
+		t.Fatalf("progress phases = %+v", progress)
+	}
+	final := progress[len(progress)-1]
+	wantBytes := uint64(len(regularBody) + len(lfsBody))
+	if final.BytesDone != wantBytes || final.BytesTotal != wantBytes || final.FilesDone != 2 || final.FilesTotal != 2 {
+		t.Fatalf("final progress = %+v, want %d bytes and 2 files", final, wantBytes)
+	}
+	if maxActiveResolves.Load() < 2 {
+		t.Fatalf("maximum concurrent resolve requests = %d, want at least 2", maxActiveResolves.Load())
+	}
+	firstResolveCalls := resolveCalls.Load()
+	if err := fetchHFSnapshot(t.Context(), "hf://acme/tiny-model@"+revision, cacheRoot, ""); err != nil {
+		t.Fatalf("cached fetch: %v", err)
+	}
+	if resolveCalls.Load() != firstResolveCalls {
+		t.Fatalf("cached verified snapshot redownloaded %d file(s)", resolveCalls.Load()-firstResolveCalls)
 	}
 }
 

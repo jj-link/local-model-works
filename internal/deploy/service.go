@@ -23,6 +23,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/events"
+	fabriccfg "github.com/jj-link/local-model-works/internal/fabric"
 	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/inventory"
 	"github.com/jj-link/local-model-works/internal/recipe"
@@ -59,13 +60,15 @@ type Service struct {
 	transferInflight   map[string]string
 	rankStates         map[string]map[int32]string
 	dispatchMu         sync.Mutex
+	progressMu         sync.Mutex
 	updateMu           sync.Mutex
 	updateLive         map[string]bool
 	updateFetchWaiters map[string]chan error
+	readinessProbe     func(context.Context, db.GetDeploymentRow) (bool, string)
 }
 
 func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender, ca *ca.CA) *Service {
-	return &Service{
+	service := &Service{
 		db:                 dbh,
 		q:                  q,
 		bus:                bus,
@@ -78,6 +81,8 @@ func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service
 		updateLive:         map[string]bool{},
 		updateFetchWaiters: map[string]chan error{},
 	}
+	service.readinessProbe = service.readinessPassed
+	return service
 }
 
 // ---------------------------------------------------------------- planning
@@ -1094,6 +1099,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 	}))
 	_ = s.runs.SetState(ctx, runIDStr, runs.Planning, "", "")
 	_ = s.runs.SetState(ctx, runIDStr, runs.Waiting, "", "")
+	s.initializeServeProgress(ctx, runIDStr, plan.Placements)
 	for _, pl := range plan.Placements {
 		s.dispatchNext(ctx, depID, pl.Rank, runIDStr, pl)
 	}
@@ -1117,12 +1123,171 @@ func (s *Service) inflightTake(commandID string) (*inflightCmd, bool) {
 	return c, ok
 }
 
-func (s *Service) inflightHas(depID string, rank int32, op string) bool {
+func (s *Service) inflightPeek(commandID string) (*inflightCmd, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	command, ok := s.inflight[commandID]
+	if !ok {
+		return nil, false
+	}
+	copy := *command
+	return &copy, true
+}
+
+func (s *Service) cancelArtifactFetches(depID string, rank int32, nodeID string) {
+	var targets []string
+	s.mu.Lock()
+	for commandID, command := range s.inflight {
+		if command.DepID == depID && command.Rank == rank && command.Op == "artifact-fetch" {
+			targets = append(targets, commandID)
+			delete(s.inflight, commandID)
+		}
+	}
+	prefix := depID + "|" + nodeID + "|"
+	for key := range s.transferInflight {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.transferInflight, key)
+		}
+	}
+	s.mu.Unlock()
+	for _, target := range targets {
+		commandID, _ := id.New()
+		s.nodes.Send(nodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
+			ArtifactCommand: &agentv1.ArtifactCommand{
+				CommandId: commandID, Op: agentv1.ArtifactOp_ARTIFACT_OP_CANCEL, TargetCommandId: target,
+			},
+		}})
+	}
+}
+
+// OnArtifactProgress persists resumable origin-download progress on the
+// owning serve run. Command results remain the terminal authority.
+func (s *Service) OnArtifactProgress(ctx context.Context, progress *agentv1.ArtifactProgress) {
+	command, ok := s.inflightPeek(progress.GetCommandId())
+	if !ok || command.Op != "artifact-fetch" {
+		return
+	}
+	// A placement report is sent before the artifact command's terminal
+	// progress/result. Once it has unblocked a later rank operation, that
+	// trailing artifact progress must not regress the visible launch phase.
+	if s.inflightHas(command.DepID, command.Rank, "prepare", "pull", "create", "start", "inspect", "verify") {
+		return
+	}
+	deployment, err := s.q.GetDeployment(ctx, command.DepID)
+	if err != nil || !deployment.RunID.Valid {
+		return
+	}
+	s.setServeRankProgress(ctx, deployment.RunID.String, command.Rank, map[string]any{
+		"phase": progress.GetPhase(), "artifact": progress.GetArtifactIdentity(),
+		"current_file": progress.GetCurrentFile(), "bytes_done": progress.GetBytesDone(),
+		"bytes_total": progress.GetBytesTotal(), "files_done": progress.GetFilesDone(),
+		"files_total": progress.GetFilesTotal(),
+	})
+}
+
+func (s *Service) initializeServeProgress(ctx context.Context, runID string, placements []Placement) {
+	ranks := make([]any, 0, len(placements))
+	for _, placement := range placements {
+		role := "worker"
+		if placement.Rank == 0 {
+			role = "head"
+		}
+		ranks = append(ranks, map[string]any{
+			"rank": placement.Rank, "role": role, "node_id": placement.NodeID,
+			"node_name": placement.NodeName, "phase": "queued",
+		})
+	}
+	_ = s.runs.SetProgress(ctx, runID, map[string]any{"phase": "preparing", "ranks": ranks})
+}
+
+func (s *Service) setServeRankProgress(ctx context.Context, runID string, rank int32, updates map[string]any) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	run, err := s.runs.Get(ctx, runID)
+	if err != nil {
+		return
+	}
+	progress := run.Progress
+	if progress == nil {
+		progress = map[string]any{}
+	}
+	rows, _ := progress["ranks"].([]any)
+	found := false
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok || progressRank(row["rank"]) != rank {
+			continue
+		}
+		for key, value := range updates {
+			row[key] = value
+		}
+		found = true
+		break
+	}
+	if !found {
+		row := map[string]any{"rank": rank}
+		for key, value := range updates {
+			row[key] = value
+		}
+		rows = append(rows, row)
+	}
+	progress["ranks"] = rows
+	overall := "preparing"
+	allHealthy := len(rows) > 0
+	allStopped := len(rows) > 0
+	anyFailed := false
+	anyStarting := false
+	anyWaiting := false
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		phase, _ := row["phase"].(string)
+		allHealthy = allHealthy && phase == "healthy"
+		allStopped = allStopped && phase == "stopped"
+		anyFailed = anyFailed || phase == "failed"
+		anyWaiting = anyWaiting || strings.HasPrefix(phase, "waiting")
+		anyStarting = anyStarting || phase == "pulling_image" || phase == "creating_container" ||
+			phase == "starting_container" || phase == "health_check"
+	}
+	switch {
+	case anyFailed:
+		overall = "failed"
+	case allHealthy:
+		overall = "healthy"
+	case allStopped:
+		overall = "stopped"
+	case anyWaiting:
+		overall = "waiting"
+	case anyStarting:
+		overall = "starting"
+	}
+	progress["phase"] = overall
+	_ = s.runs.SetProgress(ctx, runID, progress)
+}
+
+func progressRank(value any) int32 {
+	switch rank := value.(type) {
+	case float64:
+		return int32(rank)
+	case int32:
+		return rank
+	case int:
+		return int32(rank)
+	case json.Number:
+		value, _ := rank.Int64()
+		return int32(value)
+	default:
+		return -1
+	}
+}
+
+func (s *Service) inflightHas(depID string, rank int32, operations ...string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, command := range s.inflight {
-		if command.DepID == depID && command.Rank == rank && command.Op == op {
-			return true
+		for _, operation := range operations {
+			if command.DepID == depID && command.Rank == rank && command.Op == operation {
+				return true
+			}
 		}
 	}
 	return false
@@ -1346,9 +1511,11 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 				s.noteDispatch(ctx, depID, diag.Error("artifact.mount_missing", err.Error()))
 				return
 			}
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "pulling_image"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "pull")
 			if !s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_PULL, depID, runID, rank, spec) {
+				s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "waiting_for_node"})
 				s.noteDispatch(ctx, depID, diag.Error("workload.node_offline",
 					fmt.Sprintf("node %s offline; dispatch paused until reconnect", nodeID)))
 				return
@@ -1359,6 +1526,7 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 				s.noteDispatch(ctx, depID, diag.Error("artifact.mount_missing", err.Error()))
 				return
 			}
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "creating_container"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "create")
 			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, depID, runID, rank, spec)
@@ -1366,10 +1534,12 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 			// START resolves the container by name; the agent keeps the
 			// CREATE spec in memory, so no re-render is needed (and a
 			// placement failure must not block a stop).
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "starting_container"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "start")
 			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_START, depID, runID, rank, nil)
 		case PhaseStarted:
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "health_check"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "inspect")
 			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, depID, runID, rank, nil)
@@ -1388,6 +1558,7 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 		case PhasePreparing:
 			s.stopExtension(ctx, row, pl, rank, runID, "stop-prepare")
 		case PhasePrepared:
+			s.cancelArtifactFetches(depID, rank, nodeID)
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
 		case PhaseVerifying:
@@ -1395,6 +1566,7 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 		case PhaseNone:
 			// PULL never acked: CREATE/START never sent, no container can
 			// exist. Confirm stopped directly.
+			s.cancelArtifactFetches(depID, rank, nodeID)
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
 		case PhasePulled, PhaseCreated, PhaseStarted, PhaseStopping:
@@ -1419,6 +1591,28 @@ func (s *Service) setPhase(ctx context.Context, depID string, rank int32, to str
 	ph[rank] = to
 	b, _ := json.Marshal(ph)
 	_ = s.q.SetDeploymentDispatch(ctx, db.SetDeploymentDispatchParams{Dispatch: string(b), ID: depID})
+}
+
+func (s *Service) setPlacementContainer(ctx context.Context, depID string, rank int32, containerID string) {
+	if containerID == "" {
+		return
+	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	row, err := s.q.GetDeployment(ctx, depID)
+	if err != nil {
+		return
+	}
+	placements := ParsePlacementSet(row.Placement)
+	placement := placements.EntryFor(rank)
+	if placement == nil || placement.Container == containerID {
+		return
+	}
+	placement.Container = containerID
+	_ = s.q.UpdateDeploymentPlacement(ctx, db.UpdateDeploymentPlacementParams{
+		Placement: placements.Marshal(),
+		ID:        depID,
+	})
 }
 
 // OnCommandResult advances the dispatch state machine for one rank.
@@ -1720,6 +1914,9 @@ func (s *Service) ensureRecipePackage(ctx context.Context, row db.GetDeploymentR
 	}
 	s.transferInflight[key] = "pending"
 	s.mu.Unlock()
+	s.setServeRankProgress(ctx, s.runIDFor(ctx, row.ID), rank, map[string]any{
+		"phase": "recipe_package", "artifact": identity,
+	})
 	commandID, _ := id.New()
 	s.inflightMark(commandID, row.ID, rank, "artifact-fetch")
 	if !s.nodes.Send(placement.NodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
@@ -1731,7 +1928,9 @@ func (s *Service) ensureRecipePackage(ctx context.Context, row db.GetDeploymentR
 		s.mu.Lock()
 		delete(s.transferInflight, key)
 		s.mu.Unlock()
-		s.failDispatch(ctx, row.ID, rank, s.runIDFor(ctx, row.ID), "recipe.package_node_offline", "node offline")
+		s.setServeRankProgress(ctx, s.runIDFor(ctx, row.ID), rank, map[string]any{"phase": "waiting_for_node"})
+		s.noteDispatch(ctx, row.ID, diag.Warning("workload.node_offline",
+			fmt.Sprintf("node %s is offline; recipe installation will resume after reconnect", placement.NodeID)))
 		return false
 	}
 	s.mu.Lock()
@@ -1765,6 +1964,12 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 		if _, ok := s.validPlacement(ctx, art.ID, pl.NodeID); ok {
 			continue
 		}
+		if !s.nodes.Online(pl.NodeID) {
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "waiting_for_node", "artifact": art.Identity})
+			s.noteDispatch(ctx, row.ID, diag.Warning("workload.node_offline",
+				fmt.Sprintf("node %s is offline; artifact preparation will resume after reconnect", pl.NodeID)))
+			return false
+		}
 		key := row.ID + "|" + pl.NodeID + "|" + art.Identity
 		s.mu.Lock()
 		if s.transferInflight[key] != "" {
@@ -1773,6 +1978,9 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 		}
 		s.transferInflight[key] = "pending"
 		s.mu.Unlock()
+		s.setServeRankProgress(ctx, runID, rank, map[string]any{
+			"phase": "artifact_queued", "artifact": art.Identity,
+		})
 		var tid string
 		var dispatchErr error
 		if s.transferSourceName(ctx, art.ID) == "" {
@@ -1795,6 +2003,7 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 		}))
 		return false
 	}
+	s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "artifacts_ready"})
 	return true
 }
 
@@ -1848,6 +2057,25 @@ func safeRelPath(p string) (string, error) {
 		}
 	}
 	return p, nil
+}
+
+func peerTransferAddress(listen, sourceNodeID string, bindings []fabriccfg.MemberBinding) (string, error) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(listen))
+	if err != nil {
+		return "", fmt.Errorf("invalid peer address %q: %w", listen, err)
+	}
+	if host != "" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsUnspecified() {
+			return listen, nil
+		}
+	}
+	for _, binding := range bindings {
+		if binding.NodeID == sourceNodeID && strings.TrimSpace(binding.Address) != "" {
+			return net.JoinHostPort(strings.TrimSpace(binding.Address), port), nil
+		}
+	}
+	return "", errors.New("peer address is wildcard and no source fabric address is configured")
 }
 
 // startTransfer records a transfers row, signs the peer credential, and
@@ -1939,12 +2167,25 @@ func (s *Service) startTransfer(ctx context.Context, art db.Artifact, sourceNode
 	}
 	peerAddr := ""
 	if src.node.Inventory.Valid {
-		if inv, parseErr := inventory.Parse(src.node.Inventory.String); parseErr == nil {
-			peerAddr = inv.PeerListen
+		if inv, parseErr := inventory.Parse(src.node.Inventory.String); parseErr == nil && inv.PeerListen != "" {
+			var bindings []fabriccfg.MemberBinding
+			if fabric != "" {
+				fabricRow, fabricErr := s.q.GetFabric(ctx, fabric)
+				if fabricErr != nil {
+					return "", fabricErr
+				}
+				if err := json.Unmarshal([]byte(fabricRow.Bindings), &bindings); err != nil {
+					return "", fmt.Errorf("fabric bindings: %w", err)
+				}
+			}
+			peerAddr, err = peerTransferAddress(inv.PeerListen, src.node.ID, bindings)
+			if err != nil {
+				return "", fmt.Errorf("source node %s peer address: %w", src.node.ID, err)
+			}
 		}
 	}
 	if peerAddr == "" {
-		return "", fmt.Errorf("source node %s advertises no peer address (set LMW_PEER_ADVERTISE)", src.node.ID)
+		return "", fmt.Errorf("source node %s advertises no peer address (set LMW_PEER_ADVERTISE or configure a fabric address)", src.node.ID)
 	}
 	tid, _ := id.New()
 	if destRel == "" {
@@ -2253,26 +2494,29 @@ func (s *Service) aggregateRankState(deploymentID string, placements placementSe
 	if len(placements.Entries) == 0 {
 		return "unknown"
 	}
-	running, offline, failed, preparing := 0, 0, 0, 0
+	running, ready, offline, failed, preparing := 0, 0, 0, 0, 0
 	for _, placement := range placements.Entries {
 		switch states[placement.Rank] {
 		case "running":
 			running++
-		case "offline", "":
+		case "ready":
+			ready++
+		case "offline":
 			offline++
-		case "created", "restarting":
+		case "created", "restarting", "":
 			preparing++
 		case "degraded", "exited", "dead", "missing":
 			failed++
 		}
 	}
 	total := len(placements.Entries)
+	active := running + ready
 	switch {
-	case running == total:
+	case ready > 0 && active == total:
 		return "healthy"
-	case failed > 0 || (running > 0 && offline > 0):
+	case failed > 0 || (active > 0 && offline > 0):
 		return "degraded"
-	case running > 0 || preparing > 0:
+	case active > 0 || preparing > 0:
 		return "starting"
 	default:
 		return "unknown"
@@ -2335,6 +2579,61 @@ func workloadFailure(su *agentv1.StateUpdate) (code, message string) {
 	return code, strings.Join(parts, "; ")
 }
 
+func (s *Service) readinessPassed(ctx context.Context, row db.GetDeploymentRow) (bool, string) {
+	manifest, err := s.manifestFor(ctx, row.RecipeDigest)
+	if err != nil {
+		return false, err.Error()
+	}
+	_, workload, err := s.selectWorkload(ctx, row, manifest)
+	if err != nil {
+		return false, err.Error()
+	}
+	probe := workload.Readiness
+	if probe == nil || probe.HTTPGet == nil {
+		return true, ""
+	}
+	if !row.Endpoint.Valid || row.Endpoint.String == "" {
+		return false, "waiting for endpoint"
+	}
+	hostPort := row.Endpoint.String
+	if probe.HTTPGet.Port != 0 {
+		if host, _, splitErr := net.SplitHostPort(hostPort); splitErr == nil {
+			hostPort = net.JoinHostPort(host, strconv.Itoa(probe.HTTPGet.Port))
+		}
+	}
+	probePath := probe.HTTPGet.Path
+	if probePath == "" {
+		probePath = "/health"
+	}
+	method := probe.HTTPGet.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	timeout := 2 * time.Second
+	if configured := time.Duration(probe.TimeoutSeconds) * time.Second; configured > 0 && configured < timeout {
+		timeout = configured
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(probeCtx, method, "http://"+hostPort+probePath, nil)
+	if err != nil {
+		return false, err.Error()
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer response.Body.Close()
+	expectedStatus := http.StatusOK
+	if probe.Expect != nil && probe.Expect.StatusCode != nil {
+		expectedStatus = *probe.Expect.StatusCode
+	}
+	if response.StatusCode != expectedStatus {
+		return false, fmt.Sprintf("readiness %s returned HTTP %d", probePath, response.StatusCode)
+	}
+	return true, ""
+}
+
 func (s *Service) failWorkload(ctx context.Context, row db.GetDeploymentRow, su *agentv1.StateUpdate) {
 	code, message := workloadFailure(su)
 	resource := fmt.Sprintf("rank:%d", su.Rank)
@@ -2358,6 +2657,7 @@ func (s *Service) failWorkload(ctx context.Context, row db.GetDeploymentRow, su 
 		if run, err := s.runs.Get(ctx, runID); err == nil && !runs.State(run.State).Terminal() {
 			_ = s.runs.SetState(ctx, runID, runs.Failed, code, message)
 		}
+		s.setServeRankProgress(ctx, runID, su.Rank, map[string]any{"phase": "failed", "message": message})
 	}
 
 	placements := ParsePlacementSet(row.Placement)
@@ -2385,6 +2685,7 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	if err != nil {
 		return
 	}
+	s.setPlacementContainer(ctx, row.ID, su.Rank, su.ContainerId)
 	if row.DesiredState == "running" && terminalWorkloadState(su.State) {
 		s.failWorkload(ctx, row, su)
 		return
@@ -2403,9 +2704,18 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	rankState := su.State
 	if su.DiagnosticMessage != "" {
 		rankState = "degraded"
+	} else if su.State == "running" && su.Rank == 0 {
+		if ready, detail := s.readinessProbe(ctx, row); ready {
+			rankState = "ready"
+			d = diag.Info("workload.healthy", "readiness probe passed")
+		} else {
+			rankState = "created"
+			d = diag.Info("workload.readiness_pending", detail)
+		}
 	}
 	s.setRankState(row.ID, su.Rank, rankState)
-	observed := s.aggregateRankState(row.ID, ParsePlacementSet(row.Placement))
+	placements := ParsePlacementSet(row.Placement)
+	observed := s.aggregateRankState(row.ID, placements)
 	existing := diag.Decode(row.Diagnostics)
 	existing = diag.Upsert(existing, d.Res(fmt.Sprintf("rank:%d", su.Rank)))
 	endpoint := row.Endpoint
@@ -2433,6 +2743,21 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	runID := ""
 	if row.RunID.Valid {
 		runID = row.RunID.String
+	}
+	if runID != "" {
+		phase := su.State
+		if observed == "healthy" {
+			for _, rank := range placements.AllRanks() {
+				s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "healthy"})
+			}
+		} else {
+			if su.State == "running" {
+				phase = "health_check"
+			} else if su.State == "created" || su.State == "restarting" {
+				phase = "starting_container"
+			}
+			s.setServeRankProgress(ctx, runID, su.Rank, map[string]any{"phase": phase})
+		}
 	}
 
 	switch row.DesiredState {
@@ -2464,6 +2789,11 @@ func (s *Service) checkStopComplete(ctx context.Context, depID, runID string) {
 	for _, rank := range ps.AllRanks() {
 		if ph.Get(rank) != PhaseStopped {
 			return // one rank not confirmed: keep the lease, stay stopping
+		}
+	}
+	if runID != "" {
+		for _, rank := range ps.AllRanks() {
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "stopped"})
 		}
 	}
 	if runID != "" {
@@ -2634,6 +2964,7 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 	}))
 	_ = s.runs.SetState(ctx, runIDStr, runs.Planning, "", "")
 	_ = s.runs.SetState(ctx, runIDStr, runs.Waiting, "", "")
+	s.initializeServeProgress(ctx, runIDStr, plan.Placements)
 	for _, pl := range plan.Placements {
 		s.dispatchNext(ctx, depID, pl.Rank, runIDStr, pl)
 	}
@@ -3050,14 +3381,43 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		}
 	}
 	fabricAddress := ""
+	fabricNodeAddress := ""
+	fabricInterface := ""
+	fabricRDMADevice := ""
+	fabricGIDIndex := ""
 	if row.Fabric.Valid {
-		if fabric, fabricErr := s.q.GetFabric(ctx, row.Fabric.String); fabricErr == nil && fabric.Address.Valid {
-			fabricAddress = fabric.Address.String
+		fabricRow, fabricErr := s.q.GetFabric(ctx, row.Fabric.String)
+		if fabricErr != nil {
+			return nil, fmt.Errorf("fabric binding: %w", fabricErr)
+		}
+		bindings := fabriccfg.ParseBindings(fabricRow.Bindings)
+		placements := ParsePlacementSet(row.Placement)
+		head := placements.EntryFor(0)
+		for _, binding := range bindings {
+			if binding.NodeID == pl.NodeID {
+				fabricNodeAddress = binding.Address
+				fabricInterface = binding.InterfaceName
+				fabricRDMADevice = binding.RDMADevice
+				if binding.GIDIndex != nil {
+					fabricGIDIndex = strconv.Itoa(int(*binding.GIDIndex))
+				}
+			}
+			if head != nil && binding.NodeID == head.NodeID {
+				fabricAddress = binding.Address
+			}
+		}
+		if fabricAddress == "" || fabricNodeAddress == "" || fabricInterface == "" {
+			return nil, fmt.Errorf("fabric binding is incomplete for rank %d on node %s", rank, pl.NodeID)
+		}
+		if fabricRow.Transport == fabriccfg.TransportRoCE && (fabricRDMADevice == "" || fabricGIDIndex == "") {
+			return nil, fmt.Errorf("RoCE binding is incomplete for rank %d on node %s", rank, pl.NodeID)
 		}
 	}
 	rctx := recipe.RenderContext{
 		NodeID: pl.NodeID, NodeRank: int(rank), NodeAddress: nodeAddress,
-		FabricAddr: fabricAddress, Artifacts: map[string]string{}, Profiles: values,
+		FabricAddr: fabricAddress, FabricNodeAddr: fabricNodeAddress,
+		FabricInterface: fabricInterface, FabricRDMADevice: fabricRDMADevice,
+		FabricGIDIndex: fabricGIDIndex, Artifacts: map[string]string{}, Profiles: values,
 	}
 	for _, artifact := range m.Artifacts {
 		dest := artifact.Mount

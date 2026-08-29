@@ -10,7 +10,7 @@ import DeploymentDetailRoute from "~/routes/serving/deployments/$id";
 import { server } from "../msw/server";
 
 vi.mock("~/components/log-pane", () => ({
-  LogPane: () => <div data-testid="log-pane" />,
+  LogPane: ({ url }: { url: string }) => <div data-testid="log-pane">{url}</div>,
 }));
 
 const baseDeployment = {
@@ -113,7 +113,7 @@ describe("Deployment lifecycle detail", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "delete" }));
+    await user.click(within(dialog).getByRole("button", { name: "delete deployment" }));
     await waitFor(() => {
       expect(screen.getByTestId("location")).toHaveTextContent("/serving/deployments");
     });
@@ -126,5 +126,39 @@ describe("Deployment lifecycle detail", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Last failure" })).not.toBeInTheDocument();
+  });
+
+  it("shows durable per-rank download progress and focused rank logs", async () => {
+    const user = userEvent.setup();
+    renderDetail(
+      {
+        observed_state: "preparing",
+        placements: [
+          { node_id: "spark2", node_name: "spark2", rank: 0, accelerator_index: 0 },
+          { node_id: "spark3", node_name: "spark3", rank: 1, accelerator_index: 0 },
+        ],
+      },
+      {
+        state: "waiting",
+        progress: {
+          phase: "preparing",
+          ranks: [
+            {
+              rank: 0, role: "head", node_name: "spark2", phase: "downloading",
+              artifact: "hf://Mia-AiLab/GLM", current_file: "model-00001.safetensors",
+              bytes_done: 50, bytes_total: 100, files_done: 1, files_total: 2,
+            },
+            { rank: 1, role: "worker", node_name: "spark3", phase: "metadata" },
+          ],
+        },
+      },
+    );
+
+    expect(await screen.findByRole("heading", { name: "launch progress" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText("model-00001.safetensors")).toBeInTheDocument();
+    expect(screen.getByText("50.0 B / 100 B · 1/2 files")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Worker · R1" }));
+    expect(screen.getByTestId("log-pane")).toHaveTextContent("rank=1");
   });
 });

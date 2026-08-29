@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Network, Server } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -46,6 +46,7 @@ export function PlanDeploymentDialog({
   const resetPlan = planMutation.reset;
   const resetCreate = createMutation.reset;
   const wasOpen = useRef(false);
+  const autoPreviewKey = useRef("");
 
   const [recipeDigest, setRecipeDigest] = useState("");
   const [profile, setProfile] = useState("");
@@ -93,6 +94,33 @@ export function PlanDeploymentDialog({
 
   const nodeCount = recipeDetail?.compatibility?.nodeCount || 1;
 
+  const acceleratorRequirement = useMemo(() => {
+    const accelerator = recipeDetail?.compatibility?.accelerator;
+    if (!accelerator || typeof accelerator !== "object") return undefined;
+    const value = accelerator as Record<string, unknown>;
+    return {
+      vendor: String(value.vendor ?? "").toLowerCase(),
+      architectures: Array.isArray(value.architectures) ? value.architectures.map(String) : [],
+      minMemory: Number(value.minMemoryBytes ?? 0),
+    };
+  }, [recipeDetail]);
+
+  const nodeReason = (node: NonNullable<typeof nodes>[number], rank: number) => {
+    if (node.status !== "online") return node.status;
+    if (Object.entries(nodeOverrides).some(([otherRank, nodeId]) => Number(otherRank) !== rank && nodeId === node.id)) {
+      return "already assigned";
+    }
+    if (!acceleratorRequirement) return "";
+    const matching = (node.inventory?.accelerators ?? []).some((accelerator) => {
+      const vendor = String(accelerator.vendor ?? "").toLowerCase();
+      const architecture = String(accelerator.architecture ?? "");
+      return (!acceleratorRequirement.vendor || vendor === acceleratorRequirement.vendor) &&
+        (acceleratorRequirement.architectures.length === 0 || acceleratorRequirement.architectures.includes(architecture)) &&
+        (!acceleratorRequirement.minMemory || Number(accelerator.memory_bytes ?? 0) >= acceleratorRequirement.minMemory);
+    });
+    return matching ? "" : "incompatible accelerator";
+  };
+
   useEffect(() => {
     if (open && !wasOpen.current) {
       setRecipeDigest(initialRecipeDigest ?? "");
@@ -101,6 +129,7 @@ export function PlanDeploymentDialog({
       setVariantChoices({});
       resetPlan();
       resetCreate();
+      autoPreviewKey.current = "";
     }
     wasOpen.current = open;
   }, [initialRecipeDigest, open, resetCreate, resetPlan]);
@@ -110,6 +139,9 @@ export function PlanDeploymentDialog({
   }, [profiles]);
 
   const plan = planMutation.data;
+  const selectedFabric = plan?.fabric
+    ? (fabricsQuery.data ?? []).find((fabric) => fabric.id === plan.fabric)
+    : undefined;
 
   const preview = async () => {
     if (!recipeDigest) return;
@@ -130,6 +162,14 @@ export function PlanDeploymentDialog({
       toast.error(error instanceof Error ? error.message : "plan failed");
     }
   };
+
+  useEffect(() => {
+    if (!open || !initialRecipeDigest || !recipeDetail || !nodes || detailFetching) return;
+    const key = `${recipeDigest}:${profile}:${nodes.map((node) => `${node.id}:${node.status}`).join(",")}`;
+    if (autoPreviewKey.current === key) return;
+    autoPreviewKey.current = key;
+    void preview();
+  }, [open, initialRecipeDigest, recipeDetail, nodes, detailFetching, recipeDigest, profile]);
 
   const create = async () => {
     if (!plan) return;
@@ -158,11 +198,11 @@ export function PlanDeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-4xl max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:overflow-auto max-sm:rounded-none">
+      <DialogContent className="sm:max-h-[92dvh] sm:max-w-4xl sm:overflow-auto max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:overflow-auto max-sm:rounded-none">
         <DialogHeader>
           <DialogTitle className="font-display text-xl font-semibold">Launch deployment</DialogTitle>
           <DialogDescription>
-            Select the recipe contract, optional profile and variants, then preview real placement before launch.
+            Confirm the launch contract, assign Head and Worker roles, then preview capacity, fabric wiring, downloads, and endpoint before anything changes.
           </DialogDescription>
         </DialogHeader>
 
@@ -228,8 +268,8 @@ export function PlanDeploymentDialog({
           {recipeDigest ? (
             <section className="grid gap-2">
               <div>
-                <p className="lmw-label">Placement overrides</p>
-                <p className="text-xs text-muted">Leave a rank on automatic placement to let the backend select compatible hardware.</p>
+                <p className="lmw-label">Cluster roles</p>
+                <p className="text-xs text-muted">Automatic placement uses compatible online hardware. Pin a role only when the cluster order matters.</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {Array.from({ length: nodeCount }, (_, rank) => {
@@ -242,7 +282,7 @@ export function PlanDeploymentDialog({
                     <article key={rank} className="lmw-panel overflow-hidden">
                       <header className="lmw-panel-head flex items-center gap-2">
                         <Server className="h-4 w-4 text-primary" aria-hidden />
-                        <h3 className="font-display font-semibold">Rank {rank}</h3>
+                        <h3 className="font-display font-semibold">{rank === 0 ? "Head · API" : `Worker ${rank}`}</h3>
                         <span className="ml-auto font-mono text-[10px] text-muted">{selectedNode?.status ?? "automatic"}</span>
                       </header>
                       <div className="grid gap-3 p-3">
@@ -255,12 +295,15 @@ export function PlanDeploymentDialog({
                             planMutation.reset();
                           }}
                         >
-                          <option value="">Rank {rank} · automatic</option>
-                          {(nodes ?? []).map((node) => (
-                            <option key={node.id} value={node.id} disabled={node.status !== "online"}>
-                              {node.display_name} · {node.status}{node.status !== "online" ? " · unavailable" : ""}
-                            </option>
-                          ))}
+                          <option value="">{rank === 0 ? "Head · automatic" : `Worker ${rank} · automatic`}</option>
+                          {(nodes ?? []).map((node) => {
+                            const reason = nodeReason(node, rank);
+                            return (
+                              <option key={node.id} value={node.id} disabled={Boolean(reason)}>
+                                {node.display_name} · {reason || "compatible"}
+                              </option>
+                            );
+                          })}
                         </select>
 
                         {selectedNode ? (
@@ -289,7 +332,7 @@ export function PlanDeploymentDialog({
                             </div>
                           </dl>
                         ) : (
-                          <p className="text-xs text-muted">Automatic placement uses live inventory, leases, fabric, and recipe compatibility.</p>
+                          <p className="text-xs text-muted">LMW will match this role against live accelerator inventory, leases, and a complete shared fabric.</p>
                         )}
                       </div>
                     </article>
@@ -301,11 +344,17 @@ export function PlanDeploymentDialog({
 
           {plan ? (
             <div className="rounded-md border border-hairline bg-card p-3">
-              <PlanPreview plan={plan} nodes={nodes ?? []} />
+              <PlanPreview plan={plan} nodes={nodes ?? []} fabric={selectedFabric} />
             </div>
           ) : planMutation.isError ? (
             <p className="rounded-md border border-fault/40 bg-fault/5 px-3 py-2 font-mono text-xs text-fault">
               {planMutation.error instanceof Error ? planMutation.error.message : "plan failed"}
+            </p>
+          ) : null}
+          {recipeDigest && recipeDetail?.compatibility?.fabric && !plan?.fabric && !planMutation.isPending ? (
+            <p className="rounded border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">
+              This recipe needs a healthy cluster fabric with complete per-node wiring.{" "}
+              <Link to="/fleet/fabrics" className="underline underline-offset-2">Open Fabrics</Link>
             </p>
           ) : null}
         </div>
@@ -316,12 +365,16 @@ export function PlanDeploymentDialog({
             onClick={() => void preview()}
             disabled={!recipeDigest || planMutation.isPending}
           >
-            {planMutation.isPending ? "Planning…" : "Preview placement"}
+            {planMutation.isPending ? "Checking cluster…" : plan ? "Recheck placement" : "Preview placement"}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button onClick={() => void create()} disabled={!plan?.ready || createMutation.isPending}>
-              {createMutation.isPending ? "Launching…" : "Launch"}
+              {createMutation.isPending
+                ? "Launching…"
+                : plan?.transfers?.some((transfer) => transfer.source_node === "origin")
+                  ? "Download & launch"
+                  : "Launch now"}
             </Button>
           </div>
         </DialogFooter>

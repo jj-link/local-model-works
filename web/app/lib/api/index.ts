@@ -13,6 +13,7 @@ export type RdmaDevice = Schemas["RdmaDevice"];
 export type CertificateInfo = Schemas["CertificateInfo"];
 export type UpdateNodeRequest = Schemas["UpdateNodeRequest"];
 export type Fabric = Schemas["Fabric"];
+export type FabricBinding = Schemas["FabricBinding"];
 export type CreateFabricRequest = Schemas["CreateFabricRequest"];
 export type Recipe = Schemas["Recipe"];
 export type RecipeDetail = Schemas["RecipeDetail"];

@@ -37,18 +37,26 @@ type NetworkInterface struct {
 	LinkMbps  int      `json:"link_mbps,omitempty"`
 }
 
+type RdmaGID struct {
+	Index int    `json:"index"`
+	Value string `json:"value"`
+	Type  string `json:"type,omitempty"`
+}
+
 // RdmaPort is one port of an RDMA device.
 type RdmaPort struct {
-	Name         string `json:"name"`
-	State        string `json:"state"`
-	LinkRateGbps int    `json:"link_rate_gbps,omitempty"`
+	Name         string    `json:"name"`
+	State        string    `json:"state"`
+	LinkRateGbps int       `json:"link_rate_gbps,omitempty"`
+	GIDs         []RdmaGID `json:"gids,omitempty"`
 }
 
 // RdmaDevice is one RDMA-capable device.
 type RdmaDevice struct {
-	Name   string     `json:"name"`
-	Vendor string     `json:"vendor,omitempty"`
-	Ports  []RdmaPort `json:"ports,omitempty"`
+	Name              string     `json:"name"`
+	Vendor            string     `json:"vendor,omitempty"`
+	NetworkInterfaces []string   `json:"network_interfaces,omitempty"`
+	Ports             []RdmaPort `json:"ports,omitempty"`
 }
 
 // CacheRoot is an existing model/cache root the agent reports.
@@ -82,32 +90,32 @@ type DockerInfo struct {
 
 // Telemetry is one sample.
 type Telemetry struct {
-	CPUUsagePercent   uint32                        `json:"cpu_usage_percent"`
-	CPUCores          uint32                        `json:"cpu_cores"`
-	Load1x100         uint64                        `json:"load1_x100,omitempty"`
-	MemoryUsedBytes   uint64                        `json:"memory_used_bytes"`
-	MemoryTotalBytes  uint64                        `json:"memory_total_bytes"`
-	SwapUsedBytes     uint64                        `json:"swap_used_bytes,omitempty"`
-	UptimeSeconds     uint64                        `json:"uptime_seconds,omitempty"`
-	Filesystems       []FilesystemTelemetry         `json:"filesystems,omitempty"`
-	Accelerators      []AcceleratorTelemetry        `json:"accelerators"`
-	NetRxBytes        uint64                        `json:"net_rx_bytes,omitempty"`
-	NetTxBytes        uint64                        `json:"net_tx_bytes,omitempty"`
-	NetRxBytesPerSec  uint64                        `json:"net_rx_bytes_per_second,omitempty"`
-	NetTxBytesPerSec  uint64                        `json:"net_tx_bytes_per_second,omitempty"`
-	NetworkInterfaces []NetworkInterfaceTelemetry   `json:"network_interfaces,omitempty"`
+	CPUUsagePercent   uint32                      `json:"cpu_usage_percent"`
+	CPUCores          uint32                      `json:"cpu_cores"`
+	Load1x100         uint64                      `json:"load1_x100,omitempty"`
+	MemoryUsedBytes   uint64                      `json:"memory_used_bytes"`
+	MemoryTotalBytes  uint64                      `json:"memory_total_bytes"`
+	SwapUsedBytes     uint64                      `json:"swap_used_bytes,omitempty"`
+	UptimeSeconds     uint64                      `json:"uptime_seconds,omitempty"`
+	Filesystems       []FilesystemTelemetry       `json:"filesystems,omitempty"`
+	Accelerators      []AcceleratorTelemetry      `json:"accelerators"`
+	NetRxBytes        uint64                      `json:"net_rx_bytes,omitempty"`
+	NetTxBytes        uint64                      `json:"net_tx_bytes,omitempty"`
+	NetRxBytesPerSec  uint64                      `json:"net_rx_bytes_per_second,omitempty"`
+	NetTxBytesPerSec  uint64                      `json:"net_tx_bytes_per_second,omitempty"`
+	NetworkInterfaces []NetworkInterfaceTelemetry `json:"network_interfaces,omitempty"`
 }
 
 // AcceleratorTelemetry is one device sample.
 type AcceleratorTelemetry struct {
-	Index           int    `json:"index"`
-	UtilizationPct  uint32 `json:"utilization_percent"`
-	MemUsedBytes    uint64 `json:"memory_used_bytes"`
-	MemTotalBytes   uint64 `json:"memory_total_bytes"`
-	TemperatureC    uint32 `json:"temperature_c,omitempty"`
-	PowerMW         uint32 `json:"power_mw,omitempty"`
-	PowerLimitMW    uint32 `json:"power_limit_mw,omitempty"`
-	ThrottleReasons []string `json:"throttle_reasons,omitempty"`
+	Index           int                  `json:"index"`
+	UtilizationPct  uint32               `json:"utilization_percent"`
+	MemUsedBytes    uint64               `json:"memory_used_bytes"`
+	MemTotalBytes   uint64               `json:"memory_total_bytes"`
+	TemperatureC    uint32               `json:"temperature_c,omitempty"`
+	PowerMW         uint32               `json:"power_mw,omitempty"`
+	PowerLimitMW    uint32               `json:"power_limit_mw,omitempty"`
+	ThrottleReasons []string             `json:"throttle_reasons,omitempty"`
 	Processes       []AcceleratorProcess `json:"processes,omitempty"`
 }
 

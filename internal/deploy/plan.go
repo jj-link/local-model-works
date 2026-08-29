@@ -129,7 +129,6 @@ type CreateRequest struct {
 	Variants     map[string]string   `json:"variants,omitempty"`
 }
 
-
 // dispatchPhase is one rank's completed dispatch step.
 type dispatchPhases map[int32]string
 
@@ -266,25 +265,29 @@ type nodeInfo struct {
 	Inventory   sql.NullString
 }
 
-// firstNonLoopback returns the first usable unicast address of one node.
-// Link-layer (MAC) entries recorded by the host baseline for interfaces
-// without a usable IP are skipped: they are not unicast addresses and
-// must never become an endpoint host.
+// firstNonLoopback returns a usable controller-facing address. A Tailscale
+// CGNAT address is preferred when present; fabric-only and container bridge
+// addresses may not be reachable from the operator console.
 func firstNonLoopback(inv *inventory.Inventory) string {
 	if inv == nil {
 		return ""
 	}
+	var fallback string
 	for _, iface := range inv.Interfaces {
-		for _, a := range iface.Addresses {
-			if a == "" || a == "127.0.0.1" || a == "::1" {
+		for _, address := range iface.Addresses {
+			host := strings.Split(address, "/")[0]
+			ip := net.ParseIP(host)
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
 				continue
 			}
-			host := strings.Split(a, "/")[0]
-			if net.ParseIP(host) == nil {
-				continue
+			v4 := ip.To4()
+			if v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+				return host
 			}
-			return host
+			if fallback == "" {
+				fallback = host
+			}
 		}
 	}
-	return ""
+	return fallback
 }

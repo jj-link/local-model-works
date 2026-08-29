@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { MessageSquare, Plus, RotateCcw, Send, Server, Square } from "lucide-react";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { EmptyState, ErrorState, LoadingPanel } from "~/components/empty-state";
@@ -39,6 +40,8 @@ const initialThread: ChatThread = {
 };
 
 export default function Chat() {
+  const [searchParams] = useSearchParams();
+  const requestedDeployment = searchParams.get("deployment") ?? "";
   const deploymentsQuery = useDeployments();
   const completion = useChatCompletions();
   const [threads, setThreads] = useState<ChatThread[]>([initialThread]);
@@ -70,7 +73,9 @@ export default function Chat() {
   );
 
   useEffect(() => {
-    const fallback = usableDeployments[0]?.id ?? "";
+    const fallback = usableDeploymentIds.has(requestedDeployment)
+      ? requestedDeployment
+      : usableDeployments[0]?.id ?? "";
     setThreads((current) =>
       current.map((thread) =>
         usableDeploymentIds.has(thread.deploymentId)
@@ -78,7 +83,7 @@ export default function Chat() {
           : { ...thread, deploymentId: fallback },
       ),
     );
-  }, [usableDeploymentIds, usableDeployments]);
+  }, [requestedDeployment, usableDeploymentIds, usableDeployments]);
 
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;

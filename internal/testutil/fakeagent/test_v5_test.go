@@ -273,9 +273,10 @@ func TestV5_ServerRestartReconciles(t *testing.T) {
 		}
 	}
 	for _, a := range []*Agent{a1, a2} {
-		if !containsString(a.ReconcileReasons(), "reconnect") {
-			t.Errorf("agent reconcile reasons = %v, want reconnect", a.ReconcileReasons())
-		}
+		agent := a
+		Deadline(t, 5*time.Second, func() bool {
+			return containsString(agent.ReconcileReasons(), "reconnect")
+		}, "agent reconnect reconciliation")
 	}
 }
 

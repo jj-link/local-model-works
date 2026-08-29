@@ -72,6 +72,8 @@ type Agent struct {
 	extensionMu      sync.Mutex
 	extensionRuns    map[string]*extensionRun
 	extensionStopped map[string]bool
+	artifactMu       sync.Mutex
+	artifactCancels  map[string]context.CancelFunc
 
 	// sendQ carries agent→server messages that are event-driven (results,
 	// state updates, log chunks, placements, progress). The session send
@@ -94,6 +96,7 @@ func New(cfg config.Agent, version, commit string, rt runtime.Runtime, drv hardw
 		sendQ:            make(chan *agentv1.AgentMessage, 256),
 		extensionRuns:    map[string]*extensionRun{},
 		extensionStopped: map[string]bool{},
+		artifactCancels:  map[string]context.CancelFunc{},
 	}
 	a.workloads = newWorkloads(a)
 	return a

@@ -22,17 +22,25 @@ type Interface struct {
 	Addresses []string `json:"addresses"`
 }
 
+type RdmaGID struct {
+	Index int32  `json:"index"`
+	Value string `json:"value"`
+	Type  string `json:"type"`
+}
+
 // RdmaPort is one port of an RDMA device.
 type RdmaPort struct {
-	Name         string `json:"name"`
-	State        string `json:"state"`
-	LinkRateGbps uint32 `json:"link_rate_gbps"`
+	Name         string    `json:"name"`
+	State        string    `json:"state"`
+	LinkRateGbps uint32    `json:"link_rate_gbps"`
+	GIDs         []RdmaGID `json:"gids"`
 }
 
 type RdmaDevice struct {
-	Name   string     `json:"name"`
-	Vendor string     `json:"vendor"`
-	Ports  []RdmaPort `json:"ports"`
+	Name              string     `json:"name"`
+	Vendor            string     `json:"vendor"`
+	NetworkInterfaces []string   `json:"network_interfaces"`
+	Ports             []RdmaPort `json:"ports"`
 }
 
 // Inventory is the parsed node report.
@@ -81,6 +89,16 @@ func (i *Inventory) HasRdmaDevice(name string) bool {
 		}
 	}
 	return false
+}
+
+// RDMADevice returns one named RDMA device.
+func (i *Inventory) RDMADevice(name string) *RdmaDevice {
+	for index := range i.RdmaDevices {
+		if i.RdmaDevices[index].Name == name {
+			return &i.RdmaDevices[index]
+		}
+	}
+	return nil
 }
 
 // RdmaPort reports the port state of one device.

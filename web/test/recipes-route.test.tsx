@@ -13,6 +13,7 @@ import { server } from "../msw/server";
 const alphaDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const betaDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const gammaDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const glmDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const alphaRepositoryId = "repo-alpha";
 
 const recipes = [
@@ -170,6 +171,16 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
     http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
     http.get("*/api/v1/nodes", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+    http.post("*/api/v1/deployments/plan", () => HttpResponse.json({
+      recipe_digest: alphaDigest,
+      recipe_name: "alpha-recipe",
+      recipe_version: "2.0.0",
+      profile: "",
+      placements: [],
+      ready: false,
+      plan_digest: "sha256:blocked",
+      diagnostics: [],
+    })),
     http.post("*/api/v1/recipes/check-updates", () =>
       HttpResponse.json([recipes[0].update]),
     ),
@@ -192,21 +203,21 @@ describe("RecipesRoute repository catalog", () => {
     expect(await screen.findByRole("heading", { name: "All recipes" })).toBeInTheDocument();
 
     const alphaCard = screen.getByRole("button", {
-      name: "Choose installation hardware for Alpha Model",
+      name: "Plan launch for Alpha Model",
     });
     expect(within(alphaCard).getByText("Alpha Model")).toBeInTheDocument();
     expect(within(alphaCard).getByText("A verified two-node recipe.")).toBeInTheDocument();
     expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
-    expect(within(alphaCard).getByText("Installed on 2 devices")).toBeInTheDocument();
-    expect(within(alphaCard).getByText("Choose installation hardware →")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Recipe ready on 2 nodes")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Plan launch →")).toBeInTheDocument();
     expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
-    expect(screen.getAllByRole("button", { name: /Choose installation hardware for/ })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(3);
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("button", { name: "Choose installation hardware for Gamma Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Choose installation hardware for Alpha Model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan launch for Gamma Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plan launch for Alpha Model" })).not.toBeInTheDocument();
   });
 
   it("offers updates only for recipes with valid device placements", async () => {
@@ -216,9 +227,9 @@ describe("RecipesRoute repository catalog", () => {
     renderCatalog();
 
     const alphaCard = await screen.findByRole("button", {
-      name: "Choose installation hardware for Alpha Model",
+      name: "Plan launch for Alpha Model",
     });
-    expect(within(alphaCard).getByText("Not installed")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
   });
 
@@ -226,9 +237,76 @@ describe("RecipesRoute repository catalog", () => {
     installCatalogHandlers();
     const user = userEvent.setup();
     renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Choose installation hardware for Alpha Model" }));
+    await user.click(await screen.findByRole("button", { name: "Plan launch for Alpha Model" }));
     expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
+  });
+
+  it("resolves a GitHub URL, reviews the immutable contract, and trusts it for launch", async () => {
+    installCatalogHandlers();
+    const commit = "07aee44f76a23245b5822f4efbc01ea7ddc7bdb1";
+    let importBody: Record<string, unknown> | undefined;
+    const imported = {
+      digest: glmDigest,
+      name: "glm53-flash-exl3-dflash2-spark-tp2",
+      display_name: "GLM-5.3 Flash EXL3 · 2× DGX Spark",
+      model: "GLM-5.3-Flash-EXL3",
+      engine: "vllm",
+      version: "1.0.0",
+      description: "Two Spark GLM launch contract.",
+      license: "MIT",
+      trust_state: "untrusted",
+      source: { type: "git", remote: "https://github.com/MiaAI-Lab/GLM", revision: commit },
+      compatibility: { nodeCount: 2, fabric: { transport: "roce" } },
+      permissions: ["devices.rdma", "network.host", "rootfs.write"],
+      high_risk: ["network.host", "rootfs.write"],
+      installed_at: "2026-08-29T00:00:00Z",
+    };
+    server.use(
+      http.post("*/api/v1/recipes/import", async ({ request }) => {
+        importBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(imported, { status: 201 });
+      }),
+      http.get(`*/api/v1/recipes/${glmDigest}`, () => HttpResponse.json({
+        ...imported,
+        manifest: {
+          compatibility: imported.compatibility,
+          artifacts: [
+            {
+              name: "model", sizeBytes: 175715854754,
+              source: { identity: "hf://Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw", revision: commit },
+            },
+            {
+              name: "drafter", sizeBytes: 2342175855,
+              source: { identity: "hf://incoai/GLM-5.3-Flash-DFlash2", revision: commit },
+            },
+          ],
+          workloads: [{
+            image: { reference: "ghcr.io/miaai-lab/glm@sha256:9999999999999999999999999999999999999999999999999999999999999999" },
+          }],
+        },
+      })),
+      http.post(`*/api/v1/recipes/${glmDigest}/trust`, () =>
+        HttpResponse.json({ ...imported, trust_state: "local" })),
+    );
+
+    const user = userEvent.setup();
+    renderCatalog();
+    await user.click(await screen.findByRole("button", { name: "Import recipe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a model recipe" });
+    await user.type(within(dialog).getByLabelText("Repository URL"), "https://github.com/MiaAI-Lab/GLM");
+    await user.click(within(dialog).getByRole("button", { name: "Resolve & review" }));
+
+    expect(await within(dialog).findByText("GLM-5.3 Flash EXL3 · 2× DGX Spark")).toBeInTheDocument();
+    expect(within(dialog).getByText("07aee44f76a2…")).toBeInTheDocument();
+    expect(await within(dialog).findByTitle("hf://Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw")).toBeInTheDocument();
+    expect(within(dialog).getByText("164 GiB")).toBeInTheDocument();
+    expect((importBody?.source as Record<string, unknown>).revision).toBeUndefined();
+
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Trust exact contract" }));
+    expect(await within(dialog).findByText("trusted · launchable")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Plan launch" })).toBeEnabled();
   });
   it("shows installed devices and confirms an update without running deployments", async () => {
     installCatalogHandlers();

@@ -112,3 +112,40 @@ func TestCollectManifestRegularFile(t *testing.T) {
 		t.Fatalf("manifest = %+v total=%d digest=%q", entries, total, digest)
 	}
 }
+
+func TestMakeTransferredArtifactMountable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifact")
+	nested := filepath.Join(root, "snapshots", "revision")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(nested, "model.safetensors")
+	if err := os.WriteFile(file, []byte("weights"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, filepath.Join(root, "snapshots"), nested} {
+		if err := os.Chmod(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := makeTransferredArtifactMountable(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, filepath.Join(root, "snapshots"), nested} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("%s mode = %v; want 0755", path, info.Mode().Perm())
+		}
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("file mode = %v; want 0644", info.Mode().Perm())
+	}
+}

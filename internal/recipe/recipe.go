@@ -27,12 +27,16 @@ const MountPath = "/lmw/assets"
 
 // Template variables allowed in workload/extension args and env.
 const (
-	TemplNodeID      = "${node.id}"
-	TemplNodeRank    = "${node.rank}"
-	TemplNodeAddress = "${node.address}"
-	TemplFabricAddr  = "${fabric.address}"
-	TemplArtifact    = "${artifact." // + <name> + ".path}"
-	TemplProfile     = "${profile."  // + <name> + "}"
+	TemplNodeID           = "${node.id}"
+	TemplNodeRank         = "${node.rank}"
+	TemplNodeAddress      = "${node.address}"
+	TemplFabricAddr       = "${fabric.address}"
+	TemplFabricNodeAddr   = "${fabric.node_address}"
+	TemplFabricInterface  = "${fabric.interface}"
+	TemplFabricRDMADevice = "${fabric.rdma_device}"
+	TemplFabricGIDIndex   = "${fabric.gid_index}"
+	TemplArtifact         = "${artifact." // + <name> + ".path}"
+	TemplProfile          = "${profile."  // + <name> + "}"
 )
 
 // Manifest is the typed view of a validated recipe document. Field names
@@ -128,6 +132,7 @@ type FabricCompat struct {
 type Artifact struct {
 	Name           string       `json:"name"`
 	Kind           string       `json:"kind"`
+	SizeBytes      int64        `json:"sizeBytes,omitempty"`
 	Source         *ArtSource   `json:"source,omitempty"`
 	DefaultVariant string       `json:"defaultVariant,omitempty"`
 	Variants       []ArtVariant `json:"variants,omitempty"`
@@ -387,7 +392,8 @@ func TemplateVars(vals ...string) []string {
 // IsTemplateVar reports whether s is one of the declared template variables.
 func IsTemplateVar(s string) bool {
 	switch s {
-	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplFabricAddr:
+	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplFabricAddr,
+		TemplFabricNodeAddr, TemplFabricInterface, TemplFabricRDMADevice, TemplFabricGIDIndex:
 		return true
 	}
 	if strings.HasPrefix(s, TemplArtifact) && strings.HasSuffix(s, ".path}") {
@@ -421,12 +427,16 @@ func (m *Manifest) Render(v string, ctx RenderContext) (string, error) {
 
 // RenderContext resolves template variables for a specific rank/node.
 type RenderContext struct {
-	NodeID      string
-	NodeRank    int
-	NodeAddress string
-	FabricAddr  string
-	Artifacts   map[string]string // artifact name -> node-local path
-	Profiles    map[string]any
+	NodeID           string
+	NodeRank         int
+	NodeAddress      string
+	FabricAddr       string
+	FabricNodeAddr   string
+	FabricInterface  string
+	FabricRDMADevice string
+	FabricGIDIndex   string
+	Artifacts        map[string]string // artifact name -> node-local path
+	Profiles         map[string]any
 }
 
 // Resolve returns the concrete value for a template variable.
@@ -440,6 +450,14 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return c.NodeAddress, true
 	case TemplFabricAddr:
 		return c.FabricAddr, true
+	case TemplFabricNodeAddr:
+		return c.FabricNodeAddr, true
+	case TemplFabricInterface:
+		return c.FabricInterface, true
+	case TemplFabricRDMADevice:
+		return c.FabricRDMADevice, true
+	case TemplFabricGIDIndex:
+		return c.FabricGIDIndex, true
 	}
 	if strings.HasPrefix(v, TemplArtifact) && strings.HasSuffix(v, ".path}") {
 		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplArtifact), ".path}")

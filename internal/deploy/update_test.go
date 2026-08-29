@@ -383,6 +383,9 @@ func seedRepositoryVersion(t *testing.T, h *harness, repositoryID, digest, commi
 
 func driveDeploymentHealthy(t *testing.T, h *harness, deploymentID, nodeID string) {
 	t.Helper()
+	h.svc.readinessProbe = func(context.Context, db.GetDeploymentRow) (bool, string) {
+		return true, ""
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	acked := map[string]bool{}
 	for time.Now().Before(deadline) {
@@ -434,6 +437,9 @@ func ackDeploymentStop(t *testing.T, h *harness, deploymentID, targetDigest stri
 
 func driveReplacementHealthy(t *testing.T, h *harness, targetDigest string) string {
 	t.Helper()
+	h.svc.readinessProbe = func(context.Context, db.GetDeploymentRow) (bool, string) {
+		return true, ""
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	acked := map[string]bool{}
 	replacementID := ""

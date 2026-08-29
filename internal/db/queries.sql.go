@@ -353,8 +353,8 @@ func (q *Queries) CreateEnrollmentToken(ctx context.Context, arg CreateEnrollmen
 
 const createFabric = `-- name: CreateFabric :exec
 INSERT INTO fabrics (id, name, transport, interface_name, address, rdma_device,
-                     members, state, diagnostics, version)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'incomplete', '[]', ?)
+                     members, bindings, state, diagnostics, version)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'incomplete', '[]', ?)
 `
 
 type CreateFabricParams struct {
@@ -365,6 +365,7 @@ type CreateFabricParams struct {
 	Address       sql.NullString `json:"address"`
 	RdmaDevice    sql.NullString `json:"rdma_device"`
 	Members       string         `json:"members"`
+	Bindings      string         `json:"bindings"`
 	Version       string         `json:"version"`
 }
 
@@ -377,6 +378,7 @@ func (q *Queries) CreateFabric(ctx context.Context, arg CreateFabricParams) erro
 		arg.Address,
 		arg.RdmaDevice,
 		arg.Members,
+		arg.Bindings,
 		arg.Version,
 	)
 	return err
@@ -914,9 +916,7 @@ func (q *Queries) GetEnrollmentTokenByID(ctx context.Context, id string) (GetEnr
 }
 
 const getFabric = `-- name: GetFabric :one
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics WHERE id = ?
+SELECT id, name, transport, interface_name, address, rdma_device, members, state, diagnostics, version, created_at, updated_at, bindings FROM fabrics WHERE id = ?
 `
 
 func (q *Queries) GetFabric(ctx context.Context, id string) (Fabric, error) {
@@ -935,14 +935,13 @@ func (q *Queries) GetFabric(ctx context.Context, id string) (Fabric, error) {
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Bindings,
 	)
 	return i, err
 }
 
 const getFabricByIfMatch = `-- name: GetFabricByIfMatch :one
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics WHERE id = ? AND version = ?
+SELECT id, name, transport, interface_name, address, rdma_device, members, state, diagnostics, version, created_at, updated_at, bindings FROM fabrics WHERE id = ? AND version = ?
 `
 
 type GetFabricByIfMatchParams struct {
@@ -966,6 +965,7 @@ func (q *Queries) GetFabricByIfMatch(ctx context.Context, arg GetFabricByIfMatch
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Bindings,
 	)
 	return i, err
 }
@@ -1942,9 +1942,7 @@ func (q *Queries) ListEventsSince(ctx context.Context, arg ListEventsSinceParams
 }
 
 const listFabrics = `-- name: ListFabrics :many
-SELECT id, name, transport, interface_name, address, rdma_device, members,
-       state, diagnostics, version, created_at, updated_at
-FROM fabrics ORDER BY name
+SELECT id, name, transport, interface_name, address, rdma_device, members, state, diagnostics, version, created_at, updated_at, bindings FROM fabrics ORDER BY name
 `
 
 func (q *Queries) ListFabrics(ctx context.Context) ([]Fabric, error) {
@@ -1969,6 +1967,7 @@ func (q *Queries) ListFabrics(ctx context.Context) ([]Fabric, error) {
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Bindings,
 		); err != nil {
 			return nil, err
 		}
@@ -3020,6 +3019,22 @@ func (q *Queries) UpdateDeploymentObserved(ctx context.Context, arg UpdateDeploy
 	return err
 }
 
+const updateDeploymentPlacement = `-- name: UpdateDeploymentPlacement :exec
+UPDATE deployments SET placement = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type UpdateDeploymentPlacementParams struct {
+	Placement string `json:"placement"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) UpdateDeploymentPlacement(ctx context.Context, arg UpdateDeploymentPlacementParams) error {
+	_, err := q.db.ExecContext(ctx, updateDeploymentPlacement, arg.Placement, arg.ID)
+	return err
+}
+
 const updateDeploymentRunID = `-- name: UpdateDeploymentRunID :exec
 UPDATE deployments SET run_id = ?,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -3054,7 +3069,7 @@ func (q *Queries) UpdateDeploymentState(ctx context.Context, arg UpdateDeploymen
 
 const updateFabric = `-- name: UpdateFabric :exec
 UPDATE fabrics SET transport = ?, interface_name = ?, address = ?, rdma_device = ?,
-                   members = ?, state = ?, diagnostics = ?, version = ?,
+                   members = ?, bindings = ?, state = ?, diagnostics = ?, version = ?,
                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ? AND version = ?
 `
@@ -3065,6 +3080,7 @@ type UpdateFabricParams struct {
 	Address       sql.NullString `json:"address"`
 	RdmaDevice    sql.NullString `json:"rdma_device"`
 	Members       string         `json:"members"`
+	Bindings      string         `json:"bindings"`
 	State         string         `json:"state"`
 	Diagnostics   string         `json:"diagnostics"`
 	Version       string         `json:"version"`
@@ -3079,6 +3095,7 @@ func (q *Queries) UpdateFabric(ctx context.Context, arg UpdateFabricParams) erro
 		arg.Address,
 		arg.RdmaDevice,
 		arg.Members,
+		arg.Bindings,
 		arg.State,
 		arg.Diagnostics,
 		arg.Version,

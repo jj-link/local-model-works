@@ -1022,6 +1022,13 @@ export interface components {
         BrowserLoginRequest: {
             token: string;
         };
+        CacheRoot: {
+            backend: string;
+            path: string;
+            repositories?: string[];
+            /** Format: int64 */
+            size_bytes?: number;
+        };
         CertificateInfo: {
             /** Format: date-time */
             expires_at: string;
@@ -1072,13 +1079,11 @@ export interface components {
             description?: string;
         };
         CreateFabricRequest: {
-            /** @description Interface address of the first member */
-            address?: string;
-            interface_name?: string;
+            /** @description Node-specific transport wiring in member/rank order */
+            bindings: components["schemas"]["FabricBinding"][];
             /** @description Ordered node IDs; index is the fabric rank */
             members: string[];
             name: string;
-            rdma_device?: string | null;
             /** @enum {string} */
             transport: "roce" | "tcp";
         };
@@ -1225,14 +1230,12 @@ export interface components {
             message: string;
         };
         Fabric: {
-            address?: string | null;
+            bindings: components["schemas"]["FabricBinding"][];
             diagnostics?: components["schemas"]["Diagnostic"][];
             /** Format: uuid */
             id: string;
-            interface_name?: string | null;
             members: string[];
             name: string;
-            rdma_device?: string | null;
             /** @enum {string} */
             state: "ok" | "incomplete";
             /** @enum {string} */
@@ -1240,10 +1243,18 @@ export interface components {
             /** @description ETag for optimistic concurrency */
             version?: string;
         };
+        FabricBinding: {
+            address: string;
+            gid_index?: number;
+            interface_name: string;
+            /** Format: uuid */
+            node_id: string;
+            rdma_device?: string;
+        };
         Inventory: {
             accelerators?: components["schemas"]["Accelerator"][];
             arch: string;
-            cache_roots?: string[];
+            cache_roots?: components["schemas"]["CacheRoot"][];
             docker: {
                 api_version?: string;
                 ok: boolean;
@@ -1252,6 +1263,7 @@ export interface components {
             hostname: string;
             interfaces?: components["schemas"]["NetworkInterface"][];
             os: string;
+            peer_listen?: string;
             rdma_devices?: components["schemas"]["RdmaDevice"][];
         };
         LoginRequest: {
@@ -1448,12 +1460,19 @@ export interface components {
         };
         RdmaDevice: {
             name: string;
+            network_interfaces?: string[];
             ports: {
+                gids?: components["schemas"]["RdmaGID"][];
                 link_rate_gbps?: number;
                 name?: string;
                 state?: string;
             }[];
             vendor?: string;
+        };
+        RdmaGID: {
+            index: number;
+            type?: string;
+            value: string;
         };
         Recipe: {
             artifact_count?: number;

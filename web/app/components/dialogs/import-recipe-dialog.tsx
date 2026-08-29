@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
@@ -19,170 +19,357 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { useImportRecipe } from "~/lib/queries";
-import type { RecipeSource } from "~/lib/api";
+import {
+  useImportRecipe,
+  useRecipe,
+  useSetRecipeTrust,
+} from "~/lib/queries";
+import type { Recipe, RecipeSource } from "~/lib/api";
+import { bytes, shortDigest } from "~/lib/format";
 
 const SOURCE_TYPES = [
-  { value: "catalog", label: "catalog", hint: "signed catalog index entry" },
-  { value: "oci", label: "oci", hint: "immutable digest reference" },
-  { value: "git", label: "git", hint: "pinned full commit" },
-  { value: "local", label: "local", hint: "operator directory" },
+  { value: "git", label: "GitHub repository", hint: "recommended" },
+  { value: "catalog", label: "Signed catalog", hint: "catalog entry" },
+  { value: "oci", label: "OCI package", hint: "immutable digest" },
+  { value: "local", label: "Local directory", hint: "controller path" },
 ] as const;
 
-/**
- * Install a recipe from catalog / OCI / pinned Git / local path. The
- * source schema follows the library fragment's RecipeSource shape.
- */
+type Stage = "source" | "review" | "ready";
+
+function StepRail({ stage }: { stage: Stage }) {
+  const stages: { id: Stage; label: string }[] = [
+    { id: "source", label: "Source" },
+    { id: "review", label: "Review" },
+    { id: "ready", label: "Ready" },
+  ];
+  const current = stages.findIndex((item) => item.id === stage);
+  return (
+    <ol className="grid grid-cols-3 gap-2" aria-label="Recipe import progress">
+      {stages.map((item, index) => (
+        <li
+          key={item.id}
+          className={`rounded border px-3 py-2 ${
+            index <= current
+              ? "border-primary/50 bg-primary/5 text-foreground"
+              : "border-hairline bg-raised text-muted"
+          }`}
+          aria-current={item.id === stage ? "step" : undefined}
+        >
+          <span className="block font-mono text-[10px] text-muted">0{index + 1}</span>
+          <span className="font-display text-xs font-semibold">{item.label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+/** Repository-first import with immutable pin review and an explicit trust gate. */
 export function ImportRecipeDialog({
   open,
   onOpenChange,
+  onPlan,
 }: {
   open: boolean;
-  onOpenChange: (o: boolean) => void;
+  onOpenChange: (open: boolean) => void;
+  onPlan?: (recipe: Recipe) => void;
 }) {
   const navigate = useNavigate();
   const importRecipe = useImportRecipe();
-  const [type, setType] = useState<RecipeSource["type"]>("catalog");
+  const setTrust = useSetRecipeTrust();
+  const [stage, setStage] = useState<Stage>("source");
+  const [type, setType] = useState<RecipeSource["type"]>("git");
   const [reference, setReference] = useState("");
   const [revision, setRevision] = useState("");
   const [localPath, setLocalPath] = useState("");
+  const [accepted, setAccepted] = useState(false);
+  const [installed, setInstalled] = useState<Recipe>();
+  const detail = useRecipe(installed?.digest);
 
   useEffect(() => {
-    if (open) {
-      setType("catalog");
-      setReference("");
-      setRevision("");
-      setLocalPath("");
-    }
+    if (!open) return;
+    setStage("source");
+    setType("git");
+    setReference("");
+    setRevision("");
+    setLocalPath("");
+    setAccepted(false);
+    setInstalled(undefined);
+    importRecipe.reset();
+    setTrust.reset();
   }, [open]);
 
-  const referencePlaceholder: Record<RecipeSource["type"], string> = {
-    catalog: "catalog name or index URL",
-    oci: "registry/repo@sha256:…",
-    git: "https://github.com/org/recipe-repo",
-    local: "/var/lib/local-model-works/recipes/my-recipe",
-  };
+  const manifest = objectRecord(detail.data?.manifest);
+  const artifacts = useMemo(() => {
+    if (!Array.isArray(manifest?.artifacts)) return [];
+    return manifest.artifacts.map((raw) => {
+      const artifact = objectRecord(raw) ?? {};
+      const source = objectRecord(artifact.source);
+      return {
+        name: String(artifact.name ?? "artifact"),
+        identity: String(source?.identity ?? "source not reported"),
+        revision: String(source?.revision ?? ""),
+        size: Number(artifact.sizeBytes ?? 0),
+      };
+    });
+  }, [manifest]);
+  const workload = Array.isArray(manifest?.workloads)
+    ? objectRecord(manifest.workloads[0])
+    : undefined;
+  const image = objectRecord(workload?.image);
+  const compatibility = objectRecord(manifest?.compatibility);
+  const fabric = objectRecord(compatibility?.fabric);
+  const pinnedRevision = installed?.source?.revision;
 
-  const onSubmit = async () => {
+  const submit = async () => {
     const source: RecipeSource =
       type === "local"
-        ? { type, path: localPath }
+        ? { type, path: localPath.trim() }
         : type === "git"
-          ? { type, remote: reference, revision }
-          : { type, reference };
+          ? {
+              type,
+              remote: reference.trim(),
+              ...(revision.trim() ? { revision: revision.trim() } : {}),
+            }
+          : { type, reference: reference.trim() };
     try {
-      const r = await importRecipe.mutateAsync({ source });
-      toast.success("Recipe installed", {
-        description: `${r.name}@${r.version} (${r.trust_state})`,
+      const recipe = await importRecipe.mutateAsync({ source });
+      setInstalled(recipe);
+      setStage(recipe.trust_state === "untrusted" ? "review" : "ready");
+      toast.success("Repository compiled and pinned", {
+        description: `${recipe.name}@${recipe.version}`,
       });
-      onOpenChange(false);
-      navigate(`/library/recipes/${r.digest}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "import failed", {
-        description: e instanceof Error ? undefined : "recipe.import_failed",
-      });
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Recipe import failed");
     }
+  };
+
+  const trustAndContinue = async () => {
+    if (!installed || !accepted) return;
+    try {
+      const recipe = await setTrust.mutateAsync({
+        digest: installed.digest,
+        trust_state: "local",
+        permission_diff_accepted: true,
+      });
+      setInstalled(recipe);
+      setStage("ready");
+      toast.success("Recipe trusted for local launch");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Trust update failed");
+    }
+  };
+
+  const plan = () => {
+    if (!installed) return;
+    onOpenChange(false);
+    if (onPlan) {
+      onPlan(installed);
+      return;
+    }
+    navigate(`/library/recipes/${installed.digest}?launch=1`);
+  };
+
+  const sourcePlaceholder: Record<RecipeSource["type"], string> = {
+    git: "https://github.com/org/model-recipe",
+    catalog: "catalog name or index URL",
+    oci: "registry/repository@sha256:…",
+    local: "/var/lib/local-model-works/recipes/my-recipe",
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-sm:max-h-[92dvh] max-sm:overflow-auto max-sm:rounded-none max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-w-none">
+      <DialogContent className="sm:max-w-2xl max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:overflow-auto max-sm:rounded-none">
         <DialogHeader>
-          <DialogTitle className="font-display text-lg font-semibold tracking-wide">
-            Install recipe
+          <DialogTitle className="font-display text-xl font-semibold tracking-wide">
+            Add a model recipe
           </DialogTitle>
           <DialogDescription>
-            Packages are content-addressed. Installs verify signatures where available; anything
-            unverified lands as <span className="text-primary">untrusted</span> until you review
-            it.
+            LMW turns a source repository into one reviewed, immutable launch contract.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <Label>Source type</Label>
-            <Select value={type} onValueChange={(v) => setType(v as RecipeSource["type"])}>
-              <SelectTrigger className="w-full" aria-label="Source type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SOURCE_TYPES.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    <span className="flex items-baseline gap-2">
-                      <span>{s.label}</span>
-                      <span className="text-[11px] text-muted-foreground">{s.hint}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <StepRail stage={stage} />
 
-          {type !== "local" ? (
+        {stage === "source" ? (
+          <div className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="import-ref">{type === "git" ? "Remote" : "Reference"}</Label>
+              <Label>Source</Label>
+              <Select value={type} onValueChange={(value) => setType(value as RecipeSource["type"])}>
+                <SelectTrigger className="w-full" aria-label="Recipe source">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOURCE_TYPES.map((source) => (
+                    <SelectItem key={source.value} value={source.value}>
+                      <span className="flex items-baseline gap-2">
+                        <span>{source.label}</span>
+                        <span className="text-[11px] text-muted-foreground">{source.hint}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="import-ref">
+                {type === "git" ? "Repository URL" : type === "local" ? "Directory" : "Reference"}
+              </Label>
               <Input
                 id="import-ref"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder={referencePlaceholder[type]}
+                value={type === "local" ? localPath : reference}
+                onChange={(event) => type === "local"
+                  ? setLocalPath(event.target.value)
+                  : setReference(event.target.value)}
+                placeholder={sourcePlaceholder[type]}
                 className="font-mono text-xs"
                 spellCheck={false}
+                autoFocus
               />
             </div>
-          ) : null}
 
-          {type === "git" ? (
-            <div className="grid gap-2">
-              <Label htmlFor="import-rev">Revision (40-hex commit)</Label>
-              <Input
-                id="import-rev"
-                value={revision}
-                onChange={(e) => setRevision(e.target.value)}
-                placeholder="6c47916f85e52b5e712223ca8f93952f90255714"
-                className="font-mono text-xs"
-                spellCheck={false}
-              />
-            </div>
-          ) : null}
+            {type === "git" ? (
+              <div className="grid gap-2 rounded border border-hairline bg-raised p-3">
+                <Label htmlFor="import-rev">Exact commit <span className="text-muted">(optional)</span></Label>
+                <Input
+                  id="import-rev"
+                  value={revision}
+                  onChange={(event) => setRevision(event.target.value)}
+                  placeholder="Leave empty to pin the latest default-branch commit"
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-muted">
+                  LMW resolves “latest” once, records the full commit, and never follows a moving branch at launch.
+                </p>
+              </div>
+            ) : null}
 
-          {type === "local" ? (
-            <div className="grid gap-2">
-              <Label htmlFor="import-path">Path</Label>
-              <Input
-                id="import-path"
-                value={localPath}
-                onChange={(e) => setLocalPath(e.target.value)}
-                placeholder={referencePlaceholder.local}
-                className="font-mono text-xs"
-                spellCheck={false}
-              />
-            </div>
-          ) : null}
+            {importRecipe.isError ? (
+              <div className="rounded border border-fault/40 bg-fault/5 px-3 py-2" role="alert">
+                <p className="font-display text-sm font-semibold text-fault">Could not add this source</p>
+                <p className="mt-1 font-mono text-xs text-fault">
+                  {importRecipe.error instanceof Error ? importRecipe.error.message : "Recipe import failed"}
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  Check that the repository is reachable and supported, then retry. No partial recipe is activated.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            <section className="rounded border border-hairline bg-raised p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="lmw-label">{stage === "ready" ? "Launch contract ready" : "Review immutable contract"}</p>
+                  <h3 className="mt-1 font-display text-lg font-semibold">
+                    {installed?.display_name || installed?.name}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted">{installed?.description}</p>
+                </div>
+                <span className={`rounded border px-2 py-1 font-mono text-[11px] ${
+                  stage === "ready" ? "border-ok/40 text-ok" : "border-warn/40 text-warn"
+                }`}>
+                  {stage === "ready" ? "trusted · launchable" : "review required"}
+                </span>
+              </div>
+              <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
+                <div><dt className="lmw-label">Source commit</dt><dd className="mt-1 font-mono">{pinnedRevision ? shortDigest(pinnedRevision) : "resolving…"}</dd></div>
+                <div><dt className="lmw-label">License</dt><dd className="mt-1">{installed?.license || "Not reported"}</dd></div>
+                <div><dt className="lmw-label">Hardware</dt><dd className="mt-1">{String(compatibility?.nodeCount ?? "—")} nodes · {String(fabric?.transport ?? "no fabric")}</dd></div>
+              </dl>
+            </section>
 
-          <p className="rounded border border-hairline bg-raised px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
-            trust: catalog → verified (signature) · git/local → untrusted until marked local ·
-            oci → verified (digest)
-          </p>
-        </div>
+            <section className="grid gap-2">
+              <p className="lmw-label">Pinned runtime</p>
+              <div className="rounded border border-hairline">
+                <div className="border-b border-hairline px-3 py-2">
+                  <span className="text-xs text-muted">image</span>
+                  <p className="truncate font-mono text-[11px]" title={String(image?.reference ?? "")}>
+                    {String(image?.reference ?? (detail.isFetching ? "loading…" : "not reported"))}
+                  </p>
+                </div>
+                {artifacts.map((artifact) => (
+                  <div key={artifact.name} className="grid gap-1 border-b border-hairline px-3 py-2 last:border-b-0 sm:grid-cols-[5rem_1fr_auto] sm:items-center">
+                    <span className="font-display text-xs font-semibold">{artifact.name}</span>
+                    <span className="truncate font-mono text-[11px]" title={artifact.identity}>
+                      {artifact.identity}{artifact.revision ? ` @ ${shortDigest(artifact.revision)}` : ""}
+                    </span>
+                    <span className="font-mono text-[11px] text-muted">{artifact.size > 0 ? bytes(artifact.size) : "size unknown"}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void onSubmit()}
-            disabled={
-              importRecipe.isPending ||
-              (type === "git"
-                ? !reference || !revision
-                : type === "local"
-                  ? !localPath
-                  : !reference)
-            }
-          >
-            {importRecipe.isPending ? "installing…" : "Install"}
-          </Button>
+            {stage === "review" ? (
+              <label className="flex cursor-pointer gap-3 rounded border border-warn/35 bg-warn/5 p-3">
+                <input
+                  type="checkbox"
+                  checked={accepted}
+                  onChange={(event) => setAccepted(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
+                />
+                <span>
+                  <span className="block font-display text-sm font-semibold">Trust this exact contract for local execution</span>
+                  <span className="mt-1 block text-xs text-muted">
+                    Permissions: {installed?.permissions?.join(", ") || "standard container access"}
+                    {installed?.high_risk?.length ? ` · elevated: ${installed.high_risk.join(", ")}` : ""}.
+                    Future commits require a new review.
+                  </span>
+                </span>
+              </label>
+            ) : (
+              <div className="rounded border border-ok/35 bg-ok/5 px-3 py-2 text-sm">
+                Next, LMW will match two compatible nodes, validate their fabric, show cache/download work, and ask once before launch.
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="sm:justify-between">
+          <div>
+            {installed ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate(`/library/recipes/${installed.digest}`);
+                }}
+              >
+                View full manifest
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {stage === "source" ? "Cancel" : "Close"}
+            </Button>
+            {stage === "source" ? (
+              <Button
+                onClick={() => void submit()}
+                disabled={
+                  importRecipe.isPending ||
+                  (type === "local" ? !localPath.trim() : !reference.trim())
+                }
+              >
+                {importRecipe.isPending ? "Resolving & compiling…" : "Resolve & review"}
+              </Button>
+            ) : stage === "review" ? (
+              <Button
+                onClick={() => void trustAndContinue()}
+                disabled={!accepted || setTrust.isPending}
+              >
+                {setTrust.isPending ? "Trusting…" : "Trust exact contract"}
+              </Button>
+            ) : (
+              <Button onClick={plan}>Plan launch</Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

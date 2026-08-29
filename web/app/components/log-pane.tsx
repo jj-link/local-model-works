@@ -42,7 +42,6 @@ export function LogPane({
     setLines([]);
     setEnded(false);
     setHttpError(null);
-    if (!active) return;
     const handle = streamEvents(url, {
       onEvent: (ev) => {
         if (ev.event === "end") {

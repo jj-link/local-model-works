@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
+import { Rocket } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
@@ -5,6 +8,7 @@ import { useDeleteRecipe, useRecipe, useSetRecipeTrust } from "~/lib/queries";
 import { EmptyState } from "~/components/empty-state";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
 import { HighlightedPre } from "~/components/json-viewer";
+import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { shortDigest, toYaml, wallClock } from "~/lib/format";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -24,6 +28,18 @@ export default function RecipeDetailRoute() {
   const { data: recipe, isPending, isError, error, refetch } = useRecipe(id);
   const setTrust = useSetRecipeTrust();
   const remove = useDeleteRecipe();
+  const [launchOpen, setLaunchOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (!recipe || searchParams.get("launch") !== "1") return;
+    setSearchParams({}, { replace: true });
+    if (recipe.trust_state === "untrusted") {
+      toast.error("Review and trust this recipe before launch");
+      return;
+    }
+    setLaunchOpen(true);
+  }, [recipe, searchParams, setSearchParams]);
 
   if (isPending) {
     return <p className="py-10 text-center font-mono text-xs text-faint">loading recipe…</p>;
@@ -58,6 +74,14 @@ export default function RecipeDetailRoute() {
             <span className="font-mono text-[10px] text-faint">{shortDigest(recipe.digest)}</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={recipe.trust_state === "untrusted"}
+              onClick={() => setLaunchOpen(true)}
+              title={recipe.trust_state === "untrusted" ? "Trust this exact recipe before launch" : "Plan a deployment"}
+            >
+              <Rocket aria-hidden /> Plan launch
+            </Button>
             {recipe.trust_state !== "local" ? (
               <ConfirmDialog
                 title="Mark recipe local"
@@ -210,6 +234,11 @@ export default function RecipeDetailRoute() {
           <p className="px-3 py-6 text-center font-mono text-xs text-faint">no manifest available</p>
         )}
       </Section>
+      <PlanDeploymentDialog
+        open={launchOpen}
+        onOpenChange={setLaunchOpen}
+        initialRecipeDigest={recipe.digest}
+      />
     </div>
   );
 }

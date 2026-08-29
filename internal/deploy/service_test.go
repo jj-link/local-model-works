@@ -5,15 +5,21 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/events"
+	fabriccfg "github.com/jj-link/local-model-works/internal/fabric"
 	"github.com/jj-link/local-model-works/internal/inventory"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/runtime"
@@ -754,10 +760,110 @@ func TestHFOriginFetchIsPreparableAndDispatched(t *testing.T) {
 		t.Fatal("workload dispatched before origin placement validation")
 	}
 	command := commands[0].msg.GetArtifactCommand()
+	h.svc.OnArtifactProgress(context.Background(), &agentv1.ArtifactProgress{
+		CommandId: command.GetCommandId(), ArtifactIdentity: identity, Phase: "downloading",
+		CurrentFile: "model-00001.safetensors", BytesDone: 64, BytesTotal: 128,
+		FilesDone: 1, FilesTotal: 2,
+	})
+	activeRow := deploymentRow(t, h, deployment.ID)
+	activeRun, err := h.svc.runs.Get(context.Background(), activeRow.RunID.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranks, ok := activeRun.Progress["ranks"].([]any)
+	if !ok || len(ranks) != 1 {
+		t.Fatalf("serve progress = %#v", activeRun.Progress)
+	}
+	rankProgress, _ := ranks[0].(map[string]any)
+	if rankProgress["phase"] != "downloading" || rankProgress["current_file"] != "model-00001.safetensors" ||
+		rankProgress["bytes_done"] != float64(64) {
+		t.Fatalf("rank progress = %#v", rankProgress)
+	}
 	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: false, Error: "origin unavailable"})
 	row := deploymentRow(t, h, deployment.ID)
 	if row.ObservedState != "failed" || !strings.Contains(row.Diagnostics, "artifact.fetch_failed") {
 		t.Fatalf("deployment after artifact failure = %+v", row)
+	}
+}
+
+func TestCompletedArtifactProgressDoesNotRegressImagePullPhase(t *testing.T) {
+	revision := strings.Repeat("c", 40)
+	identity := "hf://Acme/Model@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
+	)
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedArtifact(t, "hf-artifact", identity)
+	h.seedRecipe(t, "recipe-origin-progress", manifest)
+	deployment := h.createDeployment(t, "recipe-origin-progress", PlacementOverride{NodeID: "dest", Rank: 0})
+	command := h.nodes.artifactCommands()[0].msg.GetArtifactCommand()
+
+	h.seedPlacement(t, "hf-artifact", "dest", "/var/lib/lmw/artifacts/model", "valid")
+	h.svc.OnPlacementReport(context.Background(), "dest", identity, "valid")
+	workloadCommands := h.nodes.workloadCommands()
+	if len(workloadCommands) != 1 ||
+		workloadCommands[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+		t.Fatalf("workload commands after placement = %+v, want pull", workloadCommands)
+	}
+
+	h.svc.OnArtifactProgress(context.Background(), &agentv1.ArtifactProgress{
+		CommandId: command.GetCommandId(), ArtifactIdentity: identity, Phase: "complete",
+		BytesDone: 128, BytesTotal: 128, FilesDone: 2, FilesTotal: 2,
+	})
+	row := deploymentRow(t, h, deployment.ID)
+	run, err := h.svc.runs.Get(context.Background(), row.RunID.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranks, ok := run.Progress["ranks"].([]any)
+	if !ok || len(ranks) != 1 {
+		t.Fatalf("serve progress = %#v", run.Progress)
+	}
+	rankProgress, _ := ranks[0].(map[string]any)
+	if rankProgress["phase"] != "pulling_image" {
+		t.Fatalf("rank phase = %#v, want pulling_image", rankProgress["phase"])
+	}
+}
+
+func TestStopCancelsOriginFetchBeforeContainerCreation(t *testing.T) {
+	revision := strings.Repeat("b", 40)
+	identity := "hf://Acme/LargeModel@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/LargeModel", "revision": "`+revision+`"}`,
+	)
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedArtifact(t, "hf-large", identity)
+	h.seedRecipe(t, "recipe-cancel-origin", manifest)
+	deployment := h.createDeployment(t, "recipe-cancel-origin", PlacementOverride{NodeID: "dest", Rank: 0})
+	commands := h.nodes.artifactCommands()
+	if len(commands) != 1 {
+		t.Fatalf("initial artifact commands = %+v", commands)
+	}
+	fetchID := commands[0].msg.GetArtifactCommand().GetCommandId()
+
+	stopped, err := h.svc.Stop(context.Background(), deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.ObservedState != "stopped" {
+		t.Fatalf("stop observed state = %s", stopped.ObservedState)
+	}
+	commands = h.nodes.artifactCommands()
+	if len(commands) != 2 {
+		t.Fatalf("artifact commands after stop = %+v", commands)
+	}
+	cancel := commands[1].msg.GetArtifactCommand()
+	if cancel.GetOp() != agentv1.ArtifactOp_ARTIFACT_OP_CANCEL || cancel.GetTargetCommandId() != fetchID {
+		t.Fatalf("cancel command = %+v", cancel)
+	}
+	if _, exists := h.svc.inflightPeek(fetchID); exists {
+		t.Fatal("cancelled fetch remained inflight")
 	}
 }
 
@@ -821,6 +927,40 @@ func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
 	row := deploymentRow(t, h, dep.ID)
 	if got := ParseDispatch(row.Dispatch).Get(0); got != PhasePulled {
 		t.Fatalf("rank 0 phase = %s, want %s", got, PhasePulled)
+	}
+}
+
+func TestPeerTransferUsesFabricAddressForWildcardListener(t *testing.T) {
+	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "[::]:9444")
+	h.seedNode(t, "src", gpuAccs("s"), "[::]:9444")
+	h.seedArtifact(t, "art-1", identity)
+	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
+
+	bindings, err := json.Marshal([]fabriccfg.MemberBinding{
+		{NodeID: "src", InterfaceName: "enx0", Address: "10.0.0.2"},
+		{NodeID: "dest", InterfaceName: "enx0", Address: "10.0.0.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.q.CreateFabric(context.Background(), db.CreateFabricParams{
+		ID: "fabric-1", Name: "spark-p2p", Transport: fabriccfg.TransportTCP,
+		Members: `["src","dest"]`, Bindings: string(bindings), Version: "1",
+	}); err != nil {
+		t.Fatalf("create fabric: %v", err)
+	}
+	artifact, err := h.q.GetArtifact(context.Background(), "art-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.startTransfer(context.Background(), artifact, "src", "dest", "", "fabric-1", "run-1"); err != nil {
+		t.Fatalf("start transfer: %v", err)
+	}
+	commands := h.nodes.transferCommands()
+	if len(commands) != 1 || commands[0].msg.GetTransferCommand().GetPeerAddress() != "10.0.0.2:9444" {
+		t.Fatalf("transfer commands = %+v, want fabric-routable source address", commands)
 	}
 }
 
@@ -951,6 +1091,61 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 	}
 }
 
+func TestRunningHeadBecomesHealthyOnlyAfterReadinessPasses(t *testing.T) {
+	var ready atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if !ready.Load() {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-readiness", strings.ReplaceAll(gpuManifest, "8000", port))
+	deployment := h.createDeployment(t, "recipe-readiness")
+	ctx := context.Background()
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, endpoint=? WHERE id=?",
+		`{"0":"started"}`, parsed.Host, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	update := &agentv1.StateUpdate{
+		DeploymentId: deployment.ID, ContainerId: "container-a", State: "running", Rank: 0,
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", update)
+	row := deploymentRow(t, h, deployment.ID)
+	if row.ObservedState != "starting" {
+		t.Fatalf("observed before readiness = %s, want starting", row.ObservedState)
+	}
+
+	ready.Store(true)
+	h.svc.OnStateUpdate(ctx, "node-a", update)
+	row = deploymentRow(t, h, deployment.ID)
+	if row.ObservedState != "healthy" {
+		t.Fatalf("observed after readiness = %s, want healthy", row.ObservedState)
+	}
+	run, err := h.svc.runs.Get(ctx, row.RunID.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranks, _ := run.Progress["ranks"].([]any)
+	progress, _ := ranks[0].(map[string]any)
+	if progress["phase"] != "healthy" {
+		t.Fatalf("rank progress = %#v, want healthy", progress)
+	}
+}
+
 func TestUnexpectedWorkloadTerminationFailsAndStopsDeployment(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -994,6 +1189,10 @@ func TestUnexpectedWorkloadTerminationFailsAndStopsDeployment(t *testing.T) {
 			h.svc.OnStateUpdate(ctx, "node-a", update)
 
 			row = deploymentRow(t, h, dep.ID)
+			placement := ParsePlacementSet(row.Placement).EntryFor(0)
+			if placement == nil || placement.Container != "container-a" {
+				t.Fatalf("placement container = %+v, want container-a", placement)
+			}
 			if row.DesiredState != "stopped" || row.ObservedState != "stopped" {
 				t.Fatalf("deployment state = %s/%s, want stopped/stopped", row.DesiredState, row.ObservedState)
 			}

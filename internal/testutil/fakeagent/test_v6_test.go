@@ -2,7 +2,10 @@ package fakeagent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +32,40 @@ type transferFixture struct {
 	destRel      string // destination-relative transfer root
 	total        int64  // transferred byte count of the model repository
 	lastTransfer string
+}
+
+func completeHFFixture(t *testing.T, fixture *HFFixture, identity string) {
+	t.Helper()
+	names := []string{
+		"config.json",
+		"model-00001-of-00002.safetensors",
+		"model-00002-of-00002.safetensors",
+		"model.safetensors.index.json",
+		"extra/pointer.json",
+	}
+	files := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(fixture.Snapshot, filepath.FromSlash(name))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		files = append(files, map[string]any{
+			"path": name, "size": len(data), "digest": fmt.Sprintf("sha256:%x", sum),
+		})
+	}
+	manifest, err := json.Marshal(map[string]any{"identity": identity, "files": files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(fixture.ModelDir, ".lmw", "snapshots", fixture.Sha40+".json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture {
@@ -70,6 +107,7 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 	artID = art.ID
 	// Operator-verified placement on the source (the agent's own cache scan
 	// reports "pending"; this upsert is the controller-side validation).
+	completeHFFixture(t, fx, art.Identity)
 	var total int64
 	for _, file := range WalkTree(t, fx.ModelDir) {
 		info, err := os.Lstat(filepath.Join(fx.ModelDir, filepath.FromSlash(file.Path)))

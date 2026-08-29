@@ -1,0 +1,166 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: glm53-flash-exl3-dflash2-spark-tp2
+  version: 1.0.0
+  displayName: GLM-5.3 Flash EXL3 · 2× DGX Spark
+  model: GLM-5.3-Flash-EXL3
+  engine: vllm
+  description: >-
+    GLM-5.3 Flash EXL3/TR3 4 bpw across two NVIDIA GB10 DGX Sparks with
+    tensor parallelism over RoCE, packed FP8 MLA KV cache, one-million-token
+    context, vision, tool calling, reasoning, prefix caching, and DFlash2 k=7
+    speculative decoding. The head exposes an OpenAI-compatible API on :8888;
+    the worker is headless.
+  license: MIT
+  source:
+    url: https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+    revision: "07aee44f76a23245b5822f4efbc01ea7ddc7bdb1"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts:
+  - name: model
+    kind: model
+    sizeBytes: 175715854754
+    source:
+      type: huggingface
+      identity: hf://Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
+      revision: "25a44fdbf16862a46b7cc9921142c6c81350af2f"
+    mount: /models/target
+    validation: snapshot
+  - name: drafter
+    kind: model
+    sizeBytes: 2342175855
+    source:
+      type: huggingface
+      identity: hf://incoai/GLM-5.3-Flash-DFlash2
+      revision: "dc77ff1c99eeb2df044ee3d4f0094eb033fee410"
+    mount: /models/drafter
+    validation: snapshot
+workloads:
+  - match:
+      nodeCount: 2
+      accelerator:
+        vendor: nvidia
+    image:
+      reference: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58
+      digest: sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58
+    command:
+      - /bin/bash
+      - /lmw/assets/serve.sh
+    args: []
+    ranks:
+      - 0
+      - 1
+    env:
+      NODE_RANK: "${node.rank}"
+      WORLD_SIZE: "2"
+      MASTER_ADDR: "${fabric.address}"
+      MASTER_PORT: "29521"
+      LOCAL_FABRIC_ADDR: "${fabric.node_address}"
+      FABRIC_INTERFACE: "${fabric.interface}"
+      FABRIC_RDMA_DEVICE: "${fabric.rdma_device}"
+      FABRIC_GID_INDEX: "${fabric.gid_index}"
+      MODEL_PATH: "${artifact.model.path}"
+      DFLASH_MODEL_PATH: "${artifact.drafter.path}"
+      SERVED_MODEL_NAME: GLM-5.3-Flash-EXL3
+      API_PORT: "8888"
+      TENSOR_PARALLEL_SIZE: "2"
+      QUANTIZATION: exl3
+      MAX_MODEL_LEN: "1000000"
+      MAX_NUM_SEQS: "4"
+      MAX_NUM_BATCHED_TOKENS: "1024"
+      GPU_MEMORY_UTILIZATION: "0.87"
+      KV_CACHE_DTYPE: fp8
+      DFLASH_TOKENS: "7"
+      DFLASH_DRAFT_TP: "1"
+      LANGUAGE_MODEL_ONLY: "0"
+      SKIP_MM_PROFILING: "1"
+      ENFORCE_EAGER: "0"
+      GLM53_BOOT_SHAPE_WARMUP: "1"
+      GLM53_SUPPRESS_STOPS_IN_REASONING: "1"
+      GLM53_MIXED_PREFILL_CHUNK: skip
+      EXL3_FUSED_MOE: "1"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+      VLLM_ENGINE_READY_TIMEOUT_S: "1800"
+      NCCL_IB_DISABLE: "0"
+      NCCL_IB_ROCE_VERSION_NUM: "2"
+      NCCL_IB_GID_INDEX: "${fabric.gid_index}"
+      NCCL_NET: IB
+      NCCL_NET_PLUGIN: none
+      NCCL_NVLS_ENABLE: "0"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_IB_MERGE_NICS: "0"
+      NCCL_CROSS_NIC: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_DEBUG: WARN
+      NCCL_SOCKET_IFNAME: "${fabric.interface}"
+      GLOO_SOCKET_IFNAME: "${fabric.interface}"
+      NCCL_IB_HCA: "${fabric.rdma_device}"
+      VLLM_HOST_IP: "${fabric.node_address}"
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      TORCH_CUDA_ARCH_LIST: 12.1a
+      FLASHINFER_CUDA_ARCH_LIST: 12.1a
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+      HOME: /tmp/home
+      NUMBA_CACHE_DIR: /tmp/numba
+      TRITON_CACHE_DIR: /tmp/triton
+      TILELANG_CACHE_DIR: /tmp/tilelang
+      XDG_CACHE_HOME: /tmp/cache
+      VLLM_CACHE_ROOT: /tmp/vllm-cache
+    devices:
+      accelerator:
+        all: true
+      rdma:
+        all: true
+    networkMode: host
+    permissions:
+      - devices.rdma
+      - network.host
+      - memory.shm-large
+      - rootfs.write
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+    resources:
+      cpu: 16
+      memoryBytes: 124554051584
+      shmBytes: 34359738368
+      tmpfsBytes: 8589934592
+      pids: 8192
+    verify:
+      expect:
+        statusCode: 200
+      httpGet:
+        method: GET
+        path: /v1/models
+        port: 8888
+assets:
+  - serve.sh
+  - files/chat_template.jinja
+  - overlay/patch_glm_video_placeholders.py
+  - overlay/patch_suppress_stops_in_reasoning.py
+  - overlay/patch_scheduler_decode_floor.py
+  - overlay/patch_glm5_drafter_group.py
+  - overlay/patch_hybrid_prefix_hit.py
+  - scripts/boot-shape-warmup.sh

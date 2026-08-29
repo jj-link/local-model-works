@@ -258,9 +258,18 @@ export default function NodeDetailRoute() {
               </p>
             ) : (
               <ul className="px-3 py-2 font-mono text-xs">
-                {cacheRoots.map((c) => (
-                  <li key={c} className="border-b border-hairline/60 py-1.5 text-muted last:border-b-0">
-                    {c}
+                {cacheRoots.map((root) => (
+                  <li key={root.path} className="border-b border-hairline/60 py-1.5 text-muted last:border-b-0">
+                    <div className="flex flex-wrap items-center gap-x-3">
+                      <span className="text-foreground">{root.path}</span>
+                      <span>{root.backend || "filesystem"}</span>
+                      {root.size_bytes ? <span>{bytes(root.size_bytes)}</span> : null}
+                    </div>
+                    {root.repositories?.length ? (
+                      <p className="mt-1 text-[10px] text-faint">
+                        {root.repositories.length} cached {root.repositories.length === 1 ? "repository" : "repositories"}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -308,9 +317,16 @@ export default function NodeDetailRoute() {
                 {rdma.map((d) => (
                   <li key={d.name} className="flex justify-between py-1">
                     <span className="text-muted">rdma {d.name}</span>
-                    <span className="text-foreground">
-                      {d.vendor ?? ""}{" "}
-                      {d.ports.map((p) => `${p.name ?? "?"}:${p.state ?? "?"}${p.link_rate_gbps ? `@${p.link_rate_gbps}G` : ""}`).join(" ")}
+                    <span className="text-right text-foreground">
+                      {d.vendor ?? ""}
+                      {d.network_interfaces?.length ? ` · ${d.network_interfaces.join(", ")}` : ""}
+                      {(d.ports ?? []).map((port) => {
+                        const populated = (port.gids ?? []).filter((gid) => /[1-9a-f]/i.test(gid.value));
+                        const gidSummary = populated.length
+                          ? ` · gid ${populated.map((gid) => `${gid.index}:${gid.type || "unknown"}`).join(", ")}`
+                          : "";
+                        return ` ${port.name ?? "?"}:${port.state ?? "?"}${port.link_rate_gbps ? `@${port.link_rate_gbps}G` : ""}${gidSummary}`;
+                      }).join("")}
                     </span>
                   </li>
                 ))}
@@ -328,7 +344,7 @@ export default function NodeDetailRoute() {
                 {ifaces.map((f) => (
                   <li key={f.name} className="border-b border-hairline/60 py-1.5 last:border-b-0">
                     <span className="text-foreground">{f.name}</span>
-                    <span className="ml-2 text-muted">{f.addresses.join(" ")}</span>
+                    <span className="ml-2 text-muted">{(f.addresses ?? []).join(" ") || "no address"}</span>
                     {f.link_mbps ? (
                       <span className="ml-auto text-faint">{f.link_mbps} Mb/s</span>
                     ) : null}

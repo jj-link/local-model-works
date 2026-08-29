@@ -190,6 +190,26 @@ func TestGitInstallImmutability(t *testing.T) {
 	if rec.TrustState != recipe.TrustUntrusted {
 		t.Fatalf("git import must be untrusted, got %q", rec.TrustState)
 	}
+	// Omitting the revision is the UI's normal path. The service resolves
+	// default-branch HEAD once and stores the exact same immutable commit.
+	autoPinned, err := svc.Import(ctx, recipe.RecipeSource{Type: "git", Remote: "file://" + repo, Path: "pkg"})
+	if err != nil {
+		t.Fatalf("import default HEAD: %v", err)
+	}
+	if autoPinned.Digest != rec.Digest {
+		t.Fatalf("default HEAD digest %q != pinned digest %q", autoPinned.Digest, rec.Digest)
+	}
+	autoDetail, err := svc.Get(ctx, autoPinned.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var autoSource recipe.RecipeSource
+	if err := json.Unmarshal(autoDetail.Source, &autoSource); err != nil {
+		t.Fatal(err)
+	}
+	if autoSource.Revision != c1 {
+		t.Fatalf("default HEAD stored revision %q, want %q", autoSource.Revision, c1)
+	}
 	// Snapshot the stored manifest bytes now; the immutability assertions
 	// below compare every later resolution against these exact bytes.
 	stored0, err := svc.Get(ctx, d)

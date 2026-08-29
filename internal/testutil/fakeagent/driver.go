@@ -3,6 +3,7 @@ package fakeagent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jj-link/local-model-works/internal/hardware"
 )
@@ -40,6 +41,7 @@ func (d *NVIDIADriver) ID() string { return "nvidia" }
 
 // Probe implements hardware.Driver.
 func (d *NVIDIADriver) Probe(ctx context.Context) (hardware.Inventory, error) {
+	address, _, _ := strings.Cut(d.ip, "/")
 	inv := hardware.Inventory{
 		Hostname: d.hostname,
 		OS:       "linux (fakeagent)",
@@ -51,7 +53,7 @@ func (d *NVIDIADriver) Probe(ctx context.Context) (hardware.Inventory, error) {
 		// inventory is deterministic on any test machine.
 		Interfaces: []hardware.NetworkInterface{
 			{Name: "lo", Addresses: []string{"127.0.0.1/8"}, MTU: 65536},
-			{Name: "lmw-eth0", Addresses: []string{d.ip}, MTU: 1500, LinkMbps: 10000},
+			{Name: "lmw-eth0", Addresses: []string{address}, MTU: 1500, LinkMbps: 10000},
 		},
 		CacheRoots: []hardware.CacheRoot{},
 	}
@@ -60,9 +62,13 @@ func (d *NVIDIADriver) Probe(ctx context.Context) (hardware.Inventory, error) {
 	}
 	if d.hasRDMA {
 		inv.RDMADevices = []hardware.RdmaDevice{
-			{Name: "mlx5_0", Vendor: "mellanox", Ports: []hardware.RdmaPort{
-				{Name: "mlx5_0", State: "active", LinkRateGbps: 200},
-			}},
+			{
+				Name: "mlx5_0", Vendor: "mellanox", NetworkInterfaces: []string{"lmw-eth0"},
+				Ports: []hardware.RdmaPort{{
+					Name: "mlx5_0", State: "active", LinkRateGbps: 200,
+					GIDs: []hardware.RdmaGID{{Index: 3, Value: "fe80::1", Type: "RoCE v2"}},
+				}},
+			},
 		}
 	}
 	return inv, nil

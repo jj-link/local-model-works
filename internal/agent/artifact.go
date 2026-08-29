@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
@@ -34,11 +35,143 @@ type hfModelInfo struct {
 	} `json:"siblings"`
 }
 
+const hfDownloadConcurrency = 16
+
+type hfDownloadJob struct {
+	index          int
+	name           string
+	rel            string
+	expectedSize   int64
+	expectedDigest string
+	link           string
+	partial        string
+	downloadURL    string
+}
+
+type artifactDownloadProgress struct {
+	Phase       string
+	CurrentFile string
+	BytesDone   uint64
+	BytesTotal  uint64
+	FilesDone   uint32
+	FilesTotal  uint32
+}
+
+type hfSnapshotFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
+}
+
+type hfSnapshotManifest struct {
+	Identity string           `json:"identity"`
+	Files    []hfSnapshotFile `json:"files"`
+}
+
+func hfSnapshotManifestPath(modelRoot, revision string) string {
+	return filepath.Join(modelRoot, ".lmw", "snapshots", revision+".json")
+}
+
+func writeHFCompletionManifest(modelRoot, revision, identity string, files []hfSnapshotFile) error {
+	path := hfSnapshotManifestPath(modelRoot, revision)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(hfSnapshotManifest{Identity: identity, Files: files})
+	if err != nil {
+		return err
+	}
+	partial := path + ".part"
+	if err := os.WriteFile(partial, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(partial, path)
+}
+
+func hfSnapshotDiagnostics(ctx context.Context, identity, modelRoot, snapshot string) []*agentv1.Diagnostic {
+	var out []*agentv1.Diagnostic
+	for _, diagnostic := range hf.ValidateSnapshot(snapshot, modelRoot) {
+		out = append(out, &agentv1.Diagnostic{
+			Code: diagnostic.Code, Severity: diagnostic.Severity,
+			Message: diagnostic.Message, Resource: diagnostic.Path,
+		})
+	}
+	_, revision, ok := strings.Cut(identity, "@")
+	if !ok {
+		return append(out, &agentv1.Diagnostic{
+			Code: "artifact.snapshot_manifest_invalid", Severity: "error",
+			Message: "snapshot identity has no immutable revision", Resource: snapshot,
+		})
+	}
+	path := hfSnapshotManifestPath(modelRoot, revision)
+	file, err := os.Open(path)
+	if err != nil {
+		return append(out, &agentv1.Diagnostic{
+			Code: "artifact.snapshot_manifest_missing", Severity: "error",
+			Message: "snapshot has not completed a managed fetch", Resource: path,
+		})
+	}
+	defer file.Close()
+	var manifest hfSnapshotManifest
+	if err := json.NewDecoder(io.LimitReader(file, 16<<20)).Decode(&manifest); err != nil ||
+		manifest.Identity != identity || len(manifest.Files) == 0 {
+		return append(out, &agentv1.Diagnostic{
+			Code: "artifact.snapshot_manifest_invalid", Severity: "error",
+			Message: "snapshot completion manifest is invalid", Resource: path,
+		})
+	}
+	for _, expected := range manifest.Files {
+		if ctx.Err() != nil {
+			break
+		}
+		rel, err := safeRelativePath(expected.Path)
+		_, digestErr := artifactidentity.Parse("file://" + expected.Digest)
+		if err != nil || digestErr != nil || expected.Size < 0 ||
+			!existingSnapshotFile(filepath.Join(snapshot, rel), expected.Size, expected.Digest) {
+			out = append(out, &agentv1.Diagnostic{
+				Code: "artifact.snapshot_file_invalid", Severity: "error",
+				Message:  "snapshot file is missing or does not match the completed fetch",
+				Resource: expected.Path,
+			})
+		}
+	}
+	return out
+}
+
+type artifactProgressReporter func(artifactDownloadProgress)
+
 func (a *Agent) handleArtifact(ctx context.Context, command *agentv1.ArtifactCommand) {
+	if command.GetOp() == agentv1.ArtifactOp_ARTIFACT_OP_CANCEL {
+		target := command.GetTargetCommandId()
+		a.artifactMu.Lock()
+		cancel := a.artifactCancels[target]
+		a.artifactMu.Unlock()
+		if target == "" || cancel == nil {
+			a.result(command.GetCommandId(), false, 0, "artifact.cancel_target_unknown", "", "")
+			return
+		}
+		cancel()
+		a.result(command.GetCommandId(), true, 0, "", "", "")
+		return
+	}
 	if command.GetOp() != agentv1.ArtifactOp_ARTIFACT_OP_FETCH && command.GetOp() != agentv1.ArtifactOp_ARTIFACT_OP_VALIDATE {
 		a.result(command.GetCommandId(), false, 0, "artifact.unsupported_operation", "", "")
 		return
 	}
+	commandCtx, cancel := context.WithCancel(ctx)
+	a.artifactMu.Lock()
+	if previous := a.artifactCancels[command.GetCommandId()]; previous != nil {
+		previous()
+	}
+	a.artifactCancels[command.GetCommandId()] = cancel
+	a.artifactMu.Unlock()
+	defer func() {
+		cancel()
+		a.artifactMu.Lock()
+		delete(a.artifactCancels, command.GetCommandId())
+		a.artifactMu.Unlock()
+	}()
+	ctx = commandCtx
 	if strings.HasPrefix(command.GetArtifactIdentity(), "recipe://") {
 		if err := a.fetchRecipePackage(ctx, command.GetArtifactIdentity()); err != nil {
 			a.result(command.GetCommandId(), false, 0, err.Error(), "", "")
@@ -64,12 +197,23 @@ func (a *Agent) handleArtifact(ctx context.Context, command *agentv1.ArtifactCom
 		a.result(command.GetCommandId(), false, 0, "artifact.cache_root_unavailable", "", "")
 		return
 	}
+	var last artifactDownloadProgress
+	report := func(progress artifactDownloadProgress) {
+		last = progress
+		a.sendArtifactProgress(command, progress)
+	}
 	if command.GetOp() == agentv1.ArtifactOp_ARTIFACT_OP_FETCH {
-		err = fetchHFSnapshot(ctx, command.GetArtifactIdentity(), cacheRoot, command.GetBearerToken())
+		err = fetchHFSnapshot(ctx, command.GetArtifactIdentity(), cacheRoot, command.GetBearerToken(), report)
+	} else {
+		report(artifactDownloadProgress{Phase: "validating"})
 	}
 	candidate, validateErr := validateHFIdentity(ctx, command.GetArtifactIdentity(), cacheRoot)
 	if err == nil {
 		err = validateErr
+	} else if validateErr == nil {
+		// A complete managed snapshot is usable even if a redundant refresh
+		// lost its remote connection.
+		err = nil
 	}
 	if candidate.Identity != "" {
 		a.sendPlacement(candidate)
@@ -79,7 +223,21 @@ func (a *Agent) handleArtifact(ctx context.Context, command *agentv1.ArtifactCom
 		return
 	}
 	// bearer_token is intentionally not retained beyond this call.
+	last.Phase = "complete"
+	last.CurrentFile = ""
+	a.sendArtifactProgress(command, last)
 	a.result(command.GetCommandId(), true, 0, "", "", "")
+}
+
+func (a *Agent) sendArtifactProgress(command *agentv1.ArtifactCommand, progress artifactDownloadProgress) {
+	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_ArtifactProgress{
+		ArtifactProgress: &agentv1.ArtifactProgress{
+			CommandId: command.GetCommandId(), ArtifactIdentity: command.GetArtifactIdentity(),
+			Phase: progress.Phase, CurrentFile: progress.CurrentFile,
+			BytesDone: progress.BytesDone, BytesTotal: progress.BytesTotal,
+			FilesDone: progress.FilesDone, FilesTotal: progress.FilesTotal,
+		},
+	}})
 }
 
 func validateHFIdentity(ctx context.Context, identity, cacheRoot string) (placementCandidate, error) {
@@ -96,12 +254,10 @@ func validateHFIdentity(ctx context.Context, identity, cacheRoot string) (placem
 		modelRoot = filepath.Join(cacheRoot, "models--"+owner+"--"+repo)
 	}
 	snapshot := filepath.Join(modelRoot, "snapshots", revision)
-	diagnostics := hf.ValidateSnapshot(snapshot, modelRoot)
-	candidate := placementCandidate{Identity: identity, Path: modelRoot, State: "valid", Size: regularTreeSize(ctx, modelRoot)}
-	for _, diagnostic := range diagnostics {
-		candidate.Diagnostics = append(candidate.Diagnostics, &agentv1.Diagnostic{
-			Code: diagnostic.Code, Severity: diagnostic.Severity, Message: diagnostic.Message, Resource: diagnostic.Path,
-		})
+	candidate := placementCandidate{
+		Identity: identity, Path: modelRoot, State: "valid",
+		Size:        regularTreeSize(ctx, modelRoot),
+		Diagnostics: hfSnapshotDiagnostics(ctx, identity, modelRoot, snapshot),
 	}
 	if len(candidate.Diagnostics) > 0 {
 		candidate.State = "invalid"
@@ -110,7 +266,19 @@ func validateHFIdentity(ctx context.Context, identity, cacheRoot string) (placem
 	return candidate, nil
 }
 
-func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) error {
+func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string, reporters ...artifactProgressReporter) error {
+	report := func(artifactDownloadProgress) {}
+	if len(reporters) > 0 && reporters[0] != nil {
+		report = reporters[0]
+	}
+	baseReport := report
+	var reportMu sync.Mutex
+	report = func(progress artifactDownloadProgress) {
+		reportMu.Lock()
+		defer reportMu.Unlock()
+		baseReport(progress)
+	}
+	report(artifactDownloadProgress{Phase: "metadata"})
 	base, revision, ok := strings.Cut(strings.TrimPrefix(identity, "hf://"), "@")
 	if !ok {
 		return fmt.Errorf("invalid HF identity")
@@ -119,15 +287,11 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 	if !ok {
 		return fmt.Errorf("invalid HF repository")
 	}
-	client := &http.Client{Timeout: 30 * time.Minute}
+	client := &http.Client{Timeout: 2 * time.Hour}
 	baseURL := &url.URL{Scheme: hfBaseURL.Scheme, Host: hfBaseURL.Host, Path: "/api/models/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/revision/" + revision}
-	// ?blobs=true is required so Hugging Face populates `size` and `lfs` on
-	// each sibling. Without it siblings carry only `rfilename`, which decode
-	// to size 0 / nil LFS and make resumeHTTPFile read 1 byte against a
-	// "want 0" expectation.
+	// ?blobs=true is required so Hugging Face populates size and lfs.
 	baseURL.RawQuery = url.Values{"blobs": {"true"}}.Encode()
-	apiURL := baseURL.String()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL.String(), nil)
 	request.Header.Set("Accept", "application/json")
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -144,73 +308,248 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string) err
 	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(&info); err != nil {
 		return err
 	}
+
+	totalBytes := int64(0)
+	for _, sibling := range info.Siblings {
+		size := sibling.Size
+		if sibling.LFS != nil {
+			size = sibling.LFS.Size
+		}
+		if size < 0 || size > 1<<40 {
+			return fmt.Errorf("HF file %s has invalid size", sibling.Name)
+		}
+		totalBytes += size
+	}
+	totalFiles := uint32(len(info.Siblings))
+	report(artifactDownloadProgress{Phase: "downloading", BytesTotal: uint64(totalBytes), FilesTotal: totalFiles})
+
 	modelRoot := filepath.Join(cacheRoot, "hub", "models--"+owner+"--"+repo)
 	blobRoot := filepath.Join(modelRoot, "blobs")
 	snapshotRoot := filepath.Join(modelRoot, "snapshots", revision)
 	partialRoot := filepath.Join(modelRoot, ".downloads", revision)
-	// The model tree (blobs + snapshot symlinks) is bind-mounted into the
-	// workload container, which runs as root with all capabilities dropped
-	// (no CAP_DAC_OVERRIDE). Directories must be 0755 (world-traversable),
-	// not the 0750/0700 defaults, or the container cannot reach the files.
 	for _, dir := range []string{modelRoot, blobRoot, snapshotRoot, partialRoot} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	// Normalize a model tree fetched by an older agent build (0750 dirs /
-	// 0640 blobs) so a cache hit is also container-readable.
 	if err := makeModelTreeReadable(modelRoot); err != nil {
 		return err
 	}
-	for _, sibling := range info.Siblings {
+
+	completedBytes := int64(0)
+	filesDone := uint32(0)
+	manifestFiles := make([]hfSnapshotFile, len(info.Siblings))
+	pending := make([]hfDownloadJob, 0, len(info.Siblings))
+	seenPaths := make(map[string]bool, len(info.Siblings))
+	for index, sibling := range info.Siblings {
 		rel, err := safeRelativePath(sibling.Name)
 		if err != nil {
 			return err
 		}
+		relPath := filepath.ToSlash(rel)
+		if seenPaths[relPath] {
+			return fmt.Errorf("HF metadata contains duplicate file %s", sibling.Name)
+		}
+		seenPaths[relPath] = true
 		expectedSize, expectedDigest := sibling.Size, ""
 		if sibling.LFS != nil {
 			expectedSize, expectedDigest = sibling.LFS.Size, "sha256:"+sibling.LFS.SHA256
 		}
-		if expectedSize < 0 || expectedSize > 1<<40 {
-			return fmt.Errorf("HF file %s has invalid size", sibling.Name)
+		link := filepath.Join(snapshotRoot, rel)
+		if existingSnapshotFile(link, expectedSize, expectedDigest) {
+			actualDigest := expectedDigest
+			if actualDigest == "" {
+				var size int64
+				actualDigest, size, err = digestFile(link)
+				if err != nil || size != expectedSize {
+					return fmt.Errorf("HF file %s digest or size mismatch", sibling.Name)
+				}
+			}
+			manifestFiles[index] = hfSnapshotFile{
+				Path: relPath, Size: expectedSize, Digest: actualDigest,
+			}
+			completedBytes += expectedSize
+			filesDone++
+			report(artifactDownloadProgress{
+				Phase: "downloading", CurrentFile: relPath,
+				BytesDone: uint64(completedBytes), BytesTotal: uint64(totalBytes),
+				FilesDone: filesDone, FilesTotal: totalFiles,
+			})
+			continue
 		}
+
 		partial := filepath.Join(partialRoot, rel+".part")
 		if err := os.MkdirAll(filepath.Dir(partial), 0o755); err != nil {
 			return err
 		}
-		downloadURL := fmt.Sprintf("%s://%s/%s/%s/resolve/%s/%s", hfBaseURL.Scheme, hfBaseURL.Host, url.PathEscape(owner), url.PathEscape(repo), revision, strings.ReplaceAll(url.PathEscape(filepath.ToSlash(rel)), "%2F", "/"))
-		if err := resumeHTTPFile(ctx, client, downloadURL, token, partial, expectedSize); err != nil {
-			return err
+		pending = append(pending, hfDownloadJob{
+			index: index, name: sibling.Name, rel: relPath,
+			expectedSize: expectedSize, expectedDigest: expectedDigest,
+			link: link, partial: partial,
+			downloadURL: fmt.Sprintf(
+				"%s://%s/%s/%s/resolve/%s/%s",
+				hfBaseURL.Scheme,
+				hfBaseURL.Host,
+				url.PathEscape(owner),
+				url.PathEscape(repo),
+				revision,
+				strings.ReplaceAll(url.PathEscape(relPath), "%2F", "/"),
+			),
+		})
+	}
+
+	if len(pending) > 0 {
+		downloadCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		jobs := make(chan hfDownloadJob, len(pending))
+		for _, job := range pending {
+			jobs <- job
 		}
-		digest, size, err := digestFile(partial)
-		if err != nil || size != expectedSize || (expectedDigest != "" && digest != expectedDigest) {
-			return fmt.Errorf("HF file %s digest or size mismatch", sibling.Name)
-		}
-		blob := filepath.Join(blobRoot, strings.TrimPrefix(digest, "sha256:"))
-		if err := os.MkdirAll(blobRoot, 0o755); err != nil {
-			return err
-		}
-		if _, err := os.Stat(blob); os.IsNotExist(err) {
-			if err := os.Rename(partial, blob); err != nil {
-				return err
+		close(jobs)
+
+		var (
+			workers  sync.WaitGroup
+			stateMu  sync.Mutex
+			errorMu  sync.Mutex
+			firstErr error
+			active   = make(map[int]int64, hfDownloadConcurrency)
+		)
+		recordError := func(err error) {
+			errorMu.Lock()
+			if firstErr == nil {
+				firstErr = err
+				cancel()
 			}
-		} else {
-			_ = os.Remove(partial)
+			errorMu.Unlock()
 		}
-		link := filepath.Join(snapshotRoot, rel)
-		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-			return err
+		updateProgress := func(job hfDownloadJob, fileBytes int64, completed *hfSnapshotFile) {
+			stateMu.Lock()
+			if completed == nil {
+				active[job.index] = fileBytes
+			} else {
+				delete(active, job.index)
+				completedBytes += job.expectedSize
+				filesDone++
+				manifestFiles[job.index] = *completed
+			}
+			bytesDone := completedBytes
+			for _, activeBytes := range active {
+				bytesDone += activeBytes
+			}
+			report(artifactDownloadProgress{
+				Phase: "downloading", CurrentFile: job.rel,
+				BytesDone: uint64(bytesDone), BytesTotal: uint64(totalBytes),
+				FilesDone: filesDone, FilesTotal: totalFiles,
+			})
+			stateMu.Unlock()
 		}
-		target, _ := filepath.Rel(filepath.Dir(link), blob)
-		_ = os.Remove(link)
-		if err := os.Symlink(target, link); err != nil {
+		downloadOne := func(job hfDownloadJob) (hfSnapshotFile, error) {
+			if err := resumeHTTPFile(downloadCtx, client, job.downloadURL, token, job.partial, job.expectedSize, func(fileBytes int64) {
+				updateProgress(job, fileBytes, nil)
+			}); err != nil {
+				return hfSnapshotFile{}, err
+			}
+			digest, size, err := digestFile(job.partial)
+			if err != nil || size != job.expectedSize || (job.expectedDigest != "" && digest != job.expectedDigest) {
+				return hfSnapshotFile{}, fmt.Errorf("HF file %s digest or size mismatch", job.name)
+			}
+			blob := filepath.Join(blobRoot, strings.TrimPrefix(digest, "sha256:"))
+			if _, err := os.Stat(blob); err == nil {
+				if err := os.Remove(job.partial); err != nil {
+					return hfSnapshotFile{}, err
+				}
+			} else if os.IsNotExist(err) {
+				if err := os.Rename(job.partial, blob); err != nil {
+					return hfSnapshotFile{}, err
+				}
+			} else {
+				return hfSnapshotFile{}, err
+			}
+			if err := os.MkdirAll(filepath.Dir(job.link), 0o755); err != nil {
+				return hfSnapshotFile{}, err
+			}
+			target, _ := filepath.Rel(filepath.Dir(job.link), blob)
+			if err := os.Remove(job.link); err != nil && !os.IsNotExist(err) {
+				return hfSnapshotFile{}, err
+			}
+			if err := os.Symlink(target, job.link); err != nil {
+				return hfSnapshotFile{}, err
+			}
+			return hfSnapshotFile{Path: job.rel, Size: job.expectedSize, Digest: digest}, nil
+		}
+
+		workerCount := min(hfDownloadConcurrency, len(pending))
+		workers.Add(workerCount)
+		for range workerCount {
+			go func() {
+				defer workers.Done()
+				for job := range jobs {
+					if downloadCtx.Err() != nil {
+						return
+					}
+					completed, err := downloadOne(job)
+					if err != nil {
+						recordError(fmt.Errorf("download HF file %s: %w", job.name, err))
+						return
+					}
+					updateProgress(job, job.expectedSize, &completed)
+				}
+			}()
+		}
+		workers.Wait()
+		errorMu.Lock()
+		err := firstErr
+		errorMu.Unlock()
+		if err != nil {
 			return err
 		}
 	}
+	if err := writeHFCompletionManifest(modelRoot, revision, identity, manifestFiles); err != nil {
+		return fmt.Errorf("write HF completion manifest: %w", err)
+	}
+	report(artifactDownloadProgress{
+		Phase: "validating", BytesDone: uint64(completedBytes), BytesTotal: uint64(totalBytes),
+		FilesDone: filesDone, FilesTotal: totalFiles,
+	})
 	return nil
 }
 
-func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, destination string, expectedSize int64) error {
+func existingSnapshotFile(link string, expectedSize int64, expectedDigest string) bool {
+	info, err := os.Stat(link)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != expectedSize {
+		return false
+	}
+	if expectedDigest == "" {
+		return true
+	}
+	if target, err := os.Readlink(link); err == nil &&
+		filepath.Base(target) == strings.TrimPrefix(expectedDigest, "sha256:") {
+		return true
+	}
+	digest, size, err := digestFile(link)
+	return err == nil && size == expectedSize && digest == expectedDigest
+}
+
+type downloadProgressWriter struct {
+	writer     io.Writer
+	done       int64
+	lastDone   int64
+	lastReport time.Time
+	report     func(int64)
+}
+
+func (w *downloadProgressWriter) Write(data []byte) (int, error) {
+	n, err := w.writer.Write(data)
+	w.done += int64(n)
+	if w.report != nil && (w.done-w.lastDone >= 64<<20 || time.Since(w.lastReport) >= time.Second || err != nil) {
+		w.report(w.done)
+		w.lastDone = w.done
+		w.lastReport = time.Now()
+	}
+	return n, err
+}
+
+func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, destination string, expectedSize int64, reporters ...func(int64)) error {
 	offset := int64(0)
 	if info, err := os.Stat(destination); err == nil {
 		offset = info.Size()
@@ -250,7 +589,17 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 	if err != nil {
 		return err
 	}
-	written, copyErr := io.Copy(file, io.LimitReader(response.Body, expectedSize-offset+1))
+	var report func(int64)
+	if len(reporters) > 0 {
+		report = reporters[0]
+	}
+	if report != nil {
+		report(offset)
+	}
+	writer := &downloadProgressWriter{
+		writer: file, done: offset, lastDone: offset, lastReport: time.Now(), report: report,
+	}
+	written, copyErr := io.Copy(writer, io.LimitReader(response.Body, expectedSize-offset+1))
 	closeErr := file.Close()
 	if copyErr != nil {
 		return copyErr
@@ -260,6 +609,9 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 	}
 	if offset+written != expectedSize {
 		return fmt.Errorf("download size %d, want %d", offset+written, expectedSize)
+	}
+	if report != nil {
+		report(offset + written)
 	}
 	// A pre-existing .part/.resume target may already exist at 0640;
 	// re-chmod so a cache hit also ends up world-readable.
