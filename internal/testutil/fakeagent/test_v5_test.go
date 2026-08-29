@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,21 @@ func containsString(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func activeDeploymentLeaseCount(t *testing.T, s *Server, deploymentID string) int {
+	t.Helper()
+	leases, err := s.Q.ActiveLeasesWithOwners(s.Ctx)
+	if err != nil {
+		t.Fatalf("list active leases: %v", err)
+	}
+	count := 0
+	for _, lease := range leases {
+		if lease.OwnerKind == "deployment" && lease.OwnerID == deploymentID {
+			count++
+		}
+	}
+	return count
 }
 
 // TestV5_GpuLeaseConflict proves GPU leases are exclusive: a second
@@ -484,4 +500,107 @@ func TestV5_LogCursorResume(t *testing.T) {
 	if !ended {
 		t.Fatalf("sse stream did not end with the terminal event")
 	}
+}
+
+func TestV5_WorkloadCrashPersistsSourceAndRestartsSameDeployment(t *testing.T) {
+	s, agents, _ := bootFleet(t, 1)
+	agent := agents[0]
+	digest := install(t, s, FixtureRecipe{
+		Name: "gpu-crash-restart", Version: "1.0.0", NodeCount: 1, GPUsPerRank: 1, Port: 9300,
+	})
+	deployment := createDep(t, s, digest)
+	deployment = waitDep(t, s, deployment.ID, "healthy")
+	container := containersOf(agent.RT, deployment)[0]
+	if container == nil {
+		t.Fatal("healthy deployment container missing")
+	}
+
+	crashLog := []byte("fatal: CUDA out of memory\n")
+	agent.RT.WriteLog(container.Name, "stderr", crashLog)
+	Deadline(t, 15*time.Second, func() bool {
+		chunk, _, _, err := s.Srv.Runs().ReadLog(deployment.RunID, deployment.ID, 0, "stderr", 0, 0)
+		return err == nil && bytes.Contains(chunk, crashLog)
+	}, "controller crash log persistence")
+	agent.RT.ExitExternally(container.Name, 137, true, "container process was OOM-killed")
+
+	deployment = waitDep(t, s, deployment.ID, "stopped")
+	failedRun, err := s.Srv.Runs().Get(s.Ctx, deployment.RunID)
+	if err != nil {
+		t.Fatalf("get failed run: %v", err)
+	}
+	if failedRun.State != "failed" || failedRun.ErrorCode == nil ||
+		*failedRun.ErrorCode != "workload.oom_killed" {
+		t.Fatalf("failed run = %+v", failedRun)
+	}
+	if failedRun.ErrorMessage == nil ||
+		!strings.Contains(*failedRun.ErrorMessage, "exit_code=137") ||
+		!strings.Contains(*failedRun.ErrorMessage, "oom_killed=true") ||
+		!strings.Contains(*failedRun.ErrorMessage, container.ID) {
+		t.Fatalf("failure source = %v", failedRun.ErrorMessage)
+	}
+	chunk, _, _, err := s.Srv.Runs().ReadLog(deployment.RunID, deployment.ID, 0, "stderr", 0, 0)
+	if err != nil || !bytes.Contains(chunk, crashLog) {
+		t.Fatalf("persisted crash log = %q err=%v", chunk, err)
+	}
+	Deadline(t, 10*time.Second, func() bool {
+		return activeDeploymentLeaseCount(t, s, deployment.ID) == 0
+	}, "crashed deployment capacity release")
+
+	oldRunID := deployment.RunID
+	restarted, err := s.Srv.Deployments().Start(s.Ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("restart deployment: %v", err)
+	}
+	if restarted.ID != deployment.ID || restarted.RunID == oldRunID {
+		t.Fatalf("restart identity = deployment %s run %s", restarted.ID, restarted.RunID)
+	}
+	restartedView := waitDep(t, s, deployment.ID, "healthy")
+	newContainer := containersOf(agent.RT, restartedView)[0]
+	if newContainer == nil || newContainer.State != "running" {
+		t.Fatalf("restarted container = %+v", newContainer)
+	}
+	retained, err := s.Srv.Runs().Get(s.Ctx, oldRunID)
+	if err != nil || retained.State != "failed" {
+		t.Fatalf("retained failed run = %+v err=%v", retained, err)
+	}
+}
+
+func TestV5_OfflineStopRetainsLeasesUntilReconnect(t *testing.T) {
+	s, agents, _ := bootFleet(t, 1)
+	agent := agents[0]
+	nodeID := agent.NodeID()
+	digest := install(t, s, FixtureRecipe{
+		Name: "gpu-offline-stop", Version: "1.0.0", NodeCount: 1, GPUsPerRank: 1, Port: 9400,
+	})
+	deployment := createDep(t, s, digest)
+	deployment = waitDep(t, s, deployment.ID, "healthy")
+	container := containersOf(agent.RT, deployment)[0]
+	if container == nil {
+		t.Fatal("healthy deployment container missing")
+	}
+
+	agent.Stop()
+	Deadline(t, 15*time.Second, func() bool {
+		return s.Node(t, nodeID).Status == "offline"
+	}, "node offline before stop")
+	stopping, err := s.Srv.Deployments().Stop(s.Ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("stop while offline: %v", err)
+	}
+	if stopping.DesiredState != "stopped" || stopping.ObservedState != "stopping" {
+		t.Fatalf("offline stop state = %s/%s", stopping.DesiredState, stopping.ObservedState)
+	}
+	if activeDeploymentLeaseCount(t, s, deployment.ID) == 0 {
+		t.Fatal("offline stop released active leases")
+	}
+
+	agent = agent.Restart(t, "", "")
+	s.WaitOnline(t, nodeID)
+	waitDep(t, s, deployment.ID, "stopped")
+	if state := agent.RT.StateOf(container.Name); state != "exited" && state != "" {
+		t.Fatalf("container state after reconnect = %q, want exited or removed", state)
+	}
+	Deadline(t, 10*time.Second, func() bool {
+		return activeDeploymentLeaseCount(t, s, deployment.ID) == 0
+	}, "offline stop resource release after reconnect")
 }

@@ -130,6 +130,27 @@ paths:
           $ref: '#/components/responses/Unauthorized'
       tags:
         - benchmarks
+  /browser-login:
+    post:
+      operationId: browserLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserLoginRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+          description: Session cookie and CSRF token issued
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Exchange a local one-use token for a session cookie
+      tags:
+        - auth
   /chat/completions:
     post:
       operationId: chatCompletions
@@ -1633,27 +1654,6 @@ components:
         - uuid
         - memory_bytes
       type: object
-    AffectedHardware:
-      properties:
-        deployment_ids:
-          items:
-            type: string
-          type: array
-        node_id:
-          type: string
-        node_name:
-          type: string
-        node_status:
-          type: string
-        state:
-          type: string
-      required:
-        - node_id
-        - node_name
-        - node_status
-        - deployment_ids
-        - state
-      type: object
     Artifact:
       properties:
         digest:
@@ -1791,6 +1791,13 @@ components:
       required:
         - run_id
         - language
+      type: object
+    BrowserLoginRequest:
+      properties:
+        token:
+          type: string
+      required:
+        - token
       type: object
     CertificateInfo:
       properties:
@@ -2911,6 +2918,24 @@ components:
       required:
         - source
       type: object
+    RecipeInstalledDevice:
+      properties:
+        installed_digests:
+          items:
+            type: string
+          type: array
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+      required:
+        - node_id
+        - node_name
+        - node_status
+        - installed_digests
+      type: object
     RecipeRepository:
       properties:
         created_at:
@@ -2925,6 +2950,10 @@ components:
           type: string
         installed_commit:
           type: string
+        installed_devices:
+          items:
+            $ref: '#/components/schemas/RecipeInstalledDevice'
+          type: array
         observed_head_commit:
           type: string
         observed_head_tree:
@@ -2956,20 +2985,13 @@ components:
         - update_available
         - update_supported
         - versions
+        - installed_devices
         - created_at
         - updated_at
       type: object
     RecipeRepositoryDetail:
       allOf:
         - $ref: '#/components/schemas/RecipeRepository'
-        - properties:
-            affected_hardware:
-              items:
-                $ref: '#/components/schemas/AffectedHardware'
-              type: array
-          required:
-            - affected_hardware
-          type: object
     RecipeRepositoryUpdatePlanRequest:
       properties:
         expected_head_commit:
@@ -3049,57 +3071,50 @@ components:
       required:
         - run_id
       type: object
+    RecipeUpdateDevice:
+      properties:
+        installed_digests:
+          items:
+            type: string
+          type: array
+        node_id:
+          type: string
+        node_name:
+          type: string
+        node_status:
+          type: string
+      required:
+        - node_id
+        - node_name
+        - node_status
+        - installed_digests
+      type: object
     RecipeUpdatePlan:
       properties:
         diagnostics:
           items:
             $ref: '#/components/schemas/Diagnostic'
           type: array
+        installed_devices:
+          items:
+            $ref: '#/components/schemas/RecipeUpdateDevice'
+          type: array
         plan_digest:
           type: string
         ready:
           type: boolean
-        targets:
+        running_deployments:
           items:
-            $ref: '#/components/schemas/RecipeUpdateTarget'
+            $ref: '#/components/schemas/RecipeUpdateRunningDeployment'
           type: array
       required:
         - plan_digest
         - ready
-        - targets
+        - installed_devices
+        - running_deployments
         - diagnostics
       type: object
-    RecipeUpdateStatus:
-      properties:
-        candidate_revision:
-          type: string
-        checked_at:
-          format: date-time
-          type: string
-        error:
-          type: string
-        installed_revision:
-          type: string
-        path:
-          type: string
-        remote:
-          type: string
-        state:
-          enum:
-            - current
-            - available
-            - error
-          type: string
-        tracking_ref:
-          type: string
-      required:
-        - state
-        - remote
-        - tracking_ref
-        - installed_revision
-        - checked_at
-      type: object
-    RecipeUpdateTarget:
+    RecipeUpdateRunningDeployment:
       properties:
         current_step:
           type: integer
@@ -3158,6 +3173,36 @@ components:
         - phase
         - current_step
         - total_steps
+      type: object
+    RecipeUpdateStatus:
+      properties:
+        candidate_revision:
+          type: string
+        checked_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        installed_revision:
+          type: string
+        path:
+          type: string
+        remote:
+          type: string
+        state:
+          enum:
+            - current
+            - available
+            - error
+          type: string
+        tracking_ref:
+          type: string
+      required:
+        - state
+        - remote
+        - tracking_ref
+        - installed_revision
+        - checked_at
       type: object
     Run:
       properties:

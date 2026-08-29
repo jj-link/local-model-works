@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,25 +56,27 @@ type Service struct {
 	mu       sync.Mutex
 	inflight map[string]*inflightCmd
 	// transferInflight keys dep|node|artifact to active preparation commands.
-	transferInflight map[string]string
-	rankStates       map[string]map[int32]string
-	dispatchMu       sync.Mutex
-	updateMu         sync.Mutex
-	updateLive       map[string]bool
+	transferInflight   map[string]string
+	rankStates         map[string]map[int32]string
+	dispatchMu         sync.Mutex
+	updateMu           sync.Mutex
+	updateLive         map[string]bool
+	updateFetchWaiters map[string]chan error
 }
 
 func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender, ca *ca.CA) *Service {
 	return &Service{
-		db:               dbh,
-		q:                q,
-		bus:              bus,
-		runs:             runsSvc,
-		nodes:            nodes,
-		ca:               ca,
-		inflight:         map[string]*inflightCmd{},
-		transferInflight: map[string]string{},
-		rankStates:       map[string]map[int32]string{},
-		updateLive:       map[string]bool{},
+		db:                 dbh,
+		q:                  q,
+		bus:                bus,
+		runs:               runsSvc,
+		nodes:              nodes,
+		ca:                 ca,
+		inflight:           map[string]*inflightCmd{},
+		transferInflight:   map[string]string{},
+		rankStates:         map[string]map[int32]string{},
+		updateLive:         map[string]bool{},
+		updateFetchWaiters: map[string]chan error{},
 	}
 }
 
@@ -84,18 +88,41 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 }
 
 func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, allowUntrusted bool) (*Plan, error) {
-	row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
-	}
-	// Trust gate: an untrusted recipe is inspectable but not launchable.
-	// Plan (and thus Create) blocks before any run or deployment row exists.
-	if row.TrustState == recipe.TrustUntrusted && !allowUntrusted {
-		return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
-	}
-	m, err := recipe.Parse([]byte(row.Manifest))
-	if err != nil {
-		return nil, fmt.Errorf("recipe manifest: %w", err)
+	return s.planWithRecipe(ctx, req, ignoredDeployments, allowUntrusted, nil)
+}
+
+func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, allowUntrusted bool, recipeCandidate *recipe.RepositoryCandidate) (*Plan, error) {
+	var (
+		m             *recipe.Manifest
+		recipeName    string
+		recipeVersion string
+	)
+	if recipeCandidate == nil {
+		row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
+		}
+		// Trust gate: an untrusted recipe is inspectable but not launchable.
+		// Plan (and thus Create) blocks before any run or deployment row exists.
+		if row.TrustState == recipe.TrustUntrusted && !allowUntrusted {
+			return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
+		}
+		m, err = recipe.Parse([]byte(row.Manifest))
+		if err != nil {
+			return nil, fmt.Errorf("recipe manifest: %w", err)
+		}
+		recipeName = row.Name
+		recipeVersion = row.Version
+	} else {
+		if recipeCandidate.Manifest == nil || recipeCandidate.Digest != req.RecipeDigest {
+			return nil, fmt.Errorf("%w: invalid repository candidate", ErrRecipe)
+		}
+		if !allowUntrusted {
+			return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
+		}
+		m = recipeCandidate.Manifest
+		recipeName = m.Metadata.Name
+		recipeVersion = m.Metadata.Version
 	}
 	values, err := m.ProfileValues(req.Profile)
 	if err != nil {
@@ -104,8 +131,8 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 
 	plan := &Plan{
 		RecipeDigest:  req.RecipeDigest,
-		RecipeName:    row.Name,
-		RecipeVersion: row.Version,
+		RecipeName:    recipeName,
+		RecipeVersion: recipeVersion,
 		Profile:       req.Profile,
 		Variants:      req.Variants,
 	}
@@ -114,7 +141,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 	if err != nil {
 		return nil, err
 	}
-	leased := map[string]bool{}
+	leased := map[string]db.ActiveLeasesWithOwnersRow{}
 	leases, err := s.q.ActiveLeasesWithOwners(ctx)
 	if err != nil {
 		return nil, err
@@ -123,7 +150,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		if lease.OwnerKind == "deployment" && ignoredDeployments[lease.OwnerID] {
 			continue
 		}
-		leased[lease.Resource] = true
+		leased[lease.Resource] = lease
 	}
 
 	reqAcc := s.accelRequirement(m)
@@ -172,6 +199,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		inv      *inventory.Inventory
 		free     []inventory.Accelerator
 	}
+	blockedAccelerators := map[string]Conflict{}
 	var candidates []candidate
 	for _, n := range nodes {
 		if n.Status != "online" {
@@ -204,9 +232,25 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 					!matchesWorkloadAccelerator(w, s.workloadNodeCount(m, w), a) {
 					continue
 				}
-				if !leased["gpu:"+n.ID+":"+a.UUID] {
-					c.free = append(c.free, a)
+				resource := "gpu:" + n.ID + ":" + a.UUID
+				if owner, occupied := leased[resource]; occupied {
+					relevant := len(devIndices) == 0
+					for _, index := range devIndices {
+						if index == int(a.Index) {
+							relevant = true
+							break
+						}
+					}
+					if relevant {
+						conflict := Conflict{Resource: resource, OccupiedBy: owner.OwnerID}
+						if owner.OwnerKind == "deployment" {
+							conflict.DeploymentID = owner.OwnerID
+						}
+						blockedAccelerators[resource] = conflict
+					}
+					continue
 				}
+				c.free = append(c.free, a)
 			}
 			needed := reqAcc.Count
 			if devAll {
@@ -427,6 +471,16 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 	if len(placements) < len(rankList) {
 		plan.Ready = false
 	}
+	if len(placements) < len(rankList) {
+		resources := make([]string, 0, len(blockedAccelerators))
+		for resource := range blockedAccelerators {
+			resources = append(resources, resource)
+		}
+		sort.Strings(resources)
+		for _, resource := range resources {
+			plan.Conflicts = append(plan.Conflicts, blockedAccelerators[resource])
+		}
+	}
 
 	// Fabric.
 	if m.HasFabricRequirement() {
@@ -510,11 +564,13 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 				})
 				k := portKey{addr: addr, port: hostPort}
 				planPorts[k] = append(planPorts[k], pl.NodeID)
-				if leased[fmt.Sprintf("port:%s:%d", pl.NodeID, hostPort)] {
-					plan.Conflicts = append(plan.Conflicts, Conflict{
-						Resource:   fmt.Sprintf("port:%s:%d", pl.NodeID, hostPort),
-						OccupiedBy: "active lease",
-					})
+				resource := fmt.Sprintf("port:%s:%d", pl.NodeID, hostPort)
+				if owner, occupied := leased[resource]; occupied {
+					conflict := Conflict{Resource: resource, OccupiedBy: owner.OwnerID}
+					if owner.OwnerKind == "deployment" {
+						conflict.DeploymentID = owner.OwnerID
+					}
+					plan.Conflicts = append(plan.Conflicts, conflict)
 				}
 			}
 		}
@@ -530,15 +586,15 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			if !d.Endpoint.Valid || d.Endpoint.String == "" {
 				continue
 			}
-			parts := strings.SplitN(d.Endpoint.String, ":", 2)
-			if len(parts) != 2 {
+			otherAddr, otherPortText, splitErr := net.SplitHostPort(d.Endpoint.String)
+			if splitErr != nil {
 				continue
 			}
-			var otherPort int
-			if _, err := fmt.Sscanf(parts[1], "%d", &otherPort); err != nil {
+			otherPort, parseErr := strconv.Atoi(otherPortText)
+			if parseErr != nil {
 				continue
 			}
-			if nodeIDs, hit := planPorts[portKey{addr: parts[0], port: otherPort}]; hit {
+			if nodeIDs, hit := planPorts[portKey{addr: otherAddr, port: otherPort}]; hit {
 				for _, nID := range nodeIDs {
 					plan.Conflicts = append(plan.Conflicts, Conflict{
 						Resource:     fmt.Sprintf("port:%s:%d", nID, otherPort),
@@ -882,6 +938,20 @@ func (ps placementSet) Marshal() string {
 	return string(b)
 }
 
+func placementSetFromPlan(plan *Plan) placementSet {
+	workload := plan.WorkloadIndex
+	placements := placementSet{
+		Ranks:    make(map[string]int, len(plan.Placements)),
+		Entries:  plan.Placements,
+		Workload: &workload,
+		Variants: plan.Variants,
+	}
+	for _, placement := range plan.Placements {
+		placements.Ranks[placement.NodeID] = int(placement.Rank)
+	}
+	return placements
+}
+
 // RanksOnNode lists the ranks this node hosts; Entries is authoritative
 // (multiple ranks may share one node), the legacy Ranks map is fallback.
 func (ps placementSet) RanksOnNode(nodeID string) []int32 {
@@ -945,11 +1015,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 
 	depID, _ := id.New()
 	runIDStr, _ := id.New()
-	wi := plan.WorkloadIndex
-	ps := placementSet{Ranks: map[string]int{}, Entries: plan.Placements, Workload: &wi, Variants: plan.Variants}
-	for _, pl := range plan.Placements {
-		ps.Ranks[pl.NodeID] = int(pl.Rank)
-	}
+	ps := placementSetFromPlan(plan)
 	var fabric sql.NullString
 	if plan.Fabric != nil {
 		fabric = sql.NullString{String: *plan.Fabric, Valid: true}
@@ -992,7 +1058,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 	}
 	endpoint := ""
 	if plan.Endpoint.Host != "" {
-		endpoint = fmt.Sprintf("%s:%d", plan.Endpoint.Host, plan.Endpoint.Port)
+		endpoint = net.JoinHostPort(plan.Endpoint.Host, strconv.Itoa(int(plan.Endpoint.Port)))
 	}
 	if endpoint != "" {
 		if err := qtx.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
@@ -1229,7 +1295,7 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 //	  created -> START
 //	  started -> INSPECT (running confirmation)
 //	desired=stopped:
-//	  started  -> STOP, then phase stopping (pending marker)
+//	  started  -> phase stopping, then STOP
 //	  stopping -> STOP re-drive
 //	  stopped  -> nothing
 func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, runID string, pl Placement) {
@@ -1332,12 +1398,12 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
 		case PhasePulled, PhaseCreated, PhaseStarted, PhaseStopping:
-			cmdID, _ := id.New()
-			s.inflightMark(cmdID, depID, rank, "stop")
-			if s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_STOP, depID, runID, rank, nil) &&
-				phase == PhaseStarted {
+			if phase == PhaseStarted {
 				s.setPhase(ctx, depID, rank, PhaseStopping)
 			}
+			cmdID, _ := id.New()
+			s.inflightMark(cmdID, depID, rank, "stop")
+			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_STOP, depID, runID, rank, nil)
 		}
 	}
 }
@@ -1360,6 +1426,10 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 	c, ok := s.inflightTake(cr.CommandId)
 	if !ok {
 		return // not ours (library/peers) or already processed
+	}
+	if c.Op == "repository-update-fetch" {
+		s.completeRepositoryUpdateFetch(cr.CommandId, cr.Ok, cr.Error)
+		return
 	}
 	depID, rank := c.DepID, c.Rank
 	runID := s.runIDFor(ctx, depID)
@@ -1484,11 +1554,24 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 		}
 		s.dispatchNext(ctx, depID, rank, runID, pl)
 	case "inspect":
-		if !cr.Ok && isContainerMissing(cr.Error) && desired == "running" {
-			// Container vanished while desired=running: restart the
-			// full sequence for this rank.
-			s.setPhase(ctx, depID, rank, PhaseNone)
-			s.dispatchNext(ctx, depID, rank, runID, pl)
+		if cr.Ok {
+			s.OnStateUpdate(ctx, pl.NodeID, &agentv1.StateUpdate{
+				DeploymentId:      depID,
+				ContainerId:       cr.ContainerId,
+				State:             cr.ContainerState,
+				Rank:              rank,
+				DiagnosticMessage: cr.Error,
+				ExitCode:          cr.ExitCode,
+				OomKilled:         cr.OomKilled,
+			})
+		} else if isContainerMissing(cr.Error) {
+			s.OnStateUpdate(ctx, pl.NodeID, &agentv1.StateUpdate{
+				DeploymentId:      depID,
+				State:             "missing",
+				Rank:              rank,
+				DiagnosticCode:    "container.missing",
+				DiagnosticMessage: cr.Error,
+			})
 		}
 	case "stop":
 		missing := !cr.Ok && isContainerMissing(cr.Error)
@@ -2008,7 +2091,7 @@ func (s *Service) OnTransferResult(ctx context.Context, transferID, msg string) 
 }
 
 func (s *Service) failDispatch(ctx context.Context, depID string, rank int32, runID, code, message string) {
-	d := diag.Error(code, fmt.Sprintf("rank %d: %s", rank, message)).Res(depID)
+	d := diag.Error(code, fmt.Sprintf("rank %d: %s", rank, message)).Res(fmt.Sprintf("rank:%d", rank))
 	s.noteDispatch(ctx, depID, d)
 	if row, err := s.q.GetDeployment(ctx, depID); err == nil {
 		_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
@@ -2027,7 +2110,7 @@ func (s *Service) noteDispatch(ctx context.Context, depID string, d diag.Diagnos
 		return
 	}
 	existing := diag.Decode(row.Diagnostics)
-	existing = append(existing, d)
+	existing = diag.Upsert(existing, d)
 	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
 		ObservedState: row.ObservedState,
 		Diagnostics:   diag.Encode(existing),
@@ -2062,6 +2145,10 @@ func (s *Service) Converge(ctx context.Context, nodeID string) {
 			continue
 		}
 		if d.ObservedState == "stopped" && d.DesiredState == "stopped" {
+			_ = s.q.ClearStoppedDeploymentEndpoint(ctx, db.ClearStoppedDeploymentEndpointParams{
+				Diagnostics: diag.Encode(diag.Compact(diag.Decode(d.Diagnostics))),
+				ID:          d.ID,
+			})
 			continue
 		}
 		ps := ParsePlacementSet(d.Placement)
@@ -2077,6 +2164,9 @@ func (s *Service) Converge(ctx context.Context, nodeID string) {
 			if e := ps.EntryFor(rank); e != nil {
 				s.dispatchNext(ctx, d.ID, rank, runID, *e)
 			}
+		}
+		if d.DesiredState == "stopped" {
+			s.checkStopComplete(ctx, d.ID, runID)
 		}
 	}
 }
@@ -2116,7 +2206,7 @@ func (s *Service) MarkNodeOffline(ctx context.Context, nodeID string) {
 			observed = "degraded"
 		}
 		diagnostics := diag.Decode(deployment.Diagnostics)
-		diagnostics = append(diagnostics, diag.Error(
+		diagnostics = diag.Upsert(diagnostics, diag.Error(
 			"agent.offline", fmt.Sprintf("node %s offline; ranks %v unresolved", nodeID, ranks),
 		).Res(nodeID))
 		endpoint := deployment.Endpoint
@@ -2216,6 +2306,76 @@ func mapObserved(state, diagnostic string) (observed string, d diag.Diagnostic) 
 	}
 }
 
+func terminalWorkloadState(state string) bool {
+	switch state {
+	case "exited", "dead", "missing":
+		return true
+	default:
+		return false
+	}
+}
+
+func workloadFailure(su *agentv1.StateUpdate) (code, message string) {
+	code = "workload." + su.State
+	if su.OomKilled {
+		code = "workload.oom_killed"
+	}
+	parts := []string{fmt.Sprintf("rank %d", su.Rank)}
+	if su.ContainerId != "" {
+		parts = append(parts, fmt.Sprintf("container %s", su.ContainerId))
+	}
+	parts = append(parts, fmt.Sprintf("state=%s", su.State))
+	if su.State == "exited" || su.State == "dead" {
+		parts = append(parts, fmt.Sprintf("exit_code=%d", su.ExitCode))
+	}
+	parts = append(parts, fmt.Sprintf("oom_killed=%t", su.OomKilled))
+	if su.DiagnosticMessage != "" {
+		parts = append(parts, fmt.Sprintf("error=%s", su.DiagnosticMessage))
+	}
+	return code, strings.Join(parts, "; ")
+}
+
+func (s *Service) failWorkload(ctx context.Context, row db.GetDeploymentRow, su *agentv1.StateUpdate) {
+	code, message := workloadFailure(su)
+	resource := fmt.Sprintf("rank:%d", su.Rank)
+	diagnostics := diag.Upsert(
+		diag.Decode(row.Diagnostics),
+		diag.Error(code, message).Res(resource),
+	)
+	if err := s.q.SetDeploymentStopping(ctx, db.SetDeploymentStoppingParams{
+		Diagnostics: diag.Encode(diagnostics),
+		ID:          row.ID,
+	}); err != nil {
+		return
+	}
+
+	s.setRankState(row.ID, su.Rank, su.State)
+	s.setPhase(ctx, row.ID, su.Rank, PhaseStopped)
+
+	runID := ""
+	if row.RunID.Valid {
+		runID = row.RunID.String
+		if run, err := s.runs.Get(ctx, runID); err == nil && !runs.State(run.State).Terminal() {
+			_ = s.runs.SetState(ctx, runID, runs.Failed, code, message)
+		}
+	}
+
+	placements := ParsePlacementSet(row.Placement)
+	for _, rank := range placements.AllRanks() {
+		if rank == su.Rank {
+			continue
+		}
+		if placement := placements.EntryFor(rank); placement != nil {
+			s.dispatchNext(ctx, row.ID, rank, runID, *placement)
+		}
+	}
+	s.checkStopComplete(ctx, row.ID, runID)
+	s.bus.Publish(ctx, "deployment.stopping", row.ID, mustJSON(map[string]any{
+		"deployment_id": row.ID,
+		"reason":        code,
+	}))
+}
+
 // OnStateUpdate applies one agent state report to its deployment.
 func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.StateUpdate) {
 	if su.DeploymentId == "" {
@@ -2223,6 +2383,20 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	}
 	row, err := s.q.GetDeployment(ctx, su.DeploymentId)
 	if err != nil {
+		return
+	}
+	if row.DesiredState == "running" && terminalWorkloadState(su.State) {
+		s.failWorkload(ctx, row, su)
+		return
+	}
+	if row.DesiredState == "stopped" && terminalWorkloadState(su.State) {
+		s.setRankState(row.ID, su.Rank, su.State)
+		s.setPhase(ctx, row.ID, su.Rank, PhaseStopped)
+		runID := ""
+		if row.RunID.Valid {
+			runID = row.RunID.String
+		}
+		s.checkStopComplete(ctx, row.ID, runID)
 		return
 	}
 	_, d := mapObserved(su.State, su.DiagnosticMessage)
@@ -2233,14 +2407,14 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	s.setRankState(row.ID, su.Rank, rankState)
 	observed := s.aggregateRankState(row.ID, ParsePlacementSet(row.Placement))
 	existing := diag.Decode(row.Diagnostics)
-	existing = append(existing, d)
+	existing = diag.Upsert(existing, d.Res(fmt.Sprintf("rank:%d", su.Rank)))
 	endpoint := row.Endpoint
 	if su.EndpointPort != 0 && su.Rank == 0 {
 		if n, nerr := s.q.GetNode(ctx, nodeID); nerr == nil && n.Inventory.Valid {
 			var inv inventory.Inventory
 			if json.Unmarshal([]byte(n.Inventory.String), &inv) == nil {
 				if addr := firstNonLoopback(&inv); addr != "" {
-					endpoint = sql.NullString{String: fmt.Sprintf("%s:%d", addr, su.EndpointPort), Valid: true}
+					endpoint = sql.NullString{String: net.JoinHostPort(addr, strconv.Itoa(int(su.EndpointPort))), Valid: true}
 				}
 			}
 		}
@@ -2274,14 +2448,6 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 			s.dispatchNext(ctx, row.ID, su.Rank, runID, s.placementFor(ctx, row.ID, su.Rank))
 		}
 	case "running":
-		if observed == "stopped" || observed == "failed" {
-			run, err := s.runs.Get(ctx, runID)
-			if err == nil && !runs.State(run.State).Terminal() {
-				_ = s.runs.SetState(ctx, runID, runs.Failed, "workload.exited",
-					fmt.Sprintf("rank %d: container %s", su.Rank, su.State))
-				_ = s.runs.ReleaseLeasesFor(ctx, "deployment", row.ID)
-			}
-		}
 	}
 }
 
@@ -2301,11 +2467,21 @@ func (s *Service) checkStopComplete(ctx context.Context, depID, runID string) {
 		}
 	}
 	if runID != "" {
-		_ = s.runs.SetState(ctx, runID, runs.Cancelled, "", "")
+		if run, getErr := s.runs.Get(ctx, runID); getErr == nil && !runs.State(run.State).Terminal() {
+			_ = s.runs.SetState(ctx, runID, runs.Cancelled, "", "")
+		}
+	}
+	diagnostics := diag.Encode(diag.Compact(diag.Decode(row.Diagnostics)))
+	if err := s.q.SetDeploymentStopping(ctx, db.SetDeploymentStoppingParams{
+		Diagnostics: diagnostics,
+		ID:          depID,
+	}); err != nil {
+		return
 	}
 	_ = s.runs.ReleaseLeasesFor(ctx, "deployment", depID)
 	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
 		ObservedState: "stopped",
+		Diagnostics:   diagnostics,
 		ID:            depID,
 	})
 	s.bus.Publish(ctx, "deployment.stopped", depID, mustJSON(map[string]any{"deployment_id": depID}))
@@ -2313,37 +2489,53 @@ func (s *Service) checkStopComplete(ctx context.Context, depID, runID string) {
 
 // ---------------------------------------------------------------- stop
 
-// Stop issues STOP per rank (online nodes only) and cancels the run.
-// Offline ranks keep their leases and are re-driven on reconnect; the
-// deployment stays `stopping` until every rank confirms.
+// Stop drives every rank toward stopped. Offline ranks keep their leases and
+// are re-driven by an explicit retry or reconnect until physically confirmed.
 func (s *Service) Stop(ctx context.Context, depID string) (*Deployment, error) {
 	row, err := s.q.GetDeployment(ctx, depID)
 	if err != nil {
 		return nil, ErrUnknown
 	}
-	if row.DesiredState != "running" {
+	switch row.DesiredState {
+	case "stopped":
+		if row.ObservedState == "stopped" {
+			return s.Get(ctx, depID)
+		}
+	case "running":
+	default:
 		return nil, fmt.Errorf("%w: deployment is %s", ErrState, row.DesiredState)
 	}
-	_ = s.q.UpdateDeploymentState(ctx, db.UpdateDeploymentStateParams{
-		DesiredState: "stopped", ID: depID,
-	})
-	if row.RunID.Valid {
-		_ = s.runs.Cancel(ctx, row.RunID.String)
+
+	if err := s.q.SetDeploymentStopping(ctx, db.SetDeploymentStoppingParams{
+		Diagnostics: row.Diagnostics,
+		ID:          depID,
+	}); err != nil {
+		return nil, err
 	}
+
 	runID := ""
 	if row.RunID.Valid {
 		runID = row.RunID.String
 	}
-	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
-		ObservedState: "stopping",
-		ID:            depID,
-	})
-	ps := ParsePlacementSet(row.Placement)
-	for _, rank := range ps.AllRanks() {
-		if e := ps.EntryFor(rank); e != nil {
-			s.dispatchNext(ctx, depID, rank, runID, *e)
+	if row.DesiredState == "running" && runID != "" {
+		run, getErr := s.runs.Get(ctx, runID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if !runs.State(run.State).Terminal() {
+			if err := s.runs.Cancel(ctx, runID); err != nil {
+				return nil, err
+			}
 		}
 	}
+
+	placements := ParsePlacementSet(row.Placement)
+	for _, rank := range placements.AllRanks() {
+		if placement := placements.EntryFor(rank); placement != nil {
+			s.dispatchNext(ctx, depID, rank, runID, *placement)
+		}
+	}
+	s.checkStopComplete(ctx, depID, runID)
 	s.bus.Publish(ctx, "deployment.stopping", depID, mustJSON(map[string]any{"deployment_id": depID}))
 	return s.Get(ctx, depID)
 }
@@ -2405,54 +2597,33 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 		tx.Rollback()
 		return nil, err
 	}
-	if err := qtx.UpdateDeploymentRunID(ctx, db.UpdateDeploymentRunIDParams{
-		RunID: sql.NullString{String: runIDStr, Valid: true},
-		ID:    depID,
-	}); err != nil {
-		tx.Rollback()
-		return nil, err
+	ps = placementSetFromPlan(plan)
+	var fabric sql.NullString
+	if plan.Fabric != nil {
+		fabric = sql.NullString{String: *plan.Fabric, Valid: true}
 	}
-	endpoint := ""
+	var endpoint sql.NullString
 	if plan.Endpoint.Host != "" {
-		endpoint = fmt.Sprintf("%s:%d", plan.Endpoint.Host, plan.Endpoint.Port)
-	}
-	if endpoint != "" {
-		if err := qtx.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
-			ObservedState: "unknown",
-			Endpoint:      sql.NullString{String: endpoint, Valid: true},
-			ID:            depID,
-		}); err != nil {
-			tx.Rollback()
-			return nil, err
+		endpoint = sql.NullString{
+			String: net.JoinHostPort(plan.Endpoint.Host, strconv.Itoa(int(plan.Endpoint.Port))),
+			Valid:  true,
 		}
-	}
-	if endpoint != "" {
-		if err := qtx.UpdateDeploymentEndpointMetadata(ctx, db.UpdateDeploymentEndpointMetadataParams{
-			EndpointModel: sql.NullString{String: plan.Endpoint.Model, Valid: plan.Endpoint.Model != ""},
-			EndpointPath:  sql.NullString{String: plan.Endpoint.Path, Valid: plan.Endpoint.Path != ""},
-			ID:            depID,
-		}); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	}
-	// Desired running plus an empty dispatch document restarts the state
-	// machine from PhaseNone for every rank.
-	if err := qtx.UpdateDeploymentState(ctx, db.UpdateDeploymentStateParams{
-		DesiredState: "running", ID: depID,
-	}); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-	if err := qtx.SetDeploymentDispatch(ctx, db.SetDeploymentDispatchParams{
-		Dispatch: "{}", ID: depID,
-	}); err != nil {
-		tx.Rollback()
-		return nil, err
 	}
 	if err := s.runs.AcquireLeases(ctx, qtx, "deployment", depID, plan.LeaseResources()); err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	if err := qtx.RestartDeployment(ctx, db.RestartDeploymentParams{
+		RunID:         sql.NullString{String: runIDStr, Valid: true},
+		Placement:     ps.Marshal(),
+		Fabric:        fabric,
+		Endpoint:      endpoint,
+		EndpointModel: sql.NullString{String: plan.Endpoint.Model, Valid: plan.Endpoint.Model != ""},
+		EndpointPath:  sql.NullString{String: plan.Endpoint.Path, Valid: plan.Endpoint.Path != ""},
+		ID:            depID,
+	}); err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -2531,9 +2702,8 @@ func (s *Service) Verify(ctx context.Context, depID string) (*Deployment, error)
 	}
 	hostPort := row.Endpoint.String
 	if probe.HTTPGet.Port != 0 {
-		parts := strings.SplitN(hostPort, ":", 2)
-		if len(parts) == 2 {
-			hostPort = fmt.Sprintf("%s:%d", parts[0], probe.HTTPGet.Port)
+		if host, _, splitErr := net.SplitHostPort(hostPort); splitErr == nil {
+			hostPort = net.JoinHostPort(host, strconv.Itoa(int(probe.HTTPGet.Port)))
 		}
 	}
 	path := probe.HTTPGet.Path
@@ -2617,7 +2787,7 @@ func (s *Service) setVerifyResult(ctx context.Context, depID string, ok bool, de
 		d = diag.Error("verify.failed", detail)
 	}
 	existing := diag.Decode(row.Diagnostics)
-	existing = append(existing, d)
+	existing = diag.Upsert(existing, d)
 	caps := row.ModelCapabilities
 	if capabilities != "" {
 		caps = sql.NullString{String: capabilities, Valid: true}

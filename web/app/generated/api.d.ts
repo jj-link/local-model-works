@@ -69,6 +69,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/browser-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a local one-use token for a session cookie */
+        post: operations["browserLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/completions": {
         parameters: {
             query?: never;
@@ -936,13 +953,6 @@ export interface components {
             /** @description Vendor-neutral capability field, e.g. nvidia, amd, intel */
             vendor: string;
         };
-        AffectedHardware: {
-            deployment_ids: string[];
-            node_id: string;
-            node_name: string;
-            node_status: string;
-            state: string;
-        };
         Artifact: {
             digest?: string | null;
             /** Format: uuid */
@@ -1008,6 +1018,9 @@ export interface components {
             tokens_per_second?: number;
             total_tokens?: number;
             wall_seconds?: number;
+        };
+        BrowserLoginRequest: {
+            token: string;
         };
         CertificateInfo: {
             /** Format: date-time */
@@ -1497,6 +1510,12 @@ export interface components {
         RecipeImport: {
             source: components["schemas"]["RecipeSource"];
         };
+        RecipeInstalledDevice: {
+            installed_digests: string[];
+            node_id: string;
+            node_name: string;
+            node_status: string;
+        };
         RecipeRepository: {
             /** Format: date-time */
             created_at: string;
@@ -1505,6 +1524,7 @@ export interface components {
             head_checked_at?: string;
             id: string;
             installed_commit?: string;
+            installed_devices: components["schemas"]["RecipeInstalledDevice"][];
             observed_head_commit?: string;
             observed_head_tree?: string;
             source_path: string;
@@ -1517,9 +1537,7 @@ export interface components {
             updated_at: string;
             versions: components["schemas"]["RecipeRepositoryVersion"][];
         };
-        RecipeRepositoryDetail: components["schemas"]["RecipeRepository"] & {
-            affected_hardware: components["schemas"]["AffectedHardware"][];
-        };
+        RecipeRepositoryDetail: components["schemas"]["RecipeRepository"];
         RecipeRepositoryUpdatePlanRequest: {
             expected_head_commit: string;
         };
@@ -1553,25 +1571,20 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
+        RecipeUpdateDevice: {
+            installed_digests: string[];
+            node_id: string;
+            node_name: string;
+            node_status: string;
+        };
         RecipeUpdatePlan: {
             diagnostics: components["schemas"]["Diagnostic"][];
+            installed_devices: components["schemas"]["RecipeUpdateDevice"][];
             plan_digest: string;
             ready: boolean;
-            targets: components["schemas"]["RecipeUpdateTarget"][];
+            running_deployments: components["schemas"]["RecipeUpdateRunningDeployment"][];
         };
-        RecipeUpdateStatus: {
-            candidate_revision?: string;
-            /** Format: date-time */
-            checked_at: string;
-            error?: string;
-            installed_revision: string;
-            path?: string;
-            remote: string;
-            /** @enum {string} */
-            state: "current" | "available" | "error";
-            tracking_ref: string;
-        };
-        RecipeUpdateTarget: {
+        RecipeUpdateRunningDeployment: {
             current_step: number;
             error_code?: string;
             error_message?: string;
@@ -1587,6 +1600,18 @@ export interface components {
             /** @enum {string} */
             status: "pending" | "running" | "waiting" | "succeeded" | "failed";
             total_steps: number;
+        };
+        RecipeUpdateStatus: {
+            candidate_revision?: string;
+            /** Format: date-time */
+            checked_at: string;
+            error?: string;
+            installed_revision: string;
+            path?: string;
+            remote: string;
+            /** @enum {string} */
+            state: "current" | "available" | "error";
+            tracking_ref: string;
         };
         Run: {
             /** Format: date-time */
@@ -1938,6 +1963,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BenchmarkResult"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    browserLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Session cookie and CSRF token issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             401: components["responses"]["Unauthorized"];

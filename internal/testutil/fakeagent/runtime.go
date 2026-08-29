@@ -14,12 +14,14 @@ import (
 
 // FakeContainer is one in-memory container.
 type FakeContainer struct {
-	ID       string
-	Name     string
-	Spec     runtime.ContainerSpec
-	State    string // created | running | exited
-	ExitCode int
-	logs     map[string]*logBuf
+	ID        string
+	Name      string
+	Spec      runtime.ContainerSpec
+	State     string // created | running | exited
+	ExitCode  int
+	Error     string
+	OOMKilled bool
+	logs      map[string]*logBuf
 }
 
 // logBuf is a growing byte buffer with blocking readers (agent tailer).
@@ -218,7 +220,8 @@ func (rt *FakeRuntime) Inspect(ctx context.Context, idOrName string) (*runtime.C
 		return nil, fmt.Errorf("Error: No such container: %s", idOrName)
 	}
 	return &runtime.ContainerInfo{
-		ID: c.ID, Name: c.Name, State: c.State, ExitCode: c.ExitCode, Labels: c.Spec.Labels,
+		ID: c.ID, Name: c.Name, State: c.State, ExitCode: c.ExitCode, Error: c.Error,
+		OOMKilled: c.OOMKilled, Labels: c.Spec.Labels,
 	}, nil
 }
 
@@ -230,7 +233,8 @@ func (rt *FakeRuntime) ListByLabel(ctx context.Context, key, value string) ([]ru
 	for _, c := range rt.byName {
 		if c.Spec.Labels[key] == value {
 			out = append(out, runtime.ContainerInfo{
-				ID: c.ID, Name: c.Name, State: c.State, ExitCode: c.ExitCode, Labels: c.Spec.Labels,
+				ID: c.ID, Name: c.Name, State: c.State, ExitCode: c.ExitCode, Error: c.Error,
+				OOMKilled: c.OOMKilled, Labels: c.Spec.Labels,
 			})
 		}
 	}
@@ -320,6 +324,25 @@ func (rt *FakeRuntime) RemoveExternally(name string) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	delete(rt.byName, name)
+}
+
+// ExitExternally transitions a running container to a terminal state without
+// using Runtime.Stop, simulating a workload crash observed by the monitor.
+func (rt *FakeRuntime) ExitExternally(name string, exitCode int, oomKilled bool, errMessage string) {
+	rt.mu.Lock()
+	container := rt.get(name)
+	if container == nil {
+		rt.mu.Unlock()
+		return
+	}
+	container.State = "exited"
+	container.ExitCode = exitCode
+	container.OOMKilled = oomKilled
+	container.Error = errMessage
+	for _, logs := range container.logs {
+		logs.Close()
+	}
+	rt.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------------

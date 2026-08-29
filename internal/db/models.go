@@ -52,6 +52,13 @@ type BenchmarkResult struct {
 	CreatedAt        string         `json:"created_at"`
 }
 
+type BrowserLoginToken struct {
+	TokenHash string `json:"token_hash"`
+	Username  string `json:"username"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 type Deployment struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`

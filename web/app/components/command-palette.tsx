@@ -73,7 +73,7 @@ export function CommandPalette({
     const base: PaletteItem[] = [
       act("enroll", "Enroll node", Server),
       act("import-recipe", "Install recipe", FolderPlus),
-      act("plan-deployment", "Plan deployment", Rocket),
+      act("plan-deployment", "Launch deployment", Rocket),
       act("benchmark", "Run benchmark", Gauge),
     ];
     const logItems: PaletteItem[] = [];

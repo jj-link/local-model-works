@@ -146,13 +146,13 @@ export function PlanDeploymentDialog({
           ? { placements: plan.placements.map((placement) => ({ node_id: placement.node_id, rank: placement.rank })) }
           : {}),
       });
-      toast.success("Deployment created", {
+      toast.success("Deployment launching", {
         description: `${deployment.recipe_name} @ ${deployment.profile}`,
       });
       onOpenChange(false);
       navigate(`/serving/deployments/${deployment.id}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "create failed");
+      toast.error(error instanceof Error ? error.message : "launch failed");
     }
   };
 
@@ -160,9 +160,9 @@ export function PlanDeploymentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-4xl max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:overflow-auto max-sm:rounded-none">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl font-semibold">Choose hardware</DialogTitle>
+          <DialogTitle className="font-display text-xl font-semibold">Launch deployment</DialogTitle>
           <DialogDescription>
-            Select the recipe contract, optional profile and variants, then preview real placement before creating the deployment.
+            Select the recipe contract, optional profile and variants, then preview real placement before launch.
           </DialogDescription>
         </DialogHeader>
 
@@ -316,12 +316,12 @@ export function PlanDeploymentDialog({
             onClick={() => void preview()}
             disabled={!recipeDigest || planMutation.isPending}
           >
-            {planMutation.isPending ? "Planning…" : plan ? "Re-plan" : "Preview plan"}
+            {planMutation.isPending ? "Planning…" : "Preview placement"}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button onClick={() => void create()} disabled={!plan?.ready || createMutation.isPending}>
-              {createMutation.isPending ? "Creating…" : "Create deployment"}
+              {createMutation.isPending ? "Launching…" : "Launch"}
             </Button>
           </div>
         </DialogFooter>

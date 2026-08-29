@@ -60,6 +60,7 @@ type Deps struct {
 type Server struct {
 	cfg              config.Server
 	ctx              context.Context
+	db               *sql.DB
 	q                *db.Queries
 	ca               *ca.CA
 	sessions         *auth.Sessions
@@ -137,6 +138,7 @@ func New(d Deps) *Server {
 	s := &Server{
 		cfg:              d.Cfg,
 		ctx:              d.Ctx,
+		db:               d.DB,
 		q:                d.Q,
 		ca:               d.CA,
 		sessions:         d.Sessions,
@@ -195,6 +197,7 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/v1", func(v chi.Router) {
 		v.Get("/healthz", s.handleHealth)
 		v.Post("/login", s.handleLogin)
+		v.Post("/browser-login", s.handleBrowserLogin)
 		v.With(s.requireAuth).Group(func(a chi.Router) {
 			a.Post("/logout", s.handleLogout)
 			a.Get("/session", s.handleSession)

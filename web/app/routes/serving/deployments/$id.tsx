@@ -1,6 +1,6 @@
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
-import { Play, Power, ShieldCheck, Trash2 } from "lucide-react";
+import { Play, Power, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
 import {
@@ -18,6 +18,7 @@ import {
   useStartDeployment,
   useDeleteDeployment,
   useNodes,
+  useRun,
 } from "~/lib/queries";
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
@@ -44,7 +45,9 @@ const LOG_ACTIVE = new Set(["preparing", "starting", "healthy", "degraded", "sto
 /** Deployment detail: placements, endpoint, live logs, diagnostics, metadata. */
 export default function DeploymentDetailRoute() {
   const id = useTailPathParam();
+  const navigate = useNavigate();
   const { data: d, isPending, isError, error, refetch } = useDeployment(id);
+  const { data: run } = useRun(d?.run_id ?? undefined);
   const verify = useVerifyDeployment();
   const stop = useStopDeployment();
   const start = useStartDeployment();
@@ -67,6 +70,9 @@ export default function DeploymentDetailRoute() {
 
   const nodeName = (nid: string) => nodes?.find((n) => n.id === nid)?.display_name ?? shortId(nid);
   const url = endpointUrl(d.endpoint);
+  const fullyStopped = d.desired_state === "stopped" && d.observed_state === "stopped";
+  const retryStop = d.desired_state === "stopped" && d.observed_state !== "stopped";
+  const runFailed = run?.state === "failed";
 
   return (
     <div className="grid gap-4">
@@ -80,83 +86,97 @@ export default function DeploymentDetailRoute() {
             </span>
             <span className="font-mono text-[11px] text-muted">profile {d.profile}</span>
           </div>
-          <div className="flex items-center gap-3">
-            <StatusDot state={d.desired_state === "running" ? "online" : "stopped"} label={d.desired_state} />
-            <StatusDot state={d.observed_state} pulse={LOG_ACTIVE.has(d.observed_state)} />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="lmw-label">desired</span>
+              <StatusDot state={d.desired_state === "running" ? "online" : "stopped"} label={d.desired_state} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="lmw-label">observed</span>
+              <StatusDot state={d.observed_state} label={d.observed_state} pulse={LOG_ACTIVE.has(d.observed_state)} />
+            </div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={verify.isPending}
-              onClick={() =>
-                verify
-                  .mutateAsync(d.id)
-                  .then((r) => toast.success("Verification started", { description: `observed: ${r.observed_state}` }))
-                  .catch((e) => toast.error(e instanceof Error ? e.message : "verify failed"))
-              }
-            >
-              <ShieldCheck aria-hidden /> {verify.isPending ? "verifying…" : "verify"}
-            </Button>
-            {d.observed_state === "stopped" && d.desired_state === "stopped" ? (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {d.observed_state === "healthy" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={verify.isPending}
+                onClick={() =>
+                  verify
+                    .mutateAsync(d.id)
+                    .then((result) => toast.success("Verification started", { description: `observed: ${result.observed_state}` }))
+                    .catch((cause) => toast.error(cause instanceof Error ? cause.message : "verify failed"))
+                }
+              >
+                <ShieldCheck aria-hidden /> {verify.isPending ? "Verifying…" : "Verify"}
+              </Button>
+            ) : null}
+            {fullyStopped ? (
               <ConfirmDialog
-                title="Start deployment"
-                description={`Restart ${d.recipe_name ?? d.id}? Leases are re-acquired and the workload is re-dispatched.`}
-                confirmLabel="start"
+                title={runFailed ? "Restart deployment" : "Start deployment"}
+                description={`${runFailed ? "Restart" : "Start"} ${d.recipe_name ?? d.id}? Leases are re-acquired and the workload is dispatched as a new run.`}
+                confirmLabel={runFailed ? "restart" : "start"}
                 onConfirm={async () => {
                   try {
-                    const r = await start.mutateAsync(d.id);
-                    toast.success("Deployment starting", { description: `observed: ${r.observed_state}` });
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "start failed");
-                    throw e;
+                    const result = await start.mutateAsync(d.id);
+                    toast.success(runFailed ? "Deployment restarting" : "Deployment starting", {
+                      description: `observed: ${result.observed_state}`,
+                    });
+                  } catch (cause) {
+                    toast.error(cause instanceof Error ? cause.message : "start failed");
+                    throw cause;
                   }
                 }}
               >
                 <span className="inline-flex items-center gap-1.5">
-                  <Play aria-hidden /> start
+                  {runFailed ? <RotateCcw aria-hidden /> : <Play aria-hidden />}
+                  {runFailed ? "Restart" : "Start"}
                 </span>
               </ConfirmDialog>
             ) : null}
-            {d.desired_state === "running" ? (
+            {d.desired_state === "running" || retryStop ? (
               <ConfirmDialog
-                title="Stop deployment"
-                description={`Stop ${d.recipe_name ?? d.id}? The endpoint becomes unavailable; placements are released after the workload exits.`}
-                confirmLabel="stop"
+                title={retryStop ? "Retry stop" : "Stop deployment"}
+                description={`${retryStop ? "Retry stopping" : "Stop"} ${d.recipe_name ?? d.id}? Placements remain reserved until every workload rank is confirmed down.`}
+                confirmLabel={retryStop ? "retry stop" : "stop"}
                 tone="destructive"
                 onConfirm={async () => {
                   try {
-                    const r = await stop.mutateAsync(d.id);
-                    toast.success("Deployment stopping", { description: `observed: ${r.observed_state}` });
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "stop failed");
-                    throw e;
+                    const result = await stop.mutateAsync(d.id);
+                    toast.success(retryStop ? "Stop retried" : "Deployment stopping", {
+                      description: `observed: ${result.observed_state}`,
+                    });
+                  } catch (cause) {
+                    toast.error(cause instanceof Error ? cause.message : "stop failed");
+                    throw cause;
                   }
                 }}
               >
                 <span className="inline-flex items-center gap-1.5">
-                  <Power aria-hidden /> stop
+                  <Power aria-hidden /> {retryStop ? "Retry stop" : "Stop"}
                 </span>
               </ConfirmDialog>
             ) : null}
-            {d.observed_state === "stopped" && d.desired_state === "stopped" ? (
+            {fullyStopped ? (
               <ConfirmDialog
                 title="Delete deployment"
-                description={`Delete ${d.recipe_name ?? d.id}? This frees its recipe/placement slot. The deployment and its run records are removed.`}
+                description={`Delete ${d.recipe_name ?? d.id}? This permanently removes the deployment and its run records.`}
                 confirmLabel="delete"
                 tone="destructive"
                 onConfirm={async () => {
                   try {
                     await del.mutateAsync(d.id);
                     toast.success("Deployment deleted");
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "delete failed");
-                    throw e;
+                    navigate("/serving/deployments");
+                  } catch (cause) {
+                    toast.error(cause instanceof Error ? cause.message : "delete failed");
+                    throw cause;
                   }
                 }}
               >
                 <span className="inline-flex items-center gap-1.5">
-                  <Trash2 aria-hidden /> delete
+                  <Trash2 aria-hidden /> Delete
                 </span>
               </ConfirmDialog>
             ) : null}
@@ -229,6 +249,26 @@ export default function DeploymentDetailRoute() {
           </div>
         </div>
       </div>
+
+      {runFailed && d.run_id ? (
+        <Section title="Last failure" className="border-fault/50">
+          <div className="grid gap-2 p-3 font-mono text-xs">
+            <p>
+              <span className="text-muted">error code</span>{" "}
+              <span className="text-fault">{run?.error_code ?? "workload.failed"}</span>
+            </p>
+            <p className="max-w-4xl whitespace-pre-wrap text-foreground">
+              {run?.error_message ?? "The serving workload stopped unexpectedly."}
+            </p>
+            <Link
+              to={`/runs/${d.run_id}`}
+              className="control w-fit font-medium text-primary underline-offset-2 hover:underline"
+            >
+              View crash logs
+            </Link>
+          </div>
+        </Section>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Section title="placements">

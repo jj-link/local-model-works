@@ -227,6 +227,90 @@ func (e RecipeTrustRequestTrustState) Valid() bool {
 	}
 }
 
+// Defines values for RecipeUpdateRunningDeploymentPhase.
+const (
+	RecipeUpdateRunningDeploymentPhaseFetching         RecipeUpdateRunningDeploymentPhase = "fetching"
+	RecipeUpdateRunningDeploymentPhaseInstallingRecipe RecipeUpdateRunningDeploymentPhase = "installing_recipe"
+	RecipeUpdateRunningDeploymentPhasePreparing        RecipeUpdateRunningDeploymentPhase = "preparing"
+	RecipeUpdateRunningDeploymentPhasePulling          RecipeUpdateRunningDeploymentPhase = "pulling"
+	RecipeUpdateRunningDeploymentPhaseReady            RecipeUpdateRunningDeploymentPhase = "ready"
+	RecipeUpdateRunningDeploymentPhaseRestored         RecipeUpdateRunningDeploymentPhase = "restored"
+	RecipeUpdateRunningDeploymentPhaseRestoringOld     RecipeUpdateRunningDeploymentPhase = "restoring_old"
+	RecipeUpdateRunningDeploymentPhaseRollbackFailed   RecipeUpdateRunningDeploymentPhase = "rollback_failed"
+	RecipeUpdateRunningDeploymentPhaseRollingBack      RecipeUpdateRunningDeploymentPhase = "rolling_back"
+	RecipeUpdateRunningDeploymentPhaseSkipped          RecipeUpdateRunningDeploymentPhase = "skipped"
+	RecipeUpdateRunningDeploymentPhaseStarting         RecipeUpdateRunningDeploymentPhase = "starting"
+	RecipeUpdateRunningDeploymentPhaseStoppingOld      RecipeUpdateRunningDeploymentPhase = "stopping_old"
+	RecipeUpdateRunningDeploymentPhaseValidating       RecipeUpdateRunningDeploymentPhase = "validating"
+	RecipeUpdateRunningDeploymentPhaseVerifying        RecipeUpdateRunningDeploymentPhase = "verifying"
+	RecipeUpdateRunningDeploymentPhaseWaitingOffline   RecipeUpdateRunningDeploymentPhase = "waiting_offline"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateRunningDeploymentPhase enum.
+func (e RecipeUpdateRunningDeploymentPhase) Valid() bool {
+	switch e {
+	case RecipeUpdateRunningDeploymentPhaseFetching:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseInstallingRecipe:
+		return true
+	case RecipeUpdateRunningDeploymentPhasePreparing:
+		return true
+	case RecipeUpdateRunningDeploymentPhasePulling:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseReady:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRestored:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRestoringOld:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRollbackFailed:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRollingBack:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseSkipped:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseStarting:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseStoppingOld:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseValidating:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseVerifying:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseWaitingOffline:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeUpdateRunningDeploymentStatus.
+const (
+	RecipeUpdateRunningDeploymentStatusFailed    RecipeUpdateRunningDeploymentStatus = "failed"
+	RecipeUpdateRunningDeploymentStatusPending   RecipeUpdateRunningDeploymentStatus = "pending"
+	RecipeUpdateRunningDeploymentStatusRunning   RecipeUpdateRunningDeploymentStatus = "running"
+	RecipeUpdateRunningDeploymentStatusSucceeded RecipeUpdateRunningDeploymentStatus = "succeeded"
+	RecipeUpdateRunningDeploymentStatusWaiting   RecipeUpdateRunningDeploymentStatus = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateRunningDeploymentStatus enum.
+func (e RecipeUpdateRunningDeploymentStatus) Valid() bool {
+	switch e {
+	case RecipeUpdateRunningDeploymentStatusFailed:
+		return true
+	case RecipeUpdateRunningDeploymentStatusPending:
+		return true
+	case RecipeUpdateRunningDeploymentStatusRunning:
+		return true
+	case RecipeUpdateRunningDeploymentStatusSucceeded:
+		return true
+	case RecipeUpdateRunningDeploymentStatusWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecipeUpdateStatusState.
 const (
 	RecipeUpdateStatusStateAvailable RecipeUpdateStatusState = "available"
@@ -242,90 +326,6 @@ func (e RecipeUpdateStatusState) Valid() bool {
 	case RecipeUpdateStatusStateCurrent:
 		return true
 	case RecipeUpdateStatusStateError:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RecipeUpdateTargetPhase.
-const (
-	RecipeUpdateTargetPhaseFetching         RecipeUpdateTargetPhase = "fetching"
-	RecipeUpdateTargetPhaseInstallingRecipe RecipeUpdateTargetPhase = "installing_recipe"
-	RecipeUpdateTargetPhasePreparing        RecipeUpdateTargetPhase = "preparing"
-	RecipeUpdateTargetPhasePulling          RecipeUpdateTargetPhase = "pulling"
-	RecipeUpdateTargetPhaseReady            RecipeUpdateTargetPhase = "ready"
-	RecipeUpdateTargetPhaseRestored         RecipeUpdateTargetPhase = "restored"
-	RecipeUpdateTargetPhaseRestoringOld     RecipeUpdateTargetPhase = "restoring_old"
-	RecipeUpdateTargetPhaseRollbackFailed   RecipeUpdateTargetPhase = "rollback_failed"
-	RecipeUpdateTargetPhaseRollingBack      RecipeUpdateTargetPhase = "rolling_back"
-	RecipeUpdateTargetPhaseSkipped          RecipeUpdateTargetPhase = "skipped"
-	RecipeUpdateTargetPhaseStarting         RecipeUpdateTargetPhase = "starting"
-	RecipeUpdateTargetPhaseStoppingOld      RecipeUpdateTargetPhase = "stopping_old"
-	RecipeUpdateTargetPhaseValidating       RecipeUpdateTargetPhase = "validating"
-	RecipeUpdateTargetPhaseVerifying        RecipeUpdateTargetPhase = "verifying"
-	RecipeUpdateTargetPhaseWaitingOffline   RecipeUpdateTargetPhase = "waiting_offline"
-)
-
-// Valid indicates whether the value is a known member of the RecipeUpdateTargetPhase enum.
-func (e RecipeUpdateTargetPhase) Valid() bool {
-	switch e {
-	case RecipeUpdateTargetPhaseFetching:
-		return true
-	case RecipeUpdateTargetPhaseInstallingRecipe:
-		return true
-	case RecipeUpdateTargetPhasePreparing:
-		return true
-	case RecipeUpdateTargetPhasePulling:
-		return true
-	case RecipeUpdateTargetPhaseReady:
-		return true
-	case RecipeUpdateTargetPhaseRestored:
-		return true
-	case RecipeUpdateTargetPhaseRestoringOld:
-		return true
-	case RecipeUpdateTargetPhaseRollbackFailed:
-		return true
-	case RecipeUpdateTargetPhaseRollingBack:
-		return true
-	case RecipeUpdateTargetPhaseSkipped:
-		return true
-	case RecipeUpdateTargetPhaseStarting:
-		return true
-	case RecipeUpdateTargetPhaseStoppingOld:
-		return true
-	case RecipeUpdateTargetPhaseValidating:
-		return true
-	case RecipeUpdateTargetPhaseVerifying:
-		return true
-	case RecipeUpdateTargetPhaseWaitingOffline:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RecipeUpdateTargetStatus.
-const (
-	RecipeUpdateTargetStatusFailed    RecipeUpdateTargetStatus = "failed"
-	RecipeUpdateTargetStatusPending   RecipeUpdateTargetStatus = "pending"
-	RecipeUpdateTargetStatusRunning   RecipeUpdateTargetStatus = "running"
-	RecipeUpdateTargetStatusSucceeded RecipeUpdateTargetStatus = "succeeded"
-	RecipeUpdateTargetStatusWaiting   RecipeUpdateTargetStatus = "waiting"
-)
-
-// Valid indicates whether the value is a known member of the RecipeUpdateTargetStatus enum.
-func (e RecipeUpdateTargetStatus) Valid() bool {
-	switch e {
-	case RecipeUpdateTargetStatusFailed:
-		return true
-	case RecipeUpdateTargetStatusPending:
-		return true
-	case RecipeUpdateTargetStatusRunning:
-		return true
-	case RecipeUpdateTargetStatusSucceeded:
-		return true
-	case RecipeUpdateTargetStatusWaiting:
 		return true
 	default:
 		return false
@@ -360,15 +360,6 @@ func (e TransferState) Valid() bool {
 	default:
 		return false
 	}
-}
-
-// AffectedHardware defines model for AffectedHardware.
-type AffectedHardware struct {
-	DeploymentIds []string `json:"deployment_ids"`
-	NodeId        string   `json:"node_id"`
-	NodeName      string   `json:"node_name"`
-	NodeStatus    string   `json:"node_status"`
-	State         string   `json:"state"`
 }
 
 // Artifact defines model for Artifact.
@@ -522,6 +513,14 @@ type RecipeImport struct {
 	Source RecipeSource `json:"source"`
 }
 
+// RecipeInstalledDevice defines model for RecipeInstalledDevice.
+type RecipeInstalledDevice struct {
+	InstalledDigests []string `json:"installed_digests"`
+	NodeId           string   `json:"node_id"`
+	NodeName         string   `json:"node_name"`
+	NodeStatus       string   `json:"node_status"`
+}
+
 // RecipeRepository defines model for RecipeRepository.
 type RecipeRepository struct {
 	CreatedAt          time.Time                 `json:"created_at"`
@@ -529,6 +528,7 @@ type RecipeRepository struct {
 	HeadCheckedAt      *time.Time                `json:"head_checked_at,omitempty"`
 	Id                 string                    `json:"id"`
 	InstalledCommit    *string                   `json:"installed_commit,omitempty"`
+	InstalledDevices   []RecipeInstalledDevice   `json:"installed_devices"`
 	ObservedHeadCommit *string                   `json:"observed_head_commit,omitempty"`
 	ObservedHeadTree   *string                   `json:"observed_head_tree,omitempty"`
 	SourcePath         string                    `json:"source_path"`
@@ -542,24 +542,7 @@ type RecipeRepository struct {
 }
 
 // RecipeRepositoryDetail defines model for RecipeRepositoryDetail.
-type RecipeRepositoryDetail struct {
-	AffectedHardware   []AffectedHardware        `json:"affected_hardware"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	CurrentRecipe      *Recipe                   `json:"current_recipe,omitempty"`
-	HeadCheckedAt      *time.Time                `json:"head_checked_at,omitempty"`
-	Id                 string                    `json:"id"`
-	InstalledCommit    *string                   `json:"installed_commit,omitempty"`
-	ObservedHeadCommit *string                   `json:"observed_head_commit,omitempty"`
-	ObservedHeadTree   *string                   `json:"observed_head_tree,omitempty"`
-	SourcePath         string                    `json:"source_path"`
-	SourceUrl          string                    `json:"source_url"`
-	TrackingRef        string                    `json:"tracking_ref"`
-	UpdateAvailable    bool                      `json:"update_available"`
-	UpdateDiagnostic   *string                   `json:"update_diagnostic,omitempty"`
-	UpdateSupported    bool                      `json:"update_supported"`
-	UpdatedAt          time.Time                 `json:"updated_at"`
-	Versions           []RecipeRepositoryVersion `json:"versions"`
-}
+type RecipeRepositoryDetail = RecipeRepository
 
 // RecipeRepositoryUpdatePlanRequest defines model for RecipeRepositoryUpdatePlanRequest.
 type RecipeRepositoryUpdatePlanRequest struct {
@@ -608,13 +591,44 @@ type RecipeUpdateAccepted struct {
 	RunId openapi_types.UUID `json:"run_id"`
 }
 
+// RecipeUpdateDevice defines model for RecipeUpdateDevice.
+type RecipeUpdateDevice struct {
+	InstalledDigests []string `json:"installed_digests"`
+	NodeId           string   `json:"node_id"`
+	NodeName         string   `json:"node_name"`
+	NodeStatus       string   `json:"node_status"`
+}
+
 // RecipeUpdatePlan defines model for RecipeUpdatePlan.
 type RecipeUpdatePlan struct {
-	Diagnostics []Diagnostic         `json:"diagnostics"`
-	PlanDigest  string               `json:"plan_digest"`
-	Ready       bool                 `json:"ready"`
-	Targets     []RecipeUpdateTarget `json:"targets"`
+	Diagnostics        []Diagnostic                    `json:"diagnostics"`
+	InstalledDevices   []RecipeUpdateDevice            `json:"installed_devices"`
+	PlanDigest         string                          `json:"plan_digest"`
+	Ready              bool                            `json:"ready"`
+	RunningDeployments []RecipeUpdateRunningDeployment `json:"running_deployments"`
 }
+
+// RecipeUpdateRunningDeployment defines model for RecipeUpdateRunningDeployment.
+type RecipeUpdateRunningDeployment struct {
+	CurrentStep             int                                 `json:"current_step"`
+	ErrorCode               *string                             `json:"error_code,omitempty"`
+	ErrorMessage            *string                             `json:"error_message,omitempty"`
+	NodeId                  string                              `json:"node_id"`
+	NodeName                string                              `json:"node_name"`
+	NodeStatus              string                              `json:"node_status"`
+	Phase                   RecipeUpdateRunningDeploymentPhase  `json:"phase"`
+	Rank                    int32                               `json:"rank"`
+	ReplacementDeploymentId *string                             `json:"replacement_deployment_id,omitempty"`
+	SourceDeploymentId      string                              `json:"source_deployment_id"`
+	Status                  RecipeUpdateRunningDeploymentStatus `json:"status"`
+	TotalSteps              int                                 `json:"total_steps"`
+}
+
+// RecipeUpdateRunningDeploymentPhase defines model for RecipeUpdateRunningDeployment.Phase.
+type RecipeUpdateRunningDeploymentPhase string
+
+// RecipeUpdateRunningDeploymentStatus defines model for RecipeUpdateRunningDeployment.Status.
+type RecipeUpdateRunningDeploymentStatus string
 
 // RecipeUpdateStatus defines model for RecipeUpdateStatus.
 type RecipeUpdateStatus struct {
@@ -630,28 +644,6 @@ type RecipeUpdateStatus struct {
 
 // RecipeUpdateStatusState defines model for RecipeUpdateStatus.State.
 type RecipeUpdateStatusState string
-
-// RecipeUpdateTarget defines model for RecipeUpdateTarget.
-type RecipeUpdateTarget struct {
-	CurrentStep             int                      `json:"current_step"`
-	ErrorCode               *string                  `json:"error_code,omitempty"`
-	ErrorMessage            *string                  `json:"error_message,omitempty"`
-	NodeId                  string                   `json:"node_id"`
-	NodeName                string                   `json:"node_name"`
-	NodeStatus              string                   `json:"node_status"`
-	Phase                   RecipeUpdateTargetPhase  `json:"phase"`
-	Rank                    int32                    `json:"rank"`
-	ReplacementDeploymentId *string                  `json:"replacement_deployment_id,omitempty"`
-	SourceDeploymentId      string                   `json:"source_deployment_id"`
-	Status                  RecipeUpdateTargetStatus `json:"status"`
-	TotalSteps              int                      `json:"total_steps"`
-}
-
-// RecipeUpdateTargetPhase defines model for RecipeUpdateTarget.Phase.
-type RecipeUpdateTargetPhase string
-
-// RecipeUpdateTargetStatus defines model for RecipeUpdateTarget.Status.
-type RecipeUpdateTargetStatus string
 
 // Transfer defines model for Transfer.
 type Transfer struct {

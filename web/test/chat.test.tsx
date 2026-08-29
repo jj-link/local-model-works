@@ -148,7 +148,7 @@ describe("Chat", () => {
     renderChat();
 
     expect(await screen.findByText("No chat-ready deployment")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Plan deployment" }));
-    expect(await screen.findByRole("heading", { name: "Choose hardware" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Launch deployment" }));
+    expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
   });
 });

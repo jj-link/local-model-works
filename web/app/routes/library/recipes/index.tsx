@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useCheckRecipeUpdates, useDeployments, useRecipeRepositories } from "~/lib/queries";
+import { useCheckRecipeUpdates, useRecipeRepositories } from "~/lib/queries";
 import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { RecipeUpdateDialog } from "~/components/dialogs/recipe-update-dialog";
@@ -25,7 +25,6 @@ function repositoryDisplayName(repository: RecipeRepository): string {
 
 export default function RecipesRoute() {
   const repositoriesQuery = useRecipeRepositories();
-  const deploymentsQuery = useDeployments();
   const checkUpdates = useCheckRecipeUpdates();
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -161,13 +160,7 @@ export default function RecipesRoute() {
                 const nodeCount = recipe.compatibility?.nodeCount;
                 const fabric = recipe.compatibility?.fabric;
                 const transport = typeof fabric?.transport === "string" ? fabric.transport : "";
-                const versionDigests = new Set(repository.versions.map((version) => version.recipe.digest));
-                const installedNodeIds = new Set(
-                  (deploymentsQuery.data ?? [])
-                    .filter((deployment) => versionDigests.has(deployment.recipe_digest))
-                    .flatMap((deployment) => (deployment.placements ?? []).map((placement) => placement.node_id)),
-                );
-                const installedCount = installedNodeIds.size;
+                const installedCount = repository.installed_devices.length;
                 const compatibility = nodeCount
                   ? `${nodeCount} ${nodeCount === 1 ? "node" : "nodes"}${transport ? ` · ${transport === "roce" ? "RDMA" : transport.toUpperCase()} fabric` : ""}`
                   : "Compatibility not reported";
@@ -196,11 +189,7 @@ export default function RecipesRoute() {
                           ) : repository.observed_head_commit ? (
                             <span className="sample-a-update-state is-current">Up to date</span>
                           ) : null}
-                          {deploymentsQuery.isPending ? (
-                            <span className="sample-a-install-state is-checking">Checking devices</span>
-                          ) : deploymentsQuery.isError ? (
-                            <span className="sample-a-install-state is-not-installed">Status unavailable</span>
-                          ) : installedCount > 0 ? (
+                          {installedCount > 0 ? (
                             <span className="sample-a-install-state is-installed">
                               Installed on {installedCount} {installedCount === 1 ? "device" : "devices"}
                             </span>
@@ -221,7 +210,7 @@ export default function RecipesRoute() {
                         {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
                       </span>
                     </button>
-                    {repository.update_available && repository.update_supported ? (
+                    {installedCount > 0 && repository.update_available && repository.update_supported ? (
                       <button
                         type="button"
                         className="sample-a-update-action"
@@ -230,7 +219,7 @@ export default function RecipesRoute() {
                           setUpdateOpen(true);
                         }}
                       >
-                        Update hardware using this recipe
+                        Update recipe
                       </button>
                     ) : null}
                   </div>

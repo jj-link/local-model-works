@@ -196,6 +196,41 @@ func (q *Queries) ClearCanonicalRecipeRepositoryCommit(ctx context.Context, arg 
 	return err
 }
 
+const clearStoppedDeploymentEndpoint = `-- name: ClearStoppedDeploymentEndpoint :exec
+UPDATE deployments SET endpoint = NULL,
+                       diagnostics = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND desired_state = 'stopped' AND observed_state = 'stopped'
+`
+
+type ClearStoppedDeploymentEndpointParams struct {
+	Diagnostics string `json:"diagnostics"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) ClearStoppedDeploymentEndpoint(ctx context.Context, arg ClearStoppedDeploymentEndpointParams) error {
+	_, err := q.db.ExecContext(ctx, clearStoppedDeploymentEndpoint, arg.Diagnostics, arg.ID)
+	return err
+}
+
+const consumeBrowserLoginToken = `-- name: ConsumeBrowserLoginToken :one
+DELETE FROM browser_login_tokens
+WHERE token_hash = ? AND expires_at > ?
+RETURNING username
+`
+
+type ConsumeBrowserLoginTokenParams struct {
+	TokenHash string `json:"token_hash"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+func (q *Queries) ConsumeBrowserLoginToken(ctx context.Context, arg ConsumeBrowserLoginTokenParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, consumeBrowserLoginToken, arg.TokenHash, arg.ExpiresAt)
+	var username string
+	err := row.Scan(&username)
+	return username, err
+}
+
 const countActiveDeploymentsOnFabric = `-- name: CountActiveDeploymentsOnFabric :one
 SELECT COUNT(*) FROM deployments
 WHERE fabric = ? AND desired_state = 'running'
@@ -241,6 +276,28 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		arg.Revision,
 		arg.Digest,
 		arg.Metadata,
+	)
+	return err
+}
+
+const createBrowserLoginToken = `-- name: CreateBrowserLoginToken :exec
+INSERT INTO browser_login_tokens (token_hash, username, created_at, expires_at)
+VALUES (?, ?, ?, ?)
+`
+
+type CreateBrowserLoginTokenParams struct {
+	TokenHash string `json:"token_hash"`
+	Username  string `json:"username"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+func (q *Queries) CreateBrowserLoginToken(ctx context.Context, arg CreateBrowserLoginTokenParams) error {
+	_, err := q.db.ExecContext(ctx, createBrowserLoginToken,
+		arg.TokenHash,
+		arg.Username,
+		arg.CreatedAt,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -524,6 +581,15 @@ DELETE FROM enrollment_tokens WHERE id = ?
 
 func (q *Queries) DeleteEnrollmentToken(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteEnrollmentToken, id)
+	return err
+}
+
+const deleteExpiredBrowserLoginTokens = `-- name: DeleteExpiredBrowserLoginTokens :exec
+DELETE FROM browser_login_tokens WHERE expires_at <= ?
+`
+
+func (q *Queries) DeleteExpiredBrowserLoginTokens(ctx context.Context, expiresAt string) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredBrowserLoginTokens, expiresAt)
 	return err
 }
 
@@ -2645,6 +2711,45 @@ func (q *Queries) ReleaseLeases(ctx context.Context, arg ReleaseLeasesParams) er
 	return err
 }
 
+const restartDeployment = `-- name: RestartDeployment :exec
+UPDATE deployments SET run_id = ?,
+                       placement = ?,
+                       fabric = ?,
+                       endpoint = ?,
+                       endpoint_model = ?,
+                       endpoint_path = ?,
+                       desired_state = 'running',
+                       observed_state = 'unknown',
+                       dispatch = '{}',
+                       diagnostics = '[]',
+                       model_capabilities = NULL,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type RestartDeploymentParams struct {
+	RunID         sql.NullString `json:"run_id"`
+	Placement     string         `json:"placement"`
+	Fabric        sql.NullString `json:"fabric"`
+	Endpoint      sql.NullString `json:"endpoint"`
+	EndpointModel sql.NullString `json:"endpoint_model"`
+	EndpointPath  sql.NullString `json:"endpoint_path"`
+	ID            string         `json:"id"`
+}
+
+func (q *Queries) RestartDeployment(ctx context.Context, arg RestartDeploymentParams) error {
+	_, err := q.db.ExecContext(ctx, restartDeployment,
+		arg.RunID,
+		arg.Placement,
+		arg.Fabric,
+		arg.Endpoint,
+		arg.EndpointModel,
+		arg.EndpointPath,
+		arg.ID,
+	)
+	return err
+}
+
 const saveMigrationPlan = `-- name: SaveMigrationPlan :exec
 INSERT INTO migration_plans (plan_digest, request, plan) VALUES (?, ?, ?)
 `
@@ -2687,6 +2792,25 @@ type SetDeploymentDispatchParams struct {
 
 func (q *Queries) SetDeploymentDispatch(ctx context.Context, arg SetDeploymentDispatchParams) error {
 	_, err := q.db.ExecContext(ctx, setDeploymentDispatch, arg.Dispatch, arg.ID)
+	return err
+}
+
+const setDeploymentStopping = `-- name: SetDeploymentStopping :exec
+UPDATE deployments SET desired_state = 'stopped',
+                       observed_state = 'stopping',
+                       endpoint = NULL,
+                       diagnostics = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type SetDeploymentStoppingParams struct {
+	Diagnostics string `json:"diagnostics"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) SetDeploymentStopping(ctx context.Context, arg SetDeploymentStoppingParams) error {
+	_, err := q.db.ExecContext(ctx, setDeploymentStopping, arg.Diagnostics, arg.ID)
 	return err
 }
 

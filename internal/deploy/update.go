@@ -14,12 +14,34 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
+	"github.com/jj-link/local-model-works/internal/id"
+	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 const repositoryUpdatePollInterval = 250 * time.Millisecond
 
 var errRepositoryUpdateCancelled = errors.New("repository update cancelled")
+
+// RepositoryUpdateDevice is immutable preview data for one physical
+// package-installation target.
+type RepositoryUpdateDevice struct {
+	NodeID           string   `json:"node_id"`
+	NodeName         string   `json:"node_name"`
+	NodeStatus       string   `json:"node_status"`
+	InstalledDigests []string `json:"installed_digests"`
+}
+
+type repositoryUpdateDeviceProgress struct {
+	RepositoryUpdateDevice
+	Status       string `json:"status"`
+	Phase        string `json:"phase"`
+	CurrentStep  int    `json:"current_step"`
+	TotalSteps   int    `json:"total_steps"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+}
 
 // RepositoryUpdateTarget is one persisted hardware row in an update preview.
 type RepositoryUpdateTarget struct {
@@ -50,16 +72,17 @@ type RepositoryUpdateDeployment struct {
 	DeploymentPlan     Plan              `json:"deployment_plan"`
 }
 
-// RepositoryUpdatePlan previews every desired-running deployment that still
-// uses an older immutable package from one logical repository.
+// RepositoryUpdatePlan separates physical package installations from running
+// deployment replacements. Deployment state never defines installation state.
 type RepositoryUpdatePlan struct {
-	RepositoryID string                       `json:"repository_id"`
-	TargetDigest string                       `json:"target_digest"`
-	Deployments  []RepositoryUpdateDeployment `json:"deployments"`
-	Targets      []RepositoryUpdateTarget     `json:"targets"`
-	Diagnostics  []diag.Diagnostic            `json:"diagnostics,omitempty"`
-	Ready        bool                         `json:"ready"`
-	Digest       string                       `json:"plan_digest"`
+	RepositoryID       string                       `json:"repository_id"`
+	TargetDigest       string                       `json:"target_digest"`
+	InstalledDevices   []RepositoryUpdateDevice     `json:"installed_devices"`
+	RunningDeployments []RepositoryUpdateTarget     `json:"running_deployments"`
+	Deployments        []RepositoryUpdateDeployment `json:"deployments"`
+	Diagnostics        []diag.Diagnostic            `json:"diagnostics,omitempty"`
+	Ready              bool                         `json:"ready"`
+	Digest             string                       `json:"plan_digest"`
 }
 
 func (p *RepositoryUpdatePlan) PlanDigest() string {
@@ -77,11 +100,49 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, target
 	if err != nil || targetVersion.RepositoryID != repositoryID {
 		return nil, fmt.Errorf("%w: target digest is not a version of repository", ErrRecipe)
 	}
+	return s.planRepositoryUpdate(ctx, repositoryID, targetDigest, nil)
+}
+
+// PlanRepositoryUpdateCandidate previews an uninstalled compiled candidate
+// without requiring a recipe row, repository-version link, or package tree.
+func (s *Service) PlanRepositoryUpdateCandidate(ctx context.Context, repositoryID string, candidate *recipe.RepositoryCandidate) (*RepositoryUpdatePlan, error) {
+	if candidate == nil || candidate.Manifest == nil || candidate.Digest == "" {
+		return nil, fmt.Errorf("%w: invalid repository candidate", ErrRecipe)
+	}
+	return s.planRepositoryUpdate(ctx, repositoryID, candidate.Digest, candidate)
+}
+
+func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, targetDigest string, candidate *recipe.RepositoryCandidate) (*RepositoryUpdatePlan, error) {
+	installedDevices, err := recipe.ListRepositoryInstalledDevices(ctx, s.q, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	plan := &RepositoryUpdatePlan{
+		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: len(installedDevices) > 0,
+		InstalledDevices: make([]RepositoryUpdateDevice, 0, len(installedDevices)),
+	}
+	if len(installedDevices) == 0 {
+		plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_not_installed", "recipe is not installed on any device"))
+	}
+	for _, device := range installedDevices {
+		plan.InstalledDevices = append(plan.InstalledDevices, RepositoryUpdateDevice{
+			NodeID: device.NodeID, NodeName: device.NodeName, NodeStatus: device.NodeStatus,
+			InstalledDigests: append([]string(nil), device.InstalledDigests...),
+		})
+		if device.NodeStatus != "online" {
+			plan.Ready = false
+			resource := "node:" + device.NodeID
+			plan.Diagnostics = append(plan.Diagnostics, diag.Diagnostic{
+				Code: "recipe.update_device_offline", Severity: "error",
+				Message:  fmt.Sprintf("installed device %s is %s", device.NodeName, device.NodeStatus),
+				Resource: &resource,
+			})
+		}
+	}
 	rows, err := s.q.ListRepositoryActiveDeployments(ctx, repositoryID)
 	if err != nil {
 		return nil, err
 	}
-	plan := &RepositoryUpdatePlan{RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: true}
 	for _, row := range rows {
 		if row.RecipeDigest == targetDigest {
 			continue
@@ -102,10 +163,10 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, target
 		for _, placement := range placements {
 			overrides = append(overrides, PlacementOverride{NodeID: placement.NodeID, Rank: placement.Rank})
 		}
-		deploymentPlan, planErr := s.plan(ctx, PlanRequest{
+		deploymentPlan, planErr := s.planWithRecipe(ctx, PlanRequest{
 			RecipeDigest: targetDigest, Profile: row.Profile,
 			Placements: overrides, Variants: placementSet.Variants,
-		}, map[string]bool{row.ID: true}, true)
+		}, map[string]bool{row.ID: true}, true, candidate)
 		if planErr != nil {
 			return nil, planErr
 		}
@@ -150,7 +211,7 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, target
 			if nodeErr != nil {
 				return nil, nodeErr
 			}
-			plan.Targets = append(plan.Targets, RepositoryUpdateTarget{
+			plan.RunningDeployments = append(plan.RunningDeployments, RepositoryUpdateTarget{
 				SourceDeploymentID: row.ID, NodeID: placement.NodeID,
 				NodeName: node.DisplayName, NodeStatus: node.Status, Rank: placement.Rank,
 				Status: "pending", Phase: "fetching", TotalSteps: 5,
@@ -161,11 +222,11 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, target
 			plan.Diagnostics = append(plan.Diagnostics, deploymentPlan.Diagnostics...)
 		}
 	}
-	sort.Slice(plan.Targets, func(i, j int) bool {
-		if plan.Targets[i].SourceDeploymentID == plan.Targets[j].SourceDeploymentID {
-			return plan.Targets[i].Rank < plan.Targets[j].Rank
+	sort.Slice(plan.RunningDeployments, func(i, j int) bool {
+		if plan.RunningDeployments[i].SourceDeploymentID == plan.RunningDeployments[j].SourceDeploymentID {
+			return plan.RunningDeployments[i].Rank < plan.RunningDeployments[j].Rank
 		}
-		return plan.Targets[i].SourceDeploymentID < plan.Targets[j].SourceDeploymentID
+		return plan.RunningDeployments[i].SourceDeploymentID < plan.RunningDeployments[j].SourceDeploymentID
 	})
 	plan.Digest = plan.PlanDigest()
 	return plan, nil
@@ -203,20 +264,35 @@ func cloneVariants(input map[string]string) map[string]string {
 }
 
 type repositoryUpdateRunInput struct {
-	RepositoryID string                   `json:"repository_id"`
-	FromDigest   string                   `json:"from_digest"`
-	FromCommit   string                   `json:"from_commit"`
-	ToCommit     string                   `json:"to_commit"`
-	TargetDigest string                   `json:"target_digest"`
-	Targets      []RepositoryUpdateTarget `json:"targets"`
-	Plan         RepositoryUpdatePlan     `json:"plan"`
+	RepositoryID     string                   `json:"repository_id"`
+	FromDigest       string                   `json:"from_digest"`
+	FromCommit       string                   `json:"from_commit"`
+	ToCommit         string                   `json:"to_commit"`
+	TargetDigest     string                   `json:"target_digest"`
+	InstalledDevices []RepositoryUpdateDevice `json:"installed_devices"`
+	Targets          []RepositoryUpdateTarget `json:"running_deployments"`
+	Plan             RepositoryUpdatePlan     `json:"plan"`
 }
 
 type repositoryUpdateProgress struct {
-	Phase             string                   `json:"phase"`
-	TotalHardware     int                      `json:"total_hardware"`
-	CompletedHardware int                      `json:"completed_hardware"`
-	Hardware          []RepositoryUpdateTarget `json:"hardware"`
+	Phase             string                           `json:"phase"`
+	TotalDevices      int                              `json:"total_devices"`
+	CompletedDevices  int                              `json:"completed_devices"`
+	InstalledDevices  []repositoryUpdateDeviceProgress `json:"installed_devices"`
+	TotalHardware     int                              `json:"total_running_targets"`
+	CompletedHardware int                              `json:"completed_running_targets"`
+	Hardware          []RepositoryUpdateTarget         `json:"running_deployments"`
+}
+
+func repositoryUpdateDeviceProgressFrom(devices []RepositoryUpdateDevice) []repositoryUpdateDeviceProgress {
+	progress := make([]repositoryUpdateDeviceProgress, 0, len(devices))
+	for _, device := range devices {
+		progress = append(progress, repositoryUpdateDeviceProgress{
+			RepositoryUpdateDevice: device,
+			Status:                 "pending", Phase: "fetching", TotalSteps: 2,
+		})
+	}
+	return progress
 }
 
 // CreateRepositoryUpdate validates a fresh plan before any source deployment
@@ -232,7 +308,12 @@ func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID, targ
 	if !plan.Ready {
 		return "", fmt.Errorf("%w: repository update plan is not ready", ErrNotReady)
 	}
-	input := repositoryUpdateRunInput{RepositoryID: repositoryID, TargetDigest: targetDigest, Targets: plan.Targets, Plan: *plan}
+	input := repositoryUpdateRunInput{
+		RepositoryID: repositoryID, TargetDigest: targetDigest,
+		InstalledDevices: append([]RepositoryUpdateDevice(nil), plan.InstalledDevices...),
+		Targets:          append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
+		Plan:             *plan,
+	}
 	if len(plan.Deployments) > 0 {
 		input.FromDigest = plan.Deployments[0].SourceDigest
 		if version, versionErr := s.q.GetRecipeRepositoryVersionByDigest(ctx, input.FromDigest); versionErr == nil {
@@ -247,15 +328,18 @@ func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID, targ
 		return "", err
 	}
 	progress := repositoryUpdateProgress{
-		Phase: "installing_recipe", TotalHardware: len(plan.Targets),
-		Hardware: append([]RepositoryUpdateTarget(nil), plan.Targets...),
+		Phase:            "installing_recipe",
+		TotalDevices:     len(plan.InstalledDevices),
+		InstalledDevices: repositoryUpdateDeviceProgressFrom(plan.InstalledDevices),
+		TotalHardware:    len(plan.RunningDeployments),
+		Hardware:         append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
 	}
 	if err := s.runs.SetProgress(ctx, runID, structMap(progress)); err != nil {
 		return "", err
 	}
 	_ = s.runs.SetState(ctx, runID, runs.Planning, "", "")
 	_ = s.runs.SetState(ctx, runID, runs.Waiting, "", "")
-	s.startRepositoryUpdate(ctx, runID)
+	s.startRepositoryUpdate(context.WithoutCancel(ctx), runID)
 	return runID, nil
 }
 
@@ -313,14 +397,33 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 		return
 	}
 	var progress repositoryUpdateProgress
-	if err := mapStruct(run.Progress, &progress); err != nil || len(progress.Hardware) == 0 && len(input.Targets) > 0 {
-		progress = repositoryUpdateProgress{Phase: "installing_recipe", TotalHardware: len(input.Targets), Hardware: append([]RepositoryUpdateTarget(nil), input.Targets...)}
+	if err := mapStruct(run.Progress, &progress); err != nil ||
+		len(progress.InstalledDevices) == 0 && len(input.InstalledDevices) > 0 ||
+		len(progress.Hardware) == 0 && len(input.Targets) > 0 {
+		progress = repositoryUpdateProgress{
+			Phase:            "installing_recipe",
+			TotalDevices:     len(input.InstalledDevices),
+			InstalledDevices: repositoryUpdateDeviceProgressFrom(input.InstalledDevices),
+			TotalHardware:    len(input.Targets),
+			Hardware:         append([]RepositoryUpdateTarget(nil), input.Targets...),
+		}
 	}
 	if run.State != string(runs.Cancelling) {
 		_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
 	}
 
+	if s.updateCancelled(ctx, runID) {
+		err = errRepositoryUpdateCancelled
+	} else {
+		err = s.installRepositoryUpdateDevices(ctx, runID, input.TargetDigest, &progress)
+	}
+	if err == nil && s.updateCancelled(ctx, runID) {
+		err = errRepositoryUpdateCancelled
+	}
 	for _, deployment := range input.Plan.Deployments {
+		if err != nil {
+			break
+		}
 		if s.updateCancelled(ctx, runID) {
 			err = errRepositoryUpdateCancelled
 			break
@@ -341,8 +444,21 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 			break
 		}
 	}
+	if err == nil && s.updateCancelled(ctx, runID) {
+		err = errRepositoryUpdateCancelled
+	}
+	if err == nil {
+		_ = s.runs.SetState(ctx, runID, runs.Verifying, "", "")
+		err = recipe.ActivateRepositoryVersion(ctx, s.q, input.RepositoryID, input.TargetDigest)
+	}
 	if err == nil {
 		progress.Phase = "ready"
+		progress.CompletedDevices = progress.TotalDevices
+		for i := range progress.InstalledDevices {
+			progress.InstalledDevices[i].Status = "succeeded"
+			progress.InstalledDevices[i].Phase = "ready"
+			progress.InstalledDevices[i].CurrentStep = 2
+		}
 		progress.CompletedHardware = progress.TotalHardware
 		for i := range progress.Hardware {
 			progress.Hardware[i].Status = "succeeded"
@@ -350,24 +466,146 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 			progress.Hardware[i].CurrentStep = 5
 		}
 		s.persistUpdateProgress(ctx, runID, &progress)
-		_ = s.runs.SetOutput(ctx, runID, map[string]any{"targets": updateOutputTargets(progress.Hardware)})
-		_ = s.runs.SetState(ctx, runID, runs.Verifying, "", "")
+		_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(progress))
 		_ = s.runs.Complete(ctx, runID, runs.Succeeded, "", "")
 		return
 	}
 
 	rollbackErr := s.rollbackRepositoryUpdate(ctx, runID, input.Plan.Deployments, &progress)
 	if rollbackErr != nil {
-		_ = s.runs.SetOutput(ctx, runID, map[string]any{"targets": updateOutputTargets(progress.Hardware)})
+		_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(progress))
 		_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.rollback_failed", rollbackErr.Error())
 		return
 	}
-	_ = s.runs.SetOutput(ctx, runID, map[string]any{"targets": updateOutputTargets(progress.Hardware)})
+	_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(progress))
 	if errors.Is(err, errRepositoryUpdateCancelled) || s.updateCancelled(ctx, runID) {
 		_ = s.runs.Complete(ctx, runID, runs.Cancelled, "run.cancelled", "recipe update cancelled and source deployments restored")
 		return
 	}
 	_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.update_failed", err.Error())
+}
+
+func (s *Service) installRepositoryUpdateDevices(ctx context.Context, runID, targetDigest string, progress *repositoryUpdateProgress) error {
+	artifact, err := s.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest)
+	if err != nil {
+		return fmt.Errorf("candidate recipe package: %w", err)
+	}
+	for index := range progress.InstalledDevices {
+		device := &progress.InstalledDevices[index]
+		if _, valid := s.validPlacement(ctx, artifact.ID, device.NodeID); valid {
+			device.Status, device.Phase, device.CurrentStep = "succeeded", "ready", 2
+			s.persistUpdateProgress(ctx, runID, progress)
+			continue
+		}
+		if !s.nodes.Online(device.NodeID) {
+			device.Status, device.Phase = "waiting", "waiting_offline"
+			device.ErrorCode, device.ErrorMessage = "", ""
+			s.persistUpdateProgress(ctx, runID, progress)
+			for !s.nodes.Online(device.NodeID) {
+				if s.updateCancelled(ctx, runID) {
+					return errRepositoryUpdateCancelled
+				}
+				if err := waitUpdatePoll(ctx); err != nil {
+					return err
+				}
+			}
+		}
+		progress.Phase = "installing_recipe"
+		device.Status, device.Phase, device.CurrentStep = "running", "fetching", 0
+		s.persistUpdateProgress(ctx, runID, progress)
+		if err := s.fetchRepositoryUpdatePackage(ctx, runID, int32(index), device.NodeID, artifact.Identity); err != nil {
+			device.Status, device.Phase = "failed", "fetching"
+			device.ErrorCode = "recipe.update_package_failed"
+			device.ErrorMessage = err.Error()
+			s.persistUpdateProgress(ctx, runID, progress)
+			return fmt.Errorf("%s: %w", device.NodeName, err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, valid := s.validPlacement(ctx, artifact.ID, device.NodeID); valid {
+				break
+			}
+			if time.Now().After(deadline) {
+				device.Status, device.Phase = "failed", "validating"
+				device.ErrorCode = "recipe.update_placement_missing"
+				device.ErrorMessage = "agent completed package fetch without a valid placement report"
+				s.persistUpdateProgress(ctx, runID, progress)
+				return fmt.Errorf("%s: candidate package placement was not reported", device.NodeName)
+			}
+			if err := waitUpdatePoll(ctx); err != nil {
+				return err
+			}
+		}
+		device.Status, device.Phase, device.CurrentStep = "succeeded", "ready", 2
+		s.persistUpdateProgress(ctx, runID, progress)
+	}
+	return nil
+}
+
+func (s *Service) fetchRepositoryUpdatePackage(ctx context.Context, runID string, index int32, nodeID, identity string) error {
+	commandID, err := id.New()
+	if err != nil {
+		return err
+	}
+	waiter := make(chan error, 1)
+	s.updateMu.Lock()
+	s.updateFetchWaiters[commandID] = waiter
+	s.updateMu.Unlock()
+	s.inflightMark(commandID, runID, index, "repository-update-fetch")
+	if !s.nodes.Send(nodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
+		ArtifactCommand: &agentv1.ArtifactCommand{
+			CommandId: commandID, Op: agentv1.ArtifactOp_ARTIFACT_OP_FETCH, ArtifactIdentity: identity,
+		},
+	}}) {
+		s.inflightTake(commandID)
+		s.updateMu.Lock()
+		delete(s.updateFetchWaiters, commandID)
+		s.updateMu.Unlock()
+		return fmt.Errorf("installed device is offline")
+	}
+	timer := time.NewTimer(30 * time.Minute)
+	defer timer.Stop()
+	select {
+	case err := <-waiter:
+		return err
+	case <-ctx.Done():
+		s.inflightTake(commandID)
+		s.updateMu.Lock()
+		delete(s.updateFetchWaiters, commandID)
+		s.updateMu.Unlock()
+		return ctx.Err()
+	case <-timer.C:
+		s.inflightTake(commandID)
+		s.updateMu.Lock()
+		delete(s.updateFetchWaiters, commandID)
+		s.updateMu.Unlock()
+		return fmt.Errorf("candidate package fetch timed out")
+	}
+}
+
+func (s *Service) completeRepositoryUpdateFetch(commandID string, ok bool, message string) {
+	s.updateMu.Lock()
+	waiter := s.updateFetchWaiters[commandID]
+	delete(s.updateFetchWaiters, commandID)
+	s.updateMu.Unlock()
+	if waiter == nil {
+		return
+	}
+	if ok {
+		waiter <- nil
+		return
+	}
+	if message == "" {
+		message = "candidate package fetch failed"
+	}
+	waiter <- errors.New(message)
+}
+
+func repositoryUpdateOutput(progress repositoryUpdateProgress) map[string]any {
+	return map[string]any{
+		"installed_devices":   progress.InstalledDevices,
+		"running_deployments": updateOutputTargets(progress.Hardware),
+	}
 }
 
 func (s *Service) stopUpdateSource(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, progress *repositoryUpdateProgress) error {
@@ -610,8 +848,19 @@ func (s *Service) setUpdateTargets(progress *repositoryUpdateProgress, sourceDep
 }
 
 func (s *Service) persistUpdateProgress(ctx context.Context, runID string, progress *repositoryUpdateProgress) {
+	progress.CompletedDevices = countSucceededDevices(progress.InstalledDevices)
 	progress.CompletedHardware = countSucceededHardware(progress.Hardware)
 	_ = s.runs.SetProgress(ctx, runID, structMap(*progress))
+}
+
+func countSucceededDevices(devices []repositoryUpdateDeviceProgress) int {
+	count := 0
+	for _, device := range devices {
+		if device.Status == "succeeded" {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Service) anyUpdateNodeOffline(progress *repositoryUpdateProgress, sourceDeploymentID string) bool {

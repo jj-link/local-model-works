@@ -16,7 +16,7 @@ import {
   useRun,
   useStartRecipeRepositoryUpdate,
 } from "~/lib/queries";
-import type { RecipeUpdateTarget } from "~/lib/api";
+import type { RecipeUpdateDevice, RecipeUpdateRunningDeployment } from "~/lib/api";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 const INDETERMINATE_PHASES = new Set([
@@ -27,7 +27,16 @@ const INDETERMINATE_PHASES = new Set([
   "rollback_failed",
 ]);
 
-type ProgressTarget = RecipeUpdateTarget & {
+type ProgressDevice = RecipeUpdateDevice & {
+  status?: string;
+  phase?: string;
+  current_step?: number;
+  total_steps?: number;
+  error_code?: string;
+  error_message?: string;
+};
+
+type ProgressRunningDeployment = RecipeUpdateRunningDeployment & {
   error_code?: string;
   error_message?: string;
 };
@@ -74,32 +83,29 @@ export function RecipeUpdateDialog({
   }, [open, planMutation, repositoryId, repositoryQuery.data, runId]);
 
   const progress = (runQuery.data?.progress ?? {}) as Record<string, unknown>;
-  const hardware = useMemo(
-    () => (Array.isArray(progress.hardware) ? (progress.hardware as ProgressTarget[]) : []),
-    [progress.hardware],
+  const progressDevices = useMemo(
+    () => (Array.isArray(progress.installed_devices) ? (progress.installed_devices as ProgressDevice[]) : []),
+    [progress.installed_devices],
   );
-  const totalHardware = numberValue(progress.total_hardware, planMutation.data?.targets.length ?? 0);
-  const completedHardware = numberValue(progress.completed_hardware, 0);
+  const progressRunningDeployments = useMemo(
+    () => (Array.isArray(progress.running_deployments)
+      ? (progress.running_deployments as ProgressRunningDeployment[])
+      : []),
+    [progress.running_deployments],
+  );
+  const totalDevices = numberValue(progress.total_devices, planMutation.data?.installed_devices?.length ?? 0);
+  const completedDevices = numberValue(progress.completed_devices, 0);
   const phase = String(progress.phase ?? "");
   const overallIndeterminate = INDETERMINATE_PHASES.has(phase);
   const runState = runQuery.data?.state;
   const succeeded = runState === "succeeded";
   const failed = runState !== undefined && TERMINAL.has(runState) && !succeeded;
-  const planTargets: ProgressTarget[] = planMutation.data?.targets ?? repositoryQuery.data?.affected_hardware.flatMap((item) =>
-    item.deployment_ids.map((deploymentId) => ({
-      source_deployment_id: deploymentId,
-      node_id: item.node_id,
-      node_name: item.node_name,
-      node_status: item.node_status,
-      rank: 0,
-      status: "pending" as const,
-      phase: "fetching" as const,
-      current_step: 0,
-      total_steps: 5,
-    })),
-  ) ?? [];
-  const displayedHardware = runId ? hardware : planTargets;
-
+  const planDevices: ProgressDevice[] =
+    planMutation.data?.installed_devices ?? repositoryQuery.data?.installed_devices ?? [];
+  const planRunningDeployments: ProgressRunningDeployment[] =
+    planMutation.data?.running_deployments ?? [];
+  const displayedDevices = runId ? progressDevices : planDevices;
+  const displayedRunningDeployments = runId ? progressRunningDeployments : planRunningDeployments;
   const startUpdate = async () => {
     const repository = repositoryQuery.data;
     const plan = planMutation.data;
@@ -121,7 +127,7 @@ export function RecipeUpdateDialog({
       <DialogContent className="max-h-[90dvh] overflow-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="font-display text-xl font-semibold">
-            {succeeded ? "Update complete" : failed ? "Update failed" : "Update recipe on current hardware"}
+            {succeeded ? "Update complete" : failed ? "Update failed" : "Update recipe"}
           </DialogTitle>
           <DialogDescription>
             {repositoryQuery.data?.current_recipe?.display_name ||
@@ -135,7 +141,7 @@ export function RecipeUpdateDialog({
 
         {repositoryQuery.isPending || planMutation.isPending ? (
           <div className="lmw-panel-raised p-4 text-sm" role="status">
-            {repositoryQuery.isPending ? "Loading affected hardware…" : "Fetching and validating the pinned recipe update…"}
+            {repositoryQuery.isPending ? "Loading installed devices…" : "Fetching and validating the pinned recipe update…"}
           </div>
         ) : repositoryQuery.isError || planMutation.isError ? (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm" role="alert">
@@ -152,67 +158,90 @@ export function RecipeUpdateDialog({
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium">{phaseLabel(phase)}</span>
                   <span className="text-muted-foreground">
-                    {completedHardware} of {totalHardware} hardware targets complete
+                    {completedDevices} of {totalDevices} devices updated
                   </span>
                 </div>
                 <progress
                   className="h-2 w-full accent-primary"
-                  max={Math.max(totalHardware, 1)}
-                  {...(!overallIndeterminate ? { value: completedHardware } : {})}
+                  max={Math.max(totalDevices, 1)}
+                  {...(!overallIndeterminate ? { value: completedDevices } : {})}
                 />
               </section>
             ) : null}
 
-            <section className="grid gap-2" aria-labelledby="recipe-update-hardware-title">
+            <section className="grid gap-2" aria-labelledby="recipe-update-devices-title">
               <div>
-                <h3 id="recipe-update-hardware-title" className="text-sm font-semibold">Hardware using this recipe</h3>
-                <p className="text-xs text-muted-foreground">Placement is preserved. Hardware cannot be reselected during an update.</p>
+                <h3 id="recipe-update-devices-title" className="text-sm font-semibold">Installed devices</h3>
+                <p className="text-xs text-muted-foreground">The candidate package will be installed on every device that holds a valid version of this recipe.</p>
               </div>
-              {displayedHardware.length === 0 ? (
-                <div className="rounded-md border border-border p-3 text-sm text-muted-foreground">No running hardware uses an older version.</div>
-              ) : (
-                <div className="grid gap-2">
-                  {displayedHardware.map((target) => {
-                    const targetPhase = String(target.phase ?? "pending");
-                    const currentStep = numberValue(target.current_step, 0);
-                    const totalSteps = numberValue(target.total_steps, 5);
-                    const indeterminate = INDETERMINATE_PHASES.has(targetPhase);
-                    return (
-                      <article
-                        key={`${target.source_deployment_id}:${target.node_id}:${target.rank}`}
-                        className="rounded-md border border-border bg-card p-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-medium">{target.node_name}</p>
-                            <p className="font-mono text-xs text-muted-foreground">
-                              {target.node_status} · rank {target.rank} · deployment {target.source_deployment_id.slice(0, 12)}
-                            </p>
-                          </div>
-                          <span className="text-xs font-medium">{phaseLabel(targetPhase)}</span>
+              <div className="grid gap-2">
+                {displayedDevices.map((device) => {
+                  const devicePhase = String(device.phase ?? "");
+                  const currentStep = numberValue(device.current_step, 0);
+                  const totalSteps = numberValue(device.total_steps, 2);
+                  const indeterminate = INDETERMINATE_PHASES.has(devicePhase);
+                  return (
+                    <article key={device.node_id} className="rounded-md border border-border bg-card p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">{device.node_name}</p>
+                          <p className="text-xs text-muted-foreground">{device.node_status}</p>
                         </div>
-                        {runId ? (
-                          <progress
-                            className="mt-3 h-1.5 w-full accent-primary"
-                            max={Math.max(totalSteps, 1)}
-                            {...(!indeterminate ? { value: currentStep } : {})}
-                          />
-                        ) : null}
-                        {target.error_message ? (
-                          <p className="mt-2 text-xs text-destructive" role="alert">
-                            {target.error_code ? `${target.error_code}: ` : ""}{target.error_message}
-                          </p>
-                        ) : null}
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
+                        {runId && devicePhase ? <span className="text-xs font-medium">{phaseLabel(devicePhase)}</span> : null}
+                      </div>
+                      {runId ? (
+                        <progress
+                          className="mt-3 h-1.5 w-full accent-primary"
+                          max={Math.max(totalSteps, 1)}
+                          {...(!indeterminate ? { value: currentStep } : {})}
+                        />
+                      ) : null}
+                      {device.error_message ? (
+                        <p className="mt-2 text-xs text-destructive" role="alert">
+                          {device.error_code ? `${device.error_code}: ` : ""}{device.error_message}
+                        </p>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
             </section>
+
+            {displayedRunningDeployments.length > 0 ? (
+              <section className="grid gap-2" aria-labelledby="recipe-update-deployments-title">
+                <div>
+                  <h3 id="recipe-update-deployments-title" className="text-sm font-semibold">Running deployments to replace</h3>
+                  <p className="text-xs text-muted-foreground">Running deployments retain their current hardware placement.</p>
+                </div>
+                <div className="grid gap-2">
+                  {displayedRunningDeployments.map((target) => (
+                    <article
+                      key={`${target.source_deployment_id}:${target.node_id}:${target.rank}`}
+                      className="rounded-md border border-border bg-card p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">{target.node_name}</p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            rank {target.rank} · deployment {target.source_deployment_id.slice(0, 12)}
+                          </p>
+                        </div>
+                        {runId ? <span className="text-xs font-medium">{phaseLabel(String(target.phase ?? "pending"))}</span> : null}
+                      </div>
+                      {target.error_message ? (
+                        <p className="mt-2 text-xs text-destructive" role="alert">
+                          {target.error_code ? `${target.error_code}: ` : ""}{target.error_message}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             {planMutation.data && !planMutation.data.ready ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" role="alert">
-                {planMutation.data.diagnostics.map((diagnostic) => diagnostic.message).join(" · ") || "The update plan is not ready."}
+                {(planMutation.data.diagnostics ?? []).map((diagnostic) => diagnostic.message).join(" · ") || "The update plan is not ready."}
               </div>
             ) : null}
             {failed ? (
@@ -234,7 +263,7 @@ export function RecipeUpdateDialog({
               onClick={() => void startUpdate()}
               disabled={!planMutation.data?.ready || startMutation.isPending || planMutation.isPending}
             >
-              {startMutation.isPending ? "Starting update…" : "Update this hardware"}
+              {startMutation.isPending ? "Starting update…" : "Update recipe"}
             </Button>
           ) : null}
           <Button variant={runId && !TERMINAL.has(runState ?? "") ? "outline" : "default"} onClick={() => onOpenChange(false)}>

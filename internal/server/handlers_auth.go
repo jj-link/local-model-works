@@ -2,11 +2,13 @@ package server
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/auth"
+	"github.com/jj-link/local-model-works/internal/db"
 )
 
 // dummyHash burns one argon2 verification on unknown usernames so login
@@ -19,6 +21,10 @@ var dummyHash = func() string {
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type browserLoginRequest struct {
+	Token string `json:"token"`
 }
 
 func sessionView(s *auth.Session) map[string]any {
@@ -68,6 +74,61 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.sessions.Login(req.Username)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	http.SetCookie(w, sessionCookieFor(sess.Token, int(s.cfg.SessionTTL.Seconds())))
+	writeJSON(w, http.StatusOK, sessionView(sess))
+}
+
+func (s *Server) handleBrowserLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConfiguredOrigin(w, r) {
+		return
+	}
+	var req browserLoginRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "auth.invalid_body", err.Error())
+		return
+	}
+	raw, err := hex.DecodeString(req.Token)
+	if err != nil || len(raw) != 32 {
+		writeErr(w, http.StatusUnauthorized, "auth.bad_browser_token", "invalid or expired browser login token")
+		return
+	}
+	tokenHash := auth.SHA256([]byte(req.Token))
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	username, err := qtx.ConsumeBrowserLoginToken(r.Context(), db.ConsumeBrowserLoginTokenParams{
+		TokenHash: hex.EncodeToString(tokenHash[:]),
+		ExpiresAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusUnauthorized, "auth.bad_browser_token", "invalid or expired browser login token")
+		return
+	}
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	if _, err := qtx.AppendEvent(r.Context(), db.AppendEventParams{
+		Type: "auth.browser_login", Payload: string(mustJSON(map[string]any{
+			"username": username, "method": "one_time_token",
+		})),
+	}); err != nil {
+		handleErr(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		handleErr(w, err)
+		return
+	}
+	sess, err := s.sessions.Login(username)
 	if err != nil {
 		handleErr(w, err)
 		return

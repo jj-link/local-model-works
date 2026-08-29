@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,24 +25,34 @@ type RepositoryVersion struct {
 	InstalledAt string `json:"installed_at"`
 }
 
+// RepositoryInstalledDevice is one node with a valid package placement for
+// at least one immutable version of a repository.
+type RepositoryInstalledDevice struct {
+	NodeID           string   `json:"node_id"`
+	NodeName         string   `json:"node_name"`
+	NodeStatus       string   `json:"node_status"`
+	InstalledDigests []string `json:"installed_digests"`
+}
+
 // Repository is the logical recipe identity shown by the Library. Commits and
 // package digests remain immutable versions beneath it.
 type Repository struct {
-	ID                 string              `json:"id"`
-	SourceURL          string              `json:"source_url"`
-	SourcePath         string              `json:"source_path"`
-	TrackingRef        string              `json:"tracking_ref"`
-	Current            *Recipe             `json:"current_recipe,omitempty"`
-	InstalledCommit    string              `json:"installed_commit,omitempty"`
-	ObservedHeadCommit string              `json:"observed_head_commit,omitempty"`
-	ObservedHeadTree   string              `json:"observed_head_tree,omitempty"`
-	HeadCheckedAt      string              `json:"head_checked_at,omitempty"`
-	UpdateAvailable    bool                `json:"update_available"`
-	UpdateSupported    bool                `json:"update_supported"`
-	UpdateDiagnostic   string              `json:"update_diagnostic,omitempty"`
-	Versions           []RepositoryVersion `json:"versions"`
-	CreatedAt          string              `json:"created_at"`
-	UpdatedAt          string              `json:"updated_at"`
+	ID                 string                      `json:"id"`
+	SourceURL          string                      `json:"source_url"`
+	SourcePath         string                      `json:"source_path"`
+	TrackingRef        string                      `json:"tracking_ref"`
+	Current            *Recipe                     `json:"current_recipe,omitempty"`
+	InstalledCommit    string                      `json:"installed_commit,omitempty"`
+	ObservedHeadCommit string                      `json:"observed_head_commit,omitempty"`
+	ObservedHeadTree   string                      `json:"observed_head_tree,omitempty"`
+	HeadCheckedAt      string                      `json:"head_checked_at,omitempty"`
+	UpdateAvailable    bool                        `json:"update_available"`
+	UpdateSupported    bool                        `json:"update_supported"`
+	UpdateDiagnostic   string                      `json:"update_diagnostic,omitempty"`
+	Versions           []RepositoryVersion         `json:"versions"`
+	InstalledDevices   []RepositoryInstalledDevice `json:"installed_devices"`
+	CreatedAt          string                      `json:"created_at"`
+	UpdatedAt          string                      `json:"updated_at"`
 }
 
 // ListRepositories returns one aggregate per normalized source URL and path.
@@ -90,6 +101,14 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 		CreatedAt:          row.CreatedAt,
 		UpdatedAt:          row.UpdatedAt,
 		UpdateDiagnostic:   RepositoryUnsupportedCode,
+	}
+	digests := make([]string, 0, len(versionRows))
+	for _, versionRow := range versionRows {
+		digests = append(digests, versionRow.RecipeDigest)
+	}
+	repository.InstalledDevices, err = repositoryInstalledDevicesForDigests(ctx, s.q, digests)
+	if err != nil {
+		return Repository{}, err
 	}
 	for _, versionRow := range versionRows {
 		manifest := &Manifest{}
@@ -143,7 +162,78 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 	return repository, nil
 }
 
+// ListRepositoryInstalledDevices returns valid package placements for every
+// immutable version linked to one repository.
+func ListRepositoryInstalledDevices(ctx context.Context, q *db.Queries, repositoryID string) ([]RepositoryInstalledDevice, error) {
+	versions, err := q.ListRecipeRepositoryVersions(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	digests := make([]string, 0, len(versions))
+	for _, version := range versions {
+		digests = append(digests, version.RecipeDigest)
+	}
+	return repositoryInstalledDevicesForDigests(ctx, q, digests)
+}
+
+func repositoryInstalledDevicesForDigests(ctx context.Context, q *db.Queries, digests []string) ([]RepositoryInstalledDevice, error) {
+	byNode := map[string]*RepositoryInstalledDevice{}
+	for _, digest := range digests {
+		artifact, err := q.GetArtifactByIdentity(ctx, "recipe://"+digest)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		placements, err := q.ListPlacements(ctx, artifact.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, placement := range placements {
+			if placement.State != "valid" {
+				continue
+			}
+			device := byNode[placement.NodeID]
+			if device == nil {
+				node, err := q.GetNode(ctx, placement.NodeID)
+				if err != nil {
+					return nil, err
+				}
+				device = &RepositoryInstalledDevice{
+					NodeID: placement.NodeID, NodeName: node.DisplayName, NodeStatus: node.Status,
+					InstalledDigests: []string{},
+				}
+				byNode[placement.NodeID] = device
+			}
+			if !containsString(device.InstalledDigests, digest) {
+				device.InstalledDigests = append(device.InstalledDigests, digest)
+			}
+		}
+	}
+	devices := make([]RepositoryInstalledDevice, 0, len(byNode))
+	for _, device := range byNode {
+		sort.Strings(device.InstalledDigests)
+		devices = append(devices, *device)
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].NodeID < devices[j].NodeID })
+	return devices, nil
+}
+
+func containsString(values []string, value string) bool {
+	for _, existing := range values {
+		if existing == value {
+			return true
+		}
+	}
+	return false
+}
+
 func attachRepositoryVersion(ctx context.Context, q *db.Queries, manifest *Manifest, digest, treeSHA, installedAt string) error {
+	return attachRepositoryVersionWithCurrent(ctx, q, manifest, digest, treeSHA, installedAt, true)
+}
+
+func attachRepositoryVersionWithCurrent(ctx context.Context, q *db.Queries, manifest *Manifest, digest, treeSHA, installedAt string, setCurrent bool) error {
 	if manifest.Metadata.Source == nil || manifest.Metadata.Source.URL == "" || manifest.Metadata.Source.Revision == "" {
 		return nil
 	}
@@ -175,6 +265,9 @@ func attachRepositoryVersion(ctx context.Context, q *db.Queries, manifest *Manif
 		TreeSha: nullableString(treeSHA), Canonical: 1, InstalledAt: installedAt,
 	}); err != nil {
 		return err
+	}
+	if !setCurrent {
+		return nil
 	}
 	return q.SetRecipeRepositoryCurrent(ctx, db.SetRecipeRepositoryCurrentParams{
 		CurrentDigest: nullableString(digest), UpdatedAt: now, ID: id,

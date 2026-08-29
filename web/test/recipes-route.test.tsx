@@ -67,6 +67,11 @@ const recipes = [
   },
 ] as const;
 
+const installedDevices = [
+  { node_id: "node-1", node_name: "spark1", node_status: "online", installed_digests: [alphaDigest] },
+  { node_id: "node-2", node_name: "spark2", node_status: "online", installed_digests: [alphaDigest] },
+];
+
 const repositories = recipes.map((recipe, index) => ({
   id: index === 0 ? alphaRepositoryId : `repo-${recipe.name}`,
   source_url: `https://github.com/MiaAI-Lab/${recipe.name}`,
@@ -84,6 +89,7 @@ const repositories = recipes.map((recipe, index) => ({
     canonical: true,
     installed_at: recipe.installed_at,
   }],
+  installed_devices: index === 0 ? installedDevices : [],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-04T00:00:00Z",
 }));
@@ -102,17 +108,21 @@ const deployments = [
   },
 ];
 
-const affectedHardware = [
-  { node_id: "node-1", node_name: "spark1", node_status: "online", deployment_ids: [deployments[0].id], state: "healthy" },
-  { node_id: "node-2", node_name: "spark2", node_status: "online", deployment_ids: [deployments[0].id], state: "healthy" },
-];
 
-const updateTargets = affectedHardware.map((hardware, rank) => ({
-  source_deployment_id: hardware.deployment_ids[0],
-  node_id: hardware.node_id,
-  node_name: hardware.node_name,
-  node_status: hardware.node_status,
-  rank,
+const updateDevices = installedDevices.map((device) => ({
+  ...device,
+  status: "pending",
+  phase: "fetching",
+  current_step: 0,
+  total_steps: 2,
+}));
+
+const runningDeployments = deployments[0].placements.map((placement) => ({
+  source_deployment_id: deployments[0].id,
+  node_id: placement.node_id,
+  node_name: placement.node_name,
+  node_status: "online",
+  rank: placement.rank,
   status: "pending",
   phase: "fetching",
   current_step: 0,
@@ -151,7 +161,7 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
   server.use(
     http.get("*/api/v1/recipe-repositories", () => HttpResponse.json(rows)),
     http.get(`*/api/v1/recipe-repositories/${alphaRepositoryId}`, () =>
-      HttpResponse.json({ ...repositories[0], affected_hardware: affectedHardware }),
+      HttpResponse.json(repositories[0]),
     ),
     http.get("*/api/v1/recipes", () => HttpResponse.json(recipes)),
     http.get(`*/api/v1/recipes/${alphaDigest}`, () =>
@@ -164,7 +174,10 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
       HttpResponse.json([recipes[0].update]),
     ),
     http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update/plan`, () =>
-      HttpResponse.json({ plan_digest: "sha256:update-plan", ready: true, targets: updateTargets, diagnostics: [] }),
+      HttpResponse.json({
+        plan_digest: "sha256:update-plan", ready: true,
+        installed_devices: installedDevices, running_deployments: runningDeployments, diagnostics: [],
+      }),
     ),
   );
 }
@@ -188,7 +201,7 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(alphaCard).getByText("Choose installation hardware →")).toBeInTheDocument();
     expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update hardware using this recipe" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
     expect(screen.getAllByRole("button", { name: /Choose installation hardware for/ })).toHaveLength(3);
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
@@ -196,13 +209,70 @@ describe("RecipesRoute repository catalog", () => {
     expect(screen.queryByRole("button", { name: "Choose installation hardware for Alpha Model" })).not.toBeInTheDocument();
   });
 
+  it("offers updates only for recipes with valid device placements", async () => {
+    installCatalogHandlers(repositories.map((repository, index) =>
+      index === 0 ? { ...repository, installed_devices: [] } : repository,
+    ));
+    renderCatalog();
+
+    const alphaCard = await screen.findByRole("button", {
+      name: "Choose installation hardware for Alpha Model",
+    });
+    expect(within(alphaCard).getByText("Not installed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
+  });
+
   it("opens the hardware chooser from the unchanged card button", async () => {
     installCatalogHandlers();
     const user = userEvent.setup();
     renderCatalog();
     await user.click(await screen.findByRole("button", { name: "Choose installation hardware for Alpha Model" }));
-    expect(await screen.findByRole("heading", { name: "Choose hardware" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
+  });
+  it("shows installed devices and confirms an update without running deployments", async () => {
+    installCatalogHandlers();
+    server.use(
+      http.get(`*/api/v1/recipe-repositories/${alphaRepositoryId}`, () =>
+        HttpResponse.json(repositories[0]),
+      ),
+      http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update/plan`, () =>
+        HttpResponse.json({
+          plan_digest: "sha256:empty-update", ready: true,
+          installed_devices: installedDevices, running_deployments: null, diagnostics: null,
+        }),
+      ),
+      http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update`, () =>
+        HttpResponse.json({ run_id: "run-empty-update" }, { status: 202 }),
+      ),
+      http.get("*/api/v1/runs/run-empty-update", () =>
+        HttpResponse.json({
+          id: "run-empty-update", module: "library", kind: "recipe-update", state: "succeeded",
+          progress: {
+            phase: "ready", total_devices: 2, completed_devices: 2,
+            installed_devices: updateDevices.map((device) => ({
+              ...device, status: "succeeded", phase: "ready", current_step: 2,
+            })),
+            total_running_targets: 0, completed_running_targets: 0, running_deployments: [],
+          },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderCatalog();
+    await user.click(await screen.findByRole("button", { name: "Update recipe" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
+    expect(within(dialog).getByRole("heading", { name: "Installed devices" })).toBeInTheDocument();
+    expect(within(dialog).getByText("spark1")).toBeInTheDocument();
+    expect(within(dialog).getByText("spark2")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/sha256:/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("fetching")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("heading", { name: "Running deployments to replace" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Update recipe" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
+    expect(await screen.findByRole("heading", { name: "Update complete" })).toBeInTheDocument();
+    expect(screen.getByText("2 of 2 devices updated")).toBeInTheDocument();
   });
 
   it("shows exact hardware and advances persisted update progress to completion", async () => {
@@ -218,29 +288,37 @@ describe("RecipesRoute repository catalog", () => {
           return HttpResponse.json({
             id: "run-update", module: "library", kind: "recipe-update", state: "running",
             progress: {
-              phase: "pulling", total_hardware: 2, completed_hardware: 0,
-              hardware: updateTargets.map((target) => ({ ...target, status: "running", phase: "pulling", current_step: 3 })),
+              phase: "installing_recipe", total_devices: 2, completed_devices: 0,
+              installed_devices: updateDevices.map((device) => ({ ...device, status: "running", phase: "fetching", current_step: 0 })),
+              total_running_targets: 2, completed_running_targets: 0,
+              running_deployments: runningDeployments.map((target) => ({ ...target, status: "running", phase: "pulling", current_step: 3 })),
             },
           });
         }
         return HttpResponse.json({
           id: "run-update", module: "library", kind: "recipe-update", state: "succeeded",
           progress: {
-            phase: "ready", total_hardware: 2, completed_hardware: 2,
-            hardware: updateTargets.map((target) => ({ ...target, status: "succeeded", phase: "ready", current_step: 5 })),
+            phase: "ready", total_devices: 2, completed_devices: 2,
+            installed_devices: updateDevices.map((device) => ({ ...device, status: "succeeded", phase: "ready", current_step: 2 })),
+            total_running_targets: 2, completed_running_targets: 2,
+            running_deployments: runningDeployments.map((target) => ({ ...target, status: "succeeded", phase: "ready", current_step: 5 })),
           },
         });
       }),
     );
     const user = userEvent.setup();
     renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Update hardware using this recipe" }));
-    expect(await screen.findByText("spark1")).toBeInTheDocument();
-    expect(screen.getByText("spark2")).toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "Update this hardware" }));
+    await user.click(await screen.findByRole("button", { name: "Update recipe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
+    const installedSection = within(dialog).getByRole("region", { name: "Installed devices" });
+    expect(within(installedSection).getByText("spark1")).toBeInTheDocument();
+    expect(within(installedSection).getByText("spark2")).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Running deployments to replace" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
+    expect((await within(installedSection).findAllByText("fetching")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("pulling")).length).toBeGreaterThan(0);
     expect(await screen.findByRole("heading", { name: "Update complete" }, { timeout: 3_000 })).toBeInTheDocument();
-    expect(screen.getByText("2 of 2 hardware targets complete")).toBeInTheDocument();
+    expect(screen.getByText("2 of 2 devices updated")).toBeInTheDocument();
   });
 
   it("shows hardware-specific failure and rollback instead of success", async () => {
@@ -254,10 +332,12 @@ describe("RecipesRoute repository catalog", () => {
           id: "run-failed", module: "library", kind: "recipe-update", state: "failed",
           error_message: "replacement failed; source restored",
           progress: {
-            phase: "restored", total_hardware: 2, completed_hardware: 0,
-            hardware: [
-              { ...updateTargets[0], status: "failed", phase: "restored", error_code: "workload.start_failed", error_message: "container exited" },
-              { ...updateTargets[1], status: "failed", phase: "restored" },
+            phase: "restored", total_devices: 2, completed_devices: 2,
+            installed_devices: updateDevices.map((device) => ({ ...device, status: "succeeded", phase: "ready", current_step: 2 })),
+            total_running_targets: 2, completed_running_targets: 0,
+            running_deployments: [
+              { ...runningDeployments[0], status: "failed", phase: "restored", error_code: "workload.start_failed", error_message: "container exited" },
+              { ...runningDeployments[1], status: "failed", phase: "restored" },
             ],
           },
         }),
@@ -265,8 +345,8 @@ describe("RecipesRoute repository catalog", () => {
     );
     const user = userEvent.setup();
     renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Update hardware using this recipe" }));
-    await user.click(await screen.findByRole("button", { name: "Update this hardware" }));
+    await user.click(await screen.findByRole("button", { name: "Update recipe" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Update recipe" })).getByRole("button", { name: "Update recipe" }));
     expect(await screen.findByRole("heading", { name: "Update failed" })).toBeInTheDocument();
     expect(screen.getByText("workload.start_failed: container exited")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Update complete" })).not.toBeInTheDocument();
@@ -299,6 +379,7 @@ describe("RecipesRoute repository catalog", () => {
         return HttpResponse.json([]);
       }),
       http.get("*/api/v1/deployments", () => HttpResponse.json([])),
+      http.get("*/api/v1/artifacts", () => HttpResponse.json([])),
       http.get("*/api/v1/recipes", () => HttpResponse.json([])),
       http.get("*/api/v1/nodes", () => HttpResponse.json([])),
       http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
@@ -318,6 +399,7 @@ describe("RecipesRoute repository catalog", () => {
           : HttpResponse.json([]);
       }),
       http.get("*/api/v1/deployments", () => HttpResponse.json([])),
+      http.get("*/api/v1/artifacts", () => HttpResponse.json([])),
       http.get("*/api/v1/recipes", () => HttpResponse.json([])),
       http.get("*/api/v1/nodes", () => HttpResponse.json([])),
       http.get("*/api/v1/fabrics", () => HttpResponse.json([])),

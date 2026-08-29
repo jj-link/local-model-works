@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -61,6 +63,7 @@ func usage() {
 
 Usage:
   lmw admin create --state DIR [--username NAME] [--password-stdin]
+  lmw admin browser-login --state DIR [--username NAME]
   lmw recipe validate <dir>
   lmw recipe pack <dir> --output <oci-layout>
   lmw recipe init --from-git <url> --revision <ref> [--path <path>] --output <dir>
@@ -79,15 +82,21 @@ func runAdmin(args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Print(`Usage:
   lmw admin create --state DIR [--username NAME] [--password-stdin]
+  lmw admin browser-login --state DIR [--username NAME]
 
-Creates the sole operator account before the first lmw-server start.
+Creates the sole operator account before first start, or mints a one-use,
+60-second browser login token for a local automation process.
 `)
 		return nil
 	}
-	if args[0] != "create" {
-		return fmt.Errorf("unknown admin action %q (want create)", args[0])
+	switch args[0] {
+	case "create":
+		return runAdminCreate(args[1:], os.Stdin, os.Stdout)
+	case "browser-login":
+		return runAdminBrowserLogin(args[1:], os.Stdout)
+	default:
+		return fmt.Errorf("unknown admin action %q (want create or browser-login)", args[0])
 	}
-	return runAdminCreate(args[1:], os.Stdin, os.Stdout)
 }
 
 func runAdminCreate(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -144,6 +153,73 @@ func runAdminCreate(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "operator %s created in %s\n", *username, *state)
 	return nil
+}
+
+func runAdminBrowserLogin(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("admin browser-login", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", "/var/lib/local-model-works", "server state root")
+	username := fs.String("username", "admin", "operator username")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("admin browser-login: unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	*state = filepath.Clean(strings.TrimSpace(*state))
+	*username = strings.TrimSpace(*username)
+	if *state == "" || *state == "." {
+		return fmt.Errorf("admin browser-login: --state must name a directory")
+	}
+	if *username == "" {
+		return fmt.Errorf("admin browser-login: --username is required")
+	}
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(*state, "lmw.db"))
+	if err != nil {
+		return fmt.Errorf("admin browser-login: %w", err)
+	}
+	defer sqlDB.Close()
+	q := db.New(sqlDB)
+	if _, err := q.GetUser(ctx, *username); err != nil {
+		return fmt.Errorf("admin browser-login: operator %q: %w", *username, err)
+	}
+	now := time.Now().UTC()
+	expires := now.Add(time.Minute)
+	if err := q.DeleteExpiredBrowserLoginTokens(ctx, now.Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("admin browser-login: clean expired tokens: %w", err)
+	}
+	token, err := auth.NewToken()
+	if err != nil {
+		return fmt.Errorf("admin browser-login: %w", err)
+	}
+	tokenHash := fmt.Sprintf("%x", auth.SHA256([]byte(token)))
+	payload, _ := json.Marshal(map[string]string{
+		"username": *username, "expires_at": expires.Format(time.RFC3339Nano),
+	})
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("admin browser-login: begin: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := q.WithTx(tx)
+	if err := qtx.CreateBrowserLoginToken(ctx, db.CreateBrowserLoginTokenParams{
+		TokenHash: tokenHash, Username: *username,
+		CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: expires.Format(time.RFC3339Nano),
+	}); err != nil {
+		return fmt.Errorf("admin browser-login: persist token: %w", err)
+	}
+	if _, err := qtx.AppendEvent(ctx, db.AppendEventParams{
+		Type: "auth.browser_login_token_created", Payload: string(payload),
+	}); err != nil {
+		return fmt.Errorf("admin browser-login: audit token: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("admin browser-login: commit: %w", err)
+	}
+	return json.NewEncoder(stdout).Encode(map[string]string{
+		"token": token, "expires_at": expires.Format(time.RFC3339Nano),
+	})
 }
 
 func readAdminPassword(stdin io.Reader, stdout io.Writer, fromStdin bool) (string, error) {

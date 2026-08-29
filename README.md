@@ -66,6 +66,10 @@ lmw recipe pack ./recipe --output ./recipe.oci
 
 Imported Git recipes remain untrusted until an operator approves the stored digest. The Library builder remains an authoring surface for inspecting source trees, selecting assets, validating manifests, and packaging resumable runs. Installed Git repositories are cataloged once by normalized URL and source path, with immutable commits beneath them. For native recipe bundles and registered deterministic compilers, the Library can preview the exact hardware using older commits, install a pinned newer commit without modifying or executing the third-party repository, replace deployments on the same nodes and ranks, and report durable per-hardware progress with automatic restoration on failure or cancellation.
 
+## Serving lifecycle
+
+Serving separates deployments that still require operator attention from fully stopped history. An unexpected container exit records the rank, container, exit code, OOM state, runtime error, and persisted run logs; the controller then stops every remaining rank and releases leases only after each workload is confirmed down. Recovery is explicit: open the stopped deployment and choose **Restart** to create a fresh run with a newly planned, transactionally persisted placement. Repeated **Retry stop** actions are safe, and offline ranks retain their leases until reconnect confirms that the hardware is free.
+
 ## Migration
 
 The CLI provides offline scan/import commands. The authenticated migration API submits resumable jobs: scans persist a digest-addressed plan; imports require the exact digest and explicit confirmation, re-scan the source, verify it remains untouched, and write only to an isolated staging state root.

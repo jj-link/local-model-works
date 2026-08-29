@@ -234,19 +234,6 @@ func (m *Module) listRecipes(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
-type affectedHardwareView struct {
-	NodeID        string   `json:"node_id"`
-	NodeName      string   `json:"node_name"`
-	NodeStatus    string   `json:"node_status"`
-	DeploymentIDs []string `json:"deployment_ids"`
-	State         string   `json:"state"`
-}
-
-type repositoryDetailView struct {
-	recipe.Repository
-	AffectedHardware []affectedHardwareView `json:"affected_hardware"`
-}
-
 type repositoryUpdatePlanRequest struct {
 	ExpectedHeadCommit string `json:"expected_head_commit"`
 }
@@ -257,10 +244,31 @@ type repositoryUpdateRequest struct {
 }
 
 type repositoryUpdatePlanView struct {
-	PlanDigest  string                          `json:"plan_digest"`
-	Ready       bool                            `json:"ready"`
-	Targets     []deploy.RepositoryUpdateTarget `json:"targets"`
-	Diagnostics []diag.Diagnostic               `json:"diagnostics"`
+	PlanDigest         string                          `json:"plan_digest"`
+	Ready              bool                            `json:"ready"`
+	InstalledDevices   []deploy.RepositoryUpdateDevice `json:"installed_devices"`
+	RunningDeployments []deploy.RepositoryUpdateTarget `json:"running_deployments"`
+	Diagnostics        []diag.Diagnostic               `json:"diagnostics"`
+}
+
+func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryUpdatePlanView {
+	installedDevices := plan.InstalledDevices
+	if installedDevices == nil {
+		installedDevices = []deploy.RepositoryUpdateDevice{}
+	}
+	runningDeployments := plan.RunningDeployments
+	if runningDeployments == nil {
+		runningDeployments = []deploy.RepositoryUpdateTarget{}
+	}
+	diagnostics := plan.Diagnostics
+	if diagnostics == nil {
+		diagnostics = []diag.Diagnostic{}
+	}
+	return repositoryUpdatePlanView{
+		PlanDigest: plan.Digest, Ready: plan.Ready,
+		InstalledDevices: installedDevices, RunningDeployments: runningDeployments,
+		Diagnostics: diagnostics,
+	}
 }
 
 func (m *Module) listRecipeRepositories(w http.ResponseWriter, r *http.Request) {
@@ -268,16 +276,6 @@ func (m *Module) listRecipeRepositories(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		httpx.HandleErr(w, err)
 		return
-	}
-	for index := range repositories {
-		affected, affectedErr := m.affectedHardware(r.Context(), repositories[index])
-		if affectedErr != nil {
-			httpx.HandleErr(w, affectedErr)
-			return
-		}
-		if len(affected) > 0 {
-			repositories[index].UpdateAvailable = true
-		}
 	}
 	m.env.Recipes.RefreshUpdatesAsync(m.env.Ctx, recipe.PageUpdateCheckMaxAge)
 	httpx.WriteJSON(w, http.StatusOK, repositories)
@@ -289,16 +287,8 @@ func (m *Module) getRecipeRepository(w http.ResponseWriter, r *http.Request) {
 		httpx.HandleErr(w, mapRecipeError(err))
 		return
 	}
-	affected, err := m.affectedHardware(r.Context(), repository)
-	if err != nil {
-		httpx.HandleErr(w, err)
-		return
-	}
-	if len(affected) > 0 {
-		repository.UpdateAvailable = true
-	}
 	m.env.Recipes.RefreshUpdatesAsync(m.env.Ctx, recipe.PageUpdateCheckMaxAge)
-	httpx.WriteJSON(w, http.StatusOK, repositoryDetailView{Repository: repository, AffectedHardware: affected})
+	httpx.WriteJSON(w, http.StatusOK, repository)
 }
 
 func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
@@ -321,23 +311,21 @@ func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Reque
 		httpx.WriteErr(w, http.StatusConflict, "recipe.update_stale", "observed repository HEAD changed; refresh updates")
 		return
 	}
-	installed, err := m.env.Recipes.InstallRepositoryCommit(r.Context(), repositoryID, request.ExpectedHeadCommit)
+	if len(repository.InstalledDevices) == 0 {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
+		return
+	}
+	candidate, err := m.env.Recipes.PreviewRepositoryCommit(r.Context(), repositoryID, request.ExpectedHeadCommit)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
-	plan, err := m.env.Deploy.PlanRepositoryUpdate(r.Context(), repositoryID, installed.Digest)
+	plan, err := m.env.Deploy.PlanRepositoryUpdateCandidate(r.Context(), repositoryID, candidate)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
-	diagnostics := plan.Diagnostics
-	if diagnostics == nil {
-		diagnostics = []diag.Diagnostic{}
-	}
-	httpx.WriteJSON(w, http.StatusOK, repositoryUpdatePlanView{
-		PlanDigest: plan.Digest, Ready: plan.Ready, Targets: plan.Targets, Diagnostics: diagnostics,
-	})
+	httpx.WriteJSON(w, http.StatusOK, repositoryUpdatePlanResponse(plan))
 }
 
 func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
@@ -352,62 +340,29 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		writeRecipeUpdateError(w, err)
 		return
 	}
-	if repository.Current == nil || !strings.EqualFold(repository.InstalledCommit, request.ExpectedHeadCommit) {
-		httpx.WriteErr(w, http.StatusConflict, "recipe.update_stale", "planned repository version is no longer current")
+	if !repository.UpdateSupported {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, recipe.RepositoryUnsupportedCode, "repository has no deterministic compiler")
 		return
 	}
-	runID, err := m.env.Deploy.CreateRepositoryUpdate(r.Context(), repositoryID, repository.Current.Digest, request.PlanDigest)
+	if repository.ObservedHeadCommit == "" || !strings.EqualFold(repository.ObservedHeadCommit, request.ExpectedHeadCommit) {
+		httpx.WriteErr(w, http.StatusConflict, "recipe.update_stale", "observed repository HEAD changed; refresh updates")
+		return
+	}
+	if len(repository.InstalledDevices) == 0 {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
+		return
+	}
+	installed, err := m.env.Recipes.StageRepositoryCommit(r.Context(), repositoryID, request.ExpectedHeadCommit)
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	runID, err := m.env.Deploy.CreateRepositoryUpdate(r.Context(), repositoryID, installed.Digest, request.PlanDigest)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"run_id": runID})
-}
-
-func (m *Module) affectedHardware(ctx context.Context, repository recipe.Repository) ([]affectedHardwareView, error) {
-	linkedDigests := make(map[string]bool, len(repository.Versions))
-	for _, version := range repository.Versions {
-		linkedDigests[version.Recipe.Digest] = true
-	}
-	currentDigest := ""
-	if repository.Current != nil {
-		currentDigest = repository.Current.Digest
-	}
-	deployments, err := m.env.Deploy.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byNode := map[string]*affectedHardwareView{}
-	for _, deployment := range deployments {
-		if deployment.DesiredState != "running" || !linkedDigests[deployment.RecipeDigest] || deployment.RecipeDigest == currentDigest {
-			continue
-		}
-		for _, placement := range deployment.Placements {
-			item := byNode[placement.NodeID]
-			if item == nil {
-				nodeName, nodeStatus := placement.NodeName, "unknown"
-				if node, nodeErr := m.env.Q.GetNode(ctx, placement.NodeID); nodeErr == nil {
-					nodeName, nodeStatus = node.DisplayName, node.Status
-				}
-				item = &affectedHardwareView{NodeID: placement.NodeID, NodeName: nodeName, NodeStatus: nodeStatus, State: deployment.ObservedState}
-				byNode[placement.NodeID] = item
-			}
-			if !slicesContains(item.DeploymentIDs, deployment.ID) {
-				item.DeploymentIDs = append(item.DeploymentIDs, deployment.ID)
-			}
-		}
-	}
-	nodeIDs := make([]string, 0, len(byNode))
-	for nodeID := range byNode {
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-	sort.Strings(nodeIDs)
-	out := make([]affectedHardwareView, 0, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		sort.Strings(byNode[nodeID].DeploymentIDs)
-		out = append(out, *byNode[nodeID])
-	}
-	return out, nil
 }
 
 func writeRecipeUpdateError(w http.ResponseWriter, err error) {

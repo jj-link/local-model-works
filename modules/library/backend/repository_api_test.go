@@ -26,7 +26,7 @@ type repositoryAPINodes struct{}
 func (repositoryAPINodes) Send(string, *agentv1.ServerMessage) bool { return true }
 func (repositoryAPINodes) Online(string) bool                       { return true }
 
-func TestRepositoryDetailDeduplicatesVersionsAndShowsAffectedHardware(t *testing.T) {
+func TestRepositoryDetailDeduplicatesVersionsAndShowsInstalledDevices(t *testing.T) {
 	ctx := context.Background()
 	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "library.db"))
 	if err != nil {
@@ -85,13 +85,35 @@ func TestRepositoryDetailDeduplicatesVersionsAndShowsAffectedHardware(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	placement := `{"ranks":{"node-a":0},"entries":[{"node_id":"node-a","node_name":"Spark A","rank":0,"accelerator_index":0}],"workload":0}`
-	if err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID: "deployment-old", RecipeDigest: oldDigest, Profile: "", Placement: placement,
+	repository, err := recipes.GetRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.InstalledDevices) != 0 {
+		t.Fatalf("repository without package placements is installed on %+v", repository.InstalledDevices)
+	}
+	if err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: "recipe-package-old", Kind: "recipe", Identity: "recipe://" + oldDigest,
+		Digest: sql.NullString{String: oldDigest, Valid: true}, Metadata: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{ObservedState: "healthy", ID: "deployment-old"}); err != nil {
+	if err := queries.UpsertPlacement(ctx, db.UpsertPlacementParams{
+		ArtifactID: "recipe-package-old", NodeID: "node-a", Path: "/var/lib/lmw/recipes/old",
+		State: "valid", Diagnostics: "[]",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: "recipe-package-new", Kind: "recipe", Identity: "recipe://" + newDigest,
+		Digest: sql.NullString{String: newDigest, Valid: true}, Metadata: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.UpsertPlacement(ctx, db.UpsertPlacementParams{
+		ArtifactID: "recipe-package-new", NodeID: "node-a", Path: "/var/lib/lmw/recipes/new",
+		State: "valid", Diagnostics: "[]",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,10 +127,9 @@ func TestRepositoryDetailDeduplicatesVersionsAndShowsAffectedHardware(t *testing
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	var body struct {
-		ID               string                     `json:"id"`
-		UpdateAvailable  bool                       `json:"update_available"`
-		Versions         []recipe.RepositoryVersion `json:"versions"`
-		AffectedHardware []affectedHardwareView     `json:"affected_hardware"`
+		ID               string                             `json:"id"`
+		Versions         []recipe.RepositoryVersion         `json:"versions"`
+		InstalledDevices []recipe.RepositoryInstalledDevice `json:"installed_devices"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -116,12 +137,31 @@ func TestRepositoryDetailDeduplicatesVersionsAndShowsAffectedHardware(t *testing
 	if body.ID != repositoryID || len(body.Versions) != 2 {
 		t.Fatalf("repository = %#v", body)
 	}
-	if !body.UpdateAvailable || len(body.AffectedHardware) != 1 {
-		t.Fatalf("affected repository = %#v", body)
+	if len(body.InstalledDevices) != 1 {
+		t.Fatalf("installed devices = %+v", body.InstalledDevices)
 	}
-	hardware := body.AffectedHardware[0]
-	if hardware.NodeName != "Spark A" || len(hardware.DeploymentIDs) != 1 || hardware.DeploymentIDs[0] != "deployment-old" || hardware.State != "healthy" {
-		t.Fatalf("hardware = %#v", hardware)
+	device := body.InstalledDevices[0]
+	if device.NodeID != "node-a" || device.NodeName != "Spark A" ||
+		len(device.InstalledDigests) != 2 ||
+		device.InstalledDigests[0] != oldDigest || device.InstalledDigests[1] != newDigest {
+		t.Fatalf("installed device = %+v", device)
+	}
+}
+
+func TestRepositoryUpdatePlanResponseUsesEmptyArrays(t *testing.T) {
+	response := repositoryUpdatePlanResponse(&deploy.RepositoryUpdatePlan{})
+	if response.InstalledDevices == nil || response.RunningDeployments == nil || response.Diagnostics == nil {
+		t.Fatalf("response arrays = devices %#v deployments %#v diagnostics %#v",
+			response.InstalledDevices, response.RunningDeployments, response.Diagnostics)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"installed_devices":[]`) ||
+		!strings.Contains(string(encoded), `"running_deployments":[]`) ||
+		!strings.Contains(string(encoded), `"diagnostics":[]`) {
+		t.Fatalf("response = %s", encoded)
 	}
 }
 

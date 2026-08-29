@@ -1,18 +1,19 @@
 apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
-  name: qwen38-27b-rtx6000pro-dflash2
-  version: 1.0.0
-  displayName: Qwen3.8-27B NVFP4 DFlash2 — RTX PRO 6000
+  name: qwen38-27b-radixark-nvfp4-dflash2-avt
+  version: 1.0.3
+  displayName: Qwen3.8-27B RadixArk NVFP4 DFlash2 — AVT
   model: Qwen3.8-27B
   engine: sglang
   description: >-
-    RadixArk Qwen3.8-27B NVFP4 on one SM120 RTX PRO 6000 with the pinned
-    MiaAI-Lab SGLang DFlash2 backport, native 262K context, FP8 KV cache,
-    eight concurrent requests, OpenAI API on port 8888, and logprob support.
-  license: NOASSERTION
+    RadixArk Qwen3.8-27B NVFP4 on one RTX PRO 6000 (SM120) with SGLang,
+    DFlash2 speculative decoding, native 262K context, FP8 KV cache, eight
+    concurrent requests, WSL-safe CPU multimodal transport, protected admin
+    endpoints, and the pinned MiaAI-Lab DFlash2 backport overlay.
+  license: Apache-2.0
   source:
-    url: https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark.git
+    url: https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark
     revision: "c172405482871566033d4d8f5ac519e7a3ce1f79"
     path: .
 compatibility:
@@ -28,8 +29,8 @@ artifacts:
     source:
       type: huggingface
       identity: hf://RadixArk/Qwen3.8-27B-NVFP4
-      revision: "91cea059647696fd83964e43d57db122ff745993"
-    mount: /models/hub/models--RadixArk--Qwen3.8-27B-NVFP4
+      revision: "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
+    mount: /models/base
     validation: snapshot
   - name: drafter
     kind: model
@@ -37,47 +38,11 @@ artifacts:
       type: huggingface
       identity: hf://z-lab/Qwen3.8-27B-DFlash2
       revision: "50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
-    mount: /models/hub/models--z-lab--Qwen3.8-27B-DFlash2
+    mount: /models/drafter
     validation: snapshot
-workloads:
-  - match:
-      nodeCount: 1
-      accelerator:
-        vendor: nvidia
-        architectures:
-          - sm_120
-    image:
-      reference: lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-      digest: sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-    command:
-      - /bin/bash
-      - /lmw/assets/serve.sh
-    args: []
-    env:
-      MODEL_PATH: "${artifact.model.path}"
-      DRAFTER_PATH: "${artifact.drafter.path}"
-      SERVED: qwen3.8-27b-6000pro
-      PORT: "8888"
-      MAX_RUNNING_REQUESTS: "8"
-    devices:
-      accelerator:
-        all: true
-    networkMode: host
-    permissions:
-      - network.host
-      - memory.shm-large
-    ports:
-      - container: 8888
-        host: 8888
-        protocol: tcp
-    resources:
-      cpu: 16
-      memoryBytes: 103079215104
-      shmBytes: 34359738368
-      tmpfsBytes: 8589934592
-      pids: 8192
 assets:
-  - serve.sh
+  - assets/capabilities.json
+  - assets/serve.sh
   - patch/sglang/srt/models/dflash.py
   - patch/sglang/kernels/ops/speculative/dflash.py
   - patch/sglang/srt/speculative/dflash_utils.py
@@ -91,3 +56,53 @@ assets:
   - patch/sglang/srt/layers/logprob_processor.py
   - patch/sglang/LICENSE
   - patch/sglang/README.md
+workloads:
+  - image:
+      reference: lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
+      digest: sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
+    command:
+      - /bin/bash
+      - /lmw/assets/assets/serve.sh
+    args:
+      - --model
+      - "${artifact.model.path}"
+      - --drafter
+      - "${artifact.drafter.path}"
+      - --served
+      - qwen3.8-27b-6000pro
+      - --port
+      - "8000"
+    env:
+      HOME: /tmp/home
+      NUMBA_CACHE_DIR: /tmp/numba
+      TORCH_EXTENSIONS_DIR: /tmp/torch-extensions
+      TRITON_CACHE_DIR: /tmp/triton
+      XDG_CACHE_HOME: /tmp/cache
+    devices:
+      accelerator:
+        all: true
+    networkMode: bridge
+    permissions:
+      - memory.shm-large
+    ports:
+      - container: 8000
+        host: 8000
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8000
+    resources:
+      cpu: 8
+      memoryBytes: 68719476736
+      pids: 4096
+      shmBytes: 34359738368
+      tmpfsBytes: 4294967296
+    verify:
+      expect:
+        statusCode: 200
+      httpGet:
+        method: GET
+        path: /v1/models
+        port: 8000

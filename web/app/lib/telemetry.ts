@@ -6,18 +6,10 @@ import type { Deployment, Node, NodePayload } from "~/lib/api";
 export type TelemetryRange = "15m" | "1h" | "24h" | "7d";
 export const TELEMETRY_RANGES: TelemetryRange[] = ["15m", "1h", "24h", "7d"];
 
-const CURRENT_DEPLOYMENT_STATES: Record<string, true> = {
-  preparing: true,
-  starting: true,
-  stopping: true,
-};
 
-/** A deployment still present in operational views, including transitions. */
+/** A deployment still needs operator attention unless it is fully stopped. */
 export function isCurrentDeployment(deployment: Deployment): boolean {
-  return (
-    deployment.desired_state === "running" ||
-    Boolean(CURRENT_DEPLOYMENT_STATES[deployment.observed_state ?? ""])
-  );
+  return !(deployment.desired_state === "stopped" && deployment.observed_state === "stopped");
 }
 
 export interface RangePolicy {

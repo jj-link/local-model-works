@@ -57,10 +57,27 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 	}
 	qwen := &MiaQwenSGLangCompiler{validator: validator}
 	assertDeterministic(t, qwen, qwenSource, qwenCheckout)
+	compiledQwen, err := qwen.Compile(context.Background(), qwenSource, qwenCheckout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qwenManifest, err := recipe.Parse(compiledQwen.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qwenManifest.Metadata.Name != "qwen38-27b-radixark-nvfp4-dflash2-avt" ||
+		qwenManifest.Metadata.Version != "1.0.3" ||
+		qwenManifest.Metadata.License != "Apache-2.0" {
+		t.Fatalf("managed Qwen metadata = %+v", qwenManifest.Metadata)
+	}
+	if err := os.Remove(filepath.Join(qwenCheckout, filepath.FromSlash(qwenManagedLicense))); err != nil {
+		t.Fatal(err)
+	}
+	assertDeterministic(t, qwen, qwenSource, qwenCheckout)
 	if err := os.WriteFile(filepath.Join(qwenCheckout, "patch", "sglang", "unexpected.py"), []byte("pass\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := qwen.Compile(context.Background(), qwenSource, qwenCheckout, nil)
+	_, err = qwen.Compile(context.Background(), qwenSource, qwenCheckout, nil)
 	var packErr *recipe.PackError
 	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
 		t.Fatalf("unexpected layout error = %v", err)

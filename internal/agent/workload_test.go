@@ -191,3 +191,57 @@ func TestShortIDUsesFullIdentity(t *testing.T) {
 		t.Fatalf("short IDs are not path-safe: %q %q", first, second)
 	}
 }
+
+func TestExitedStateCarriesCrashMetadata(t *testing.T) {
+	info := &runtime.ContainerInfo{
+		ID:        "container-exited",
+		State:     "exited",
+		ExitCode:  137,
+		Error:     "container runtime failure",
+		OOMKilled: true,
+		Labels:    runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "serving"),
+	}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", &ownershipRuntime{info: info}, nil)
+
+	a.workloads.reportState(info)
+
+	select {
+	case message := <-a.sendQ:
+		update := message.GetStateUpdate()
+		if update == nil {
+			t.Fatalf("message = %T, want state update", message.GetBody())
+		}
+		if update.GetDeploymentId() != "deployment-1234" || update.GetContainerId() != info.ID ||
+			update.GetState() != "exited" || update.GetRank() != 0 {
+			t.Fatalf("identity/state = %+v", update)
+		}
+		if update.GetExitCode() != 137 || !update.GetOomKilled() ||
+			update.GetDiagnosticMessage() != info.Error {
+			t.Fatalf("crash metadata = %+v", update)
+		}
+	default:
+		t.Fatal("missing state update")
+	}
+}
+
+func TestSuccessfulExitedInspectCarriesCrashMetadata(t *testing.T) {
+	info := &runtime.ContainerInfo{
+		ID:        "container-exited",
+		State:     "exited",
+		ExitCode:  137,
+		Error:     "container runtime failure",
+		OOMKilled: true,
+		Labels:    runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "serving"),
+	}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", &ownershipRuntime{info: info}, nil)
+
+	a.handleWorkload(context.Background(), testWorkloadCommand(agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil))
+
+	result := commandResult(t, a)
+	if !result.GetOk() || result.GetContainerId() != info.ID || result.GetContainerState() != "exited" {
+		t.Fatalf("inspect identity/state = %+v", result)
+	}
+	if result.GetExitCode() != 137 || !result.GetOomKilled() || result.GetError() != info.Error {
+		t.Fatalf("inspect crash metadata = %+v", result)
+	}
+}

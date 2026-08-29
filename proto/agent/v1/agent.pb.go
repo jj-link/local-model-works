@@ -2070,6 +2070,7 @@ type CommandResult struct {
 	// code N", which ok/exit_code alone cannot.
 	ContainerState string `protobuf:"bytes,6,opt,name=container_state,json=containerState,proto3" json:"container_state,omitempty"`
 	OutputJson     []byte `protobuf:"bytes,7,opt,name=output_json,json=outputJson,proto3" json:"output_json,omitempty"`
+	OomKilled      bool   `protobuf:"varint,8,opt,name=oom_killed,json=oomKilled,proto3" json:"oom_killed,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2153,6 +2154,13 @@ func (x *CommandResult) GetOutputJson() []byte {
 	return nil
 }
 
+func (x *CommandResult) GetOomKilled() bool {
+	if x != nil {
+		return x.OomKilled
+	}
+	return false
+}
+
 type StateUpdate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Deployment UUID this report belongs to (empty for ad-hoc reports).
@@ -2166,6 +2174,8 @@ type StateUpdate struct {
 	Rank              int32  `protobuf:"varint,8,opt,name=rank,proto3" json:"rank,omitempty"`
 	DiagnosticCode    string `protobuf:"bytes,6,opt,name=diagnostic_code,json=diagnosticCode,proto3" json:"diagnostic_code,omitempty"`
 	DiagnosticMessage string `protobuf:"bytes,7,opt,name=diagnostic_message,json=diagnosticMessage,proto3" json:"diagnostic_message,omitempty"`
+	ExitCode          int32  `protobuf:"varint,9,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	OomKilled         bool   `protobuf:"varint,10,opt,name=oom_killed,json=oomKilled,proto3" json:"oom_killed,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -2254,6 +2264,20 @@ func (x *StateUpdate) GetDiagnosticMessage() string {
 		return x.DiagnosticMessage
 	}
 	return ""
+}
+
+func (x *StateUpdate) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *StateUpdate) GetOomKilled() bool {
+	if x != nil {
+		return x.OomKilled
+	}
+	return false
 }
 
 type LogChunk struct {
@@ -3795,7 +3819,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x19NetworkInterfaceTelemetry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12-\n" +
 	"\x13rx_bytes_per_second\x18\x02 \x01(\x04R\x10rxBytesPerSecond\x12-\n" +
-	"\x13tx_bytes_per_second\x18\x03 \x01(\x04R\x10txBytesPerSecond\"\xde\x01\n" +
+	"\x13tx_bytes_per_second\x18\x03 \x01(\x04R\x10txBytesPerSecond\"\xfd\x01\n" +
 	"\rCommandResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x0e\n" +
@@ -3805,7 +3829,9 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\fcontainer_id\x18\x05 \x01(\tR\vcontainerId\x12'\n" +
 	"\x0fcontainer_state\x18\x06 \x01(\tR\x0econtainerState\x12\x1f\n" +
 	"\voutput_json\x18\a \x01(\fR\n" +
-	"outputJson\"\xa1\x02\n" +
+	"outputJson\x12\x1d\n" +
+	"\n" +
+	"oom_killed\x18\b \x01(\bR\toomKilled\"\xdd\x02\n" +
 	"\vStateUpdate\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -3814,7 +3840,11 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\rendpoint_port\x18\x05 \x01(\rR\fendpointPort\x12\x12\n" +
 	"\x04rank\x18\b \x01(\x05R\x04rank\x12'\n" +
 	"\x0fdiagnostic_code\x18\x06 \x01(\tR\x0ediagnosticCode\x12-\n" +
-	"\x12diagnostic_message\x18\a \x01(\tR\x11diagnosticMessage\"\xd3\x01\n" +
+	"\x12diagnostic_message\x18\a \x01(\tR\x11diagnosticMessage\x12\x1b\n" +
+	"\texit_code\x18\t \x01(\x05R\bexitCode\x12\x1d\n" +
+	"\n" +
+	"oom_killed\x18\n" +
+	" \x01(\bR\toomKilled\"\xd3\x01\n" +
 	"\bLogChunk\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x12\n" +

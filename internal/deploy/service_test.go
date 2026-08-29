@@ -27,6 +27,7 @@ type fakeNodes struct {
 	mu     sync.Mutex
 	online map[string]bool
 	msgs   []sentMsg
+	onSend func(*agentv1.ServerMessage)
 }
 
 type sentMsg struct {
@@ -36,11 +37,16 @@ type sentMsg struct {
 
 func (f *fakeNodes) Send(nodeID string, m *agentv1.ServerMessage) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if !f.online[nodeID] {
+		f.mu.Unlock()
 		return false
 	}
 	f.msgs = append(f.msgs, sentMsg{nodeID: nodeID, msg: m})
+	onSend := f.onSend
+	f.mu.Unlock()
+	if onSend != nil {
+		onSend(m)
+	}
 	return true
 }
 
@@ -166,6 +172,25 @@ func (h *harness) seedNode(t *testing.T, nodeID string, accs []inventory.Acceler
 
 func (h *harness) seedRecipe(t *testing.T, digest, manifest string) {
 	t.Helper()
+	h.seedRecipeUnplaced(t, digest, manifest)
+	ctx := context.Background()
+	packageID := "package-" + strings.TrimPrefix(digest, "sha256:")
+	nodes, err := h.q.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range nodes {
+		if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
+			ArtifactID: packageID, NodeID: node.ID, Path: "/var/lib/lmw/recipes/" + digest,
+			State: "valid", Diagnostics: "[]",
+		}); err != nil {
+			t.Fatalf("seed recipe package placement: %v", err)
+		}
+	}
+}
+
+func (h *harness) seedRecipeUnplaced(t *testing.T, digest, manifest string) {
+	t.Helper()
 	ctx := context.Background()
 	if err := h.q.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: "test", Version: "1",
@@ -179,18 +204,6 @@ func (h *harness) seedRecipe(t *testing.T, digest, manifest string) {
 		Digest: nullString(digest), Metadata: "{}",
 	}); err != nil {
 		t.Fatalf("create recipe package artifact: %v", err)
-	}
-	nodes, err := h.q.ListNodes(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, node := range nodes {
-		if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{
-			ArtifactID: packageID, NodeID: node.ID, Path: "/var/lib/lmw/recipes/" + digest,
-			State: "valid", Diagnostics: "[]",
-		}); err != nil {
-			t.Fatalf("seed recipe package placement: %v", err)
-		}
 	}
 }
 
@@ -938,6 +951,176 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 	}
 }
 
+func TestUnexpectedWorkloadTerminationFailsAndStopsDeployment(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     string
+		exitCode  int32
+		oomKilled bool
+		wantCode  string
+	}{
+		{name: "exited", state: "exited", exitCode: 137, wantCode: "workload.exited"},
+		{name: "dead", state: "dead", exitCode: 255, wantCode: "workload.dead"},
+		{name: "missing", state: "missing", wantCode: "workload.missing"},
+		{name: "oom killed", state: "exited", exitCode: 137, oomKilled: true, wantCode: "workload.oom_killed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedNode(t, "node-a", gpuAccs("a"), "")
+			h.seedRecipe(t, "recipe-gpu", gpuManifest)
+			dep := h.createDeployment(t, "recipe-gpu")
+			ctx := context.Background()
+
+			row := deploymentRow(t, h, dep.ID)
+			ps := ParsePlacementSet(row.Placement)
+			resource := "gpu:node-a:" + ps.Entries[0].AcceleratorUUID
+			if _, err := h.dbh.ExecContext(ctx,
+				"UPDATE deployments SET dispatch=?, observed_state='healthy', endpoint='100.86.3.45:8000' WHERE id=?",
+				`{"0":"started"}`, dep.ID); err != nil {
+				t.Fatalf("seed running deployment: %v", err)
+			}
+
+			update := &agentv1.StateUpdate{
+				DeploymentId:      dep.ID,
+				ContainerId:       "container-a",
+				State:             tt.state,
+				Rank:              0,
+				ExitCode:          tt.exitCode,
+				OomKilled:         tt.oomKilled,
+				DiagnosticMessage: "runtime failure",
+			}
+			h.svc.OnStateUpdate(ctx, "node-a", update)
+			h.svc.OnStateUpdate(ctx, "node-a", update)
+
+			row = deploymentRow(t, h, dep.ID)
+			if row.DesiredState != "stopped" || row.ObservedState != "stopped" {
+				t.Fatalf("deployment state = %s/%s, want stopped/stopped", row.DesiredState, row.ObservedState)
+			}
+			if row.Endpoint.Valid {
+				t.Fatalf("endpoint = %q, want NULL", row.Endpoint.String)
+			}
+			if got := ParseDispatch(row.Dispatch).Get(0); got != PhaseStopped {
+				t.Fatalf("rank phase = %s, want stopped", got)
+			}
+			diagnostics := diag.Decode(row.Diagnostics)
+			if len(diagnostics) != 1 || diagnostics[0].Code != tt.wantCode ||
+				diagnostics[0].Resource == nil || *diagnostics[0].Resource != "rank:0" {
+				t.Fatalf("diagnostics = %+v", diagnostics)
+			}
+
+			run, err := h.svc.runs.Get(ctx, dep.RunID)
+			if err != nil {
+				t.Fatalf("get failed run: %v", err)
+			}
+			if run.State != string(runs.Failed) || run.ErrorCode == nil || *run.ErrorCode != tt.wantCode {
+				t.Fatalf("run = %+v", run)
+			}
+			for _, part := range []string{"rank 0", "container container-a", "state=" + tt.state, "oom_killed="} {
+				if run.ErrorMessage == nil || !strings.Contains(*run.ErrorMessage, part) {
+					t.Fatalf("error message = %v, missing %q", run.ErrorMessage, part)
+				}
+			}
+			if tt.state != "missing" && !strings.Contains(*run.ErrorMessage, fmt.Sprintf("exit_code=%d", tt.exitCode)) {
+				t.Fatalf("error message = %q, missing exit code", *run.ErrorMessage)
+			}
+
+			var active int
+			if err := h.dbh.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM leases WHERE resource=? AND state='active'", resource).Scan(&active); err != nil {
+				t.Fatalf("count leases: %v", err)
+			}
+			if active != 0 {
+				t.Fatalf("active leases = %d, want 0", active)
+			}
+		})
+	}
+}
+
+func TestUnexpectedRankFailureHoldsLeasesUntilPeersStop(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedNode(t, "node-b", gpuAccs("b"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+
+	row := deploymentRow(t, h, dep.ID)
+	placements := ParsePlacementSet(row.Placement)
+	placements.Entries = append(placements.Entries, Placement{
+		NodeID:           "node-b",
+		NodeName:         "node-b",
+		Rank:             1,
+		AcceleratorIndex: 0,
+		AcceleratorUUID:  "GPU-b",
+		Accelerators:     []string{"GPU-b"},
+	})
+	placements.Ranks["node-b"] = 1
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET placement=?, dispatch=?, observed_state='healthy', endpoint='100.86.3.45:8000' WHERE id=?",
+		placements.Marshal(), `{"0":"started","1":"started"}`, dep.ID); err != nil {
+		t.Fatalf("seed multi-rank deployment: %v", err)
+	}
+	if _, err := h.dbh.ExecContext(ctx,
+		"INSERT INTO leases(resource, owner_kind, owner_id) VALUES(?, 'deployment', ?)",
+		"gpu:node-b:GPU-b", dep.ID); err != nil {
+		t.Fatalf("seed peer lease: %v", err)
+	}
+
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID,
+		ContainerId:  "container-a",
+		State:        "exited",
+		Rank:         0,
+		ExitCode:     1,
+	})
+
+	row = deploymentRow(t, h, dep.ID)
+	if row.DesiredState != "stopped" || row.ObservedState != "stopping" {
+		t.Fatalf("deployment state = %s/%s, want stopped/stopping", row.DesiredState, row.ObservedState)
+	}
+	if got := ParseDispatch(row.Dispatch).Get(1); got != PhaseStopping {
+		t.Fatalf("peer phase = %s, want stopping", got)
+	}
+	var active int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE owner_kind='deployment' AND owner_id=? AND state='active' AND resource LIKE 'gpu:%'",
+		dep.ID).Scan(&active); err != nil {
+		t.Fatalf("count leases: %v", err)
+	}
+	if active != 2 {
+		t.Fatalf("active leases after first crash = %d, want 2", active)
+	}
+	commands := h.nodes.workloadCommands()
+	last := commands[len(commands)-1]
+	if last.nodeID != "node-b" || last.msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("peer stop command = node %s op %s", last.nodeID, last.msg.GetWorkloadCommand().GetOp())
+	}
+
+	h.svc.OnStateUpdate(ctx, "node-b", &agentv1.StateUpdate{
+		DeploymentId: dep.ID,
+		ContainerId:  "container-b",
+		State:        "missing",
+		Rank:         1,
+	})
+
+	row = deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopped" {
+		t.Fatalf("observed = %s, want stopped", row.ObservedState)
+	}
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE owner_kind='deployment' AND owner_id=? AND state='active' AND resource LIKE 'gpu:%'",
+		dep.ID).Scan(&active); err != nil {
+		t.Fatalf("count released leases: %v", err)
+	}
+	if active != 0 {
+		t.Fatalf("active leases after peer stop = %d, want 0", active)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Failed) {
+		t.Fatalf("run state = %s, want failed", got)
+	}
+}
+
 func contains(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {
@@ -1036,5 +1219,315 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 	}
 	if nr != 0 {
 		t.Fatalf("runs remaining = %d, want 0", nr)
+	}
+}
+
+func TestStopCompletesBeforeReturningForPreContainerPhases(t *testing.T) {
+	for _, phase := range []string{PhaseNone, PhasePrepared} {
+		t.Run(phase, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedNode(t, "node-a", gpuAccs("a"), "")
+			h.seedRecipe(t, "recipe-gpu", gpuManifest)
+			dep := h.createDeployment(t, "recipe-gpu")
+			ctx := context.Background()
+			dispatch, _ := json.Marshal(dispatchPhases{0: phase})
+			if _, err := h.dbh.ExecContext(ctx,
+				"UPDATE deployments SET dispatch=?, observed_state='healthy', endpoint='100.86.3.45:8000' WHERE id=?",
+				string(dispatch), dep.ID); err != nil {
+				t.Fatalf("seed phase: %v", err)
+			}
+
+			stopped, err := h.svc.Stop(ctx, dep.ID)
+			if err != nil {
+				t.Fatalf("stop: %v", err)
+			}
+			if stopped.DesiredState != "stopped" || stopped.ObservedState != "stopped" {
+				t.Fatalf("deployment = %s/%s, want stopped/stopped", stopped.DesiredState, stopped.ObservedState)
+			}
+			row := deploymentRow(t, h, dep.ID)
+			if row.Endpoint.Valid {
+				t.Fatalf("endpoint = %q, want NULL", row.Endpoint.String)
+			}
+			if got := ParseDispatch(row.Dispatch).Get(0); got != PhaseStopped {
+				t.Fatalf("phase = %s, want stopped", got)
+			}
+		})
+	}
+}
+
+func TestSynchronousStopAckCannotRegressStoppedPhase(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, observed_state='healthy' WHERE id=?",
+		`{"0":"started"}`, dep.ID); err != nil {
+		t.Fatalf("seed started phase: %v", err)
+	}
+	h.nodes.onSend = func(message *agentv1.ServerMessage) {
+		command := message.GetWorkloadCommand()
+		if command == nil || command.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+			return
+		}
+		h.svc.OnCommandResult(ctx, &agentv1.CommandResult{
+			CommandId:      command.GetCommandId(),
+			Ok:             true,
+			ContainerState: "exited",
+		})
+	}
+
+	stopped, err := h.svc.Stop(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if stopped.ObservedState != "stopped" {
+		t.Fatalf("observed = %s, want stopped", stopped.ObservedState)
+	}
+	if got := ParseDispatch(deploymentRow(t, h, dep.ID).Dispatch).Get(0); got != PhaseStopped {
+		t.Fatalf("phase = %s, want stopped", got)
+	}
+}
+
+func TestRepeatedStopRedrivesUnresolvedRank(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, observed_state='healthy' WHERE id=?",
+		`{"0":"started"}`, dep.ID); err != nil {
+		t.Fatalf("seed started phase: %v", err)
+	}
+	h.nodes.setOnline("node-a", false)
+
+	first, err := h.svc.Stop(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("first stop: %v", err)
+	}
+	if first.ObservedState != "stopping" {
+		t.Fatalf("first observed = %s, want stopping", first.ObservedState)
+	}
+	if got := ParseDispatch(deploymentRow(t, h, dep.ID).Dispatch).Get(0); got != PhaseStopping {
+		t.Fatalf("offline phase = %s, want stopping", got)
+	}
+	if _, err := h.svc.Start(ctx, dep.ID); err == nil {
+		t.Fatal("start while stopping should fail")
+	}
+	var active int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE owner_kind='deployment' AND owner_id=? AND state='active'",
+		dep.ID).Scan(&active); err != nil {
+		t.Fatalf("count held leases: %v", err)
+	}
+	if active == 0 {
+		t.Fatal("offline stop released leases")
+	}
+
+	h.nodes.setOnline("node-a", true)
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("retry stop: %v", err)
+	}
+	commands := h.nodes.workloadCommands()
+	last := commands[len(commands)-1].msg.GetWorkloadCommand()
+	if last.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("retry op = %s, want STOP", last.GetOp())
+	}
+	h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: last.GetCommandId(), Ok: true})
+	if got := deploymentRow(t, h, dep.ID).ObservedState; got != "stopped" {
+		t.Fatalf("observed after ack = %s, want stopped", got)
+	}
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("idempotent stopped call: %v", err)
+	}
+}
+
+func TestConvergeRepairsAllStoppedLegacyDeployment(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	if err := h.svc.runs.Cancel(ctx, dep.RunID); err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET desired_state='stopped', observed_state='stopping', dispatch=?, endpoint='stale:8000' WHERE id=?",
+		`{"0":"stopped"}`, dep.ID); err != nil {
+		t.Fatalf("seed legacy stopping row: %v", err)
+	}
+
+	h.svc.Converge(ctx, "node-a")
+
+	row := deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopped" {
+		t.Fatalf("observed = %s, want stopped", row.ObservedState)
+	}
+	if row.Endpoint.Valid {
+		t.Fatalf("endpoint = %q, want NULL", row.Endpoint.String)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Cancelled) {
+		t.Fatalf("run = %s, want cancelled", got)
+	}
+	var active int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE owner_kind='deployment' AND owner_id=? AND state='active'",
+		dep.ID).Scan(&active); err != nil {
+		t.Fatalf("count leases: %v", err)
+	}
+	if active != 0 {
+		t.Fatalf("active leases = %d, want 0", active)
+	}
+}
+
+func TestConvergeClearsLegacyFullyStoppedEndpoint(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET desired_state='stopped', observed_state='stopped', dispatch=?, endpoint='stale:8000' WHERE id=?",
+		`{"0":"stopped"}`, dep.ID); err != nil {
+		t.Fatalf("seed fully stopped row: %v", err)
+	}
+
+	h.svc.Converge(ctx, "node-a")
+
+	row := deploymentRow(t, h, dep.ID)
+	if row.Endpoint.Valid {
+		t.Fatalf("endpoint = %q, want NULL", row.Endpoint.String)
+	}
+}
+
+func TestStartPersistsReplannedPlacementAndRetainsFailedRun(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("old"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+
+	original := deploymentRow(t, h, dep.ID)
+	if _, err := h.dbh.ExecContext(ctx,
+		"UPDATE deployments SET dispatch=?, observed_state='healthy', endpoint='stale:9999', model_capabilities=? WHERE id=?",
+		`{"0":"started"}`, `{"old":true}`, dep.ID); err != nil {
+		t.Fatalf("seed running deployment: %v", err)
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId:      dep.ID,
+		ContainerId:       "container-old",
+		State:             "exited",
+		Rank:              0,
+		ExitCode:          1,
+		DiagnosticMessage: "serve crashed",
+	})
+	failedRun, err := h.svc.runs.Get(ctx, dep.RunID)
+	if err != nil {
+		t.Fatalf("get failed run: %v", err)
+	}
+	if failedRun.State != string(runs.Failed) {
+		t.Fatalf("old run state = %s, want failed", failedRun.State)
+	}
+
+	if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{
+		ID:        "node-a",
+		Inventory: nullString(inventoryWith(gpuAccs("new"), "")),
+	}); err != nil {
+		t.Fatalf("replace inventory: %v", err)
+	}
+	started, err := h.svc.Start(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if started.ID != dep.ID || started.RunID == dep.RunID {
+		t.Fatalf("restart identity = deployment %s run %s", started.ID, started.RunID)
+	}
+
+	row := deploymentRow(t, h, dep.ID)
+	replanned := ParsePlacementSet(row.Placement)
+	if len(replanned.Entries) != 1 || replanned.Entries[0].AcceleratorUUID != "GPU-new" {
+		t.Fatalf("persisted placement = %+v, want GPU-new", replanned.Entries)
+	}
+	if row.Profile != original.Profile {
+		t.Fatalf("profile changed from %q to %q", original.Profile, row.Profile)
+	}
+	if row.DesiredState != "running" || row.ObservedState != "unknown" {
+		t.Fatalf("state = %s/%s, want running/unknown", row.DesiredState, row.ObservedState)
+	}
+	if row.Endpoint.String == "stale:9999" || !strings.Contains(row.Endpoint.String, ":8000") {
+		t.Fatalf("endpoint = %q, want replanned port", row.Endpoint.String)
+	}
+	if row.Diagnostics != "[]" {
+		t.Fatalf("diagnostics = %q, want []", row.Diagnostics)
+	}
+	if row.ModelCapabilities.Valid {
+		t.Fatalf("model capabilities = %q, want NULL", row.ModelCapabilities.String)
+	}
+
+	var oldActive, newActive int
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE resource='gpu:node-a:GPU-old' AND state='active'").Scan(&oldActive); err != nil {
+		t.Fatalf("count old lease: %v", err)
+	}
+	if err := h.dbh.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM leases WHERE resource='gpu:node-a:GPU-new' AND state='active' AND owner_id=?",
+		dep.ID).Scan(&newActive); err != nil {
+		t.Fatalf("count new lease: %v", err)
+	}
+	if oldActive != 0 || newActive != 1 {
+		t.Fatalf("active GPU leases old/new = %d/%d, want 0/1", oldActive, newActive)
+	}
+	if current, err := h.svc.runs.Get(ctx, started.RunID); err != nil || current.State != string(runs.Waiting) {
+		t.Fatalf("new run = %+v err=%v, want waiting", current, err)
+	}
+	if retained, err := h.svc.runs.Get(ctx, dep.RunID); err != nil || retained.State != string(runs.Failed) {
+		t.Fatalf("retained failed run = %+v err=%v", retained, err)
+	}
+}
+
+func TestPlanNamesDeploymentOccupyingCompatibleGPU(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	occupant := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+
+	blocked, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: "recipe-gpu"})
+	if err != nil {
+		t.Fatalf("blocked plan: %v", err)
+	}
+	if blocked.Ready {
+		t.Fatal("blocked plan is ready")
+	}
+	foundCapacity := false
+	for _, diagnostic := range blocked.Diagnostics {
+		if diagnostic.Code == "placement.no_capacity" {
+			foundCapacity = true
+		}
+	}
+	if !foundCapacity {
+		t.Fatalf("diagnostics = %+v, missing placement.no_capacity", blocked.Diagnostics)
+	}
+	if len(blocked.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want one GPU owner", blocked.Conflicts)
+	}
+	conflict := blocked.Conflicts[0]
+	if conflict.Resource != "gpu:node-a:GPU-a" ||
+		conflict.OccupiedBy != occupant.ID || conflict.DeploymentID != occupant.ID {
+		t.Fatalf("conflict = %+v", conflict)
+	}
+
+	if _, err := h.svc.Stop(ctx, occupant.ID); err != nil {
+		t.Fatalf("stop occupant: %v", err)
+	}
+	ready, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: "recipe-gpu"})
+	if err != nil {
+		t.Fatalf("ready plan: %v", err)
+	}
+	if !ready.Ready || len(ready.Placements) != 1 {
+		t.Fatalf("plan after stop = ready %t placements %+v diagnostics %+v conflicts %+v",
+			ready.Ready, ready.Placements, ready.Diagnostics, ready.Conflicts)
 	}
 }

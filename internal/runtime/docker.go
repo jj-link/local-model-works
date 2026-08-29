@@ -206,10 +206,15 @@ func (r *dockerRuntime) Inspect(ctx context.Context, idOrName string) (*Containe
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", idOrName, err)
 	}
-	ci := &ContainerInfo{ID: info.ID, Name: strings.TrimPrefix(info.Name, "/"), State: info.State.Status, Labels: info.Config.Labels}
-	if info.State.ExitCode != 0 {
-		ci.ExitCode = info.State.ExitCode
-		ci.Error = info.State.Error
+	ci := &ContainerInfo{
+		ID:        info.ID,
+		Name:      strings.TrimPrefix(info.Name, "/"),
+		State:     info.State.Status,
+		Status:    info.State.Status,
+		ExitCode:  info.State.ExitCode,
+		Error:     info.State.Error,
+		OOMKilled: info.State.OOMKilled,
+		Labels:    info.Config.Labels,
 	}
 	for _, p := range info.NetworkSettings.Ports {
 		for _, pb := range p {

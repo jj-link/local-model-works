@@ -39,9 +39,84 @@ func (s *Service) SetRepositoryCompilerRegistry(registry RepositoryCompilerRegis
 	s.repositoryCompilers = registry
 }
 
-// InstallRepositoryCommit compiles and installs one expected upstream commit.
-// It refuses a moved tracked ref before compiling or touching deployments.
+// RepositoryCandidate is a compiled repository commit that has not been
+// installed or attached to its repository.
+type RepositoryCandidate struct {
+	Digest   string
+	Manifest *Manifest
+}
+
+type compiledRepositoryCommit struct {
+	packed      *PackResult
+	manifest    *Manifest
+	source      RecipeSource
+	commitSHA   string
+	treeSHA     string
+	trackingRef string
+}
+
+// PreviewRepositoryCommit compiles one expected upstream commit without
+// changing recipes, repository versions, package storage, or repository HEAD.
+func (s *Service) PreviewRepositoryCommit(ctx context.Context, repositoryID, expectedCommit string) (*RepositoryCandidate, error) {
+	compiled, err := s.compileRepositoryCommit(ctx, repositoryID, expectedCommit)
+	if err != nil {
+		return nil, err
+	}
+	return &RepositoryCandidate{Digest: compiled.packed.ManifestDigest, Manifest: compiled.manifest}, nil
+}
+
+// StageRepositoryCommit compiles and persists one expected upstream commit
+// without changing the repository's current version.
+func (s *Service) StageRepositoryCommit(ctx context.Context, repositoryID, expectedCommit string) (*Recipe, error) {
+	compiled, err := s.compileRepositoryCommit(ctx, repositoryID, expectedCommit)
+	if err != nil {
+		return nil, err
+	}
+	staged, err := s.storePackWithCurrent(ctx, compiled.packed, compiled.source, TrustUntrusted, false)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := s.q.SetRecipeRepositoryHead(ctx, db.SetRecipeRepositoryHeadParams{
+		TrackingRef: compiled.trackingRef, ObservedHeadCommit: nullableString(compiled.commitSHA),
+		ObservedHeadTree: nullableString(compiled.treeSHA), HeadCheckedAt: nullableString(now),
+		UpdatedAt: now, ID: repositoryID,
+	}); err != nil {
+		return nil, err
+	}
+	return &staged, nil
+}
+
+// InstallRepositoryCommit stages and activates one expected upstream commit.
 func (s *Service) InstallRepositoryCommit(ctx context.Context, repositoryID, expectedCommit string) (*Recipe, error) {
+	staged, err := s.StageRepositoryCommit(ctx, repositoryID, expectedCommit)
+	if err != nil {
+		return nil, err
+	}
+	if err := ActivateRepositoryVersion(ctx, s.q, repositoryID, staged.Digest); err != nil {
+		return nil, err
+	}
+	return staged, nil
+}
+
+// ActivateRepositoryVersion selects one installed version after all external
+// update work has completed successfully.
+func ActivateRepositoryVersion(ctx context.Context, q *db.Queries, repositoryID, digest string) error {
+	version, err := q.GetRecipeRepositoryVersionByDigest(ctx, digest)
+	if err != nil {
+		return err
+	}
+	if version.RepositoryID != repositoryID {
+		return fmt.Errorf("recipe repository: digest %s belongs to %s", digest, version.RepositoryID)
+	}
+	return q.SetRecipeRepositoryCurrent(ctx, db.SetRecipeRepositoryCurrentParams{
+		CurrentDigest: nullableString(digest),
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		ID:            repositoryID,
+	})
+}
+
+func (s *Service) compileRepositoryCommit(ctx context.Context, repositoryID, expectedCommit string) (*compiledRepositoryCommit, error) {
 	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
 	if err != nil {
 		return nil, err
@@ -131,22 +206,14 @@ func (s *Service) InstallRepositoryCommit(ctx context.Context, repositoryID, exp
 	if compiledID != repository.ID || !strings.EqualFold(manifest.Metadata.Source.Revision, commitSHA) {
 		return nil, fmt.Errorf("compiled recipe source does not match repository commit")
 	}
-	installed, err := s.storePack(ctx, packed, RecipeSource{
-		Type: "git", Remote: repository.SourceUrl, Path: repository.SourcePath,
-		Revision: commitSHA, Tree: treeSHA,
-	}, TrustUntrusted)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := s.q.SetRecipeRepositoryHead(ctx, db.SetRecipeRepositoryHeadParams{
-		TrackingRef: repository.TrackingRef, ObservedHeadCommit: nullableString(commitSHA),
-		ObservedHeadTree: nullableString(treeSHA), HeadCheckedAt: nullableString(now),
-		UpdatedAt: now, ID: repository.ID,
-	}); err != nil {
-		return nil, err
-	}
-	return &installed, nil
+	return &compiledRepositoryCommit{
+		packed: packed, manifest: manifest,
+		source: RecipeSource{
+			Type: "git", Remote: repository.SourceUrl, Path: repository.SourcePath,
+			Revision: commitSHA, Tree: treeSHA,
+		},
+		commitSHA: commitSHA, treeSHA: treeSHA, trackingRef: repository.TrackingRef,
+	}, nil
 }
 
 func resolveGitRemoteRef(ctx context.Context, remote, trackingRef string) (string, error) {

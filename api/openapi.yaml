@@ -35,6 +35,27 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /browser-login:
+    post:
+      tags: [auth]
+      operationId: browserLogin
+      summary: Exchange a local one-use token for a session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserLoginRequest'
+      responses:
+        '200':
+          description: Session cookie and CSRF token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /logout:
     post:
       tags: [auth]
@@ -298,6 +319,13 @@ components:
         password:
           type: string
           format: password
+
+    BrowserLoginRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
 
     Session:
       type: object

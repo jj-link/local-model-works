@@ -115,13 +115,13 @@ describe("PlanDeploymentDialog", () => {
     expect((await screen.findAllByLabelText(/Rank 1 node/)).length).toBe(1);
 
     // preview produces a ready plan
-    await user.click(screen.getByRole("button", { name: /preview plan/i }));
+    await user.click(screen.getByRole("button", { name: /preview placement/i }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /create deployment/i })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /^launch$/i })).toBeEnabled();
     });
 
     // create posts the planned placements and returns the deployment
-    await user.click(screen.getByRole("button", { name: /create deployment/i }));
+    await user.click(screen.getByRole("button", { name: /^launch$/i }));
     await waitFor(() => {
       const body = (globalThis as Record<string, unknown>).__createBody as { placements: { rank: number; node_id: string }[] };
       expect(body).toBeTruthy();
@@ -160,12 +160,51 @@ describe("PlanDeploymentDialog", () => {
     const rank0 = (await screen.findAllByLabelText(/Rank 0 node/))[0];
     await user.selectOptions(rank0, "n-spark3");
 
-    await user.click(screen.getByRole("button", { name: /preview plan/i }));
+    await user.click(screen.getByRole("button", { name: /preview placement/i }));
     await waitFor(() => {
       const p = (globalThis as Record<string, unknown>).__planPlacements as { rank: number; node_id: string }[] | undefined;
       expect(p).toBeTruthy();
       expect(p).toEqual([{ rank: 0, node_id: "n-spark3" }]);
     });
+  });
+
+  it("links an occupying deployment when placement is blocked", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/api/v1/recipes", () => HttpResponse.json([recipe])),
+      http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json(recipeDetail)),
+      http.get("*/api/v1/nodes", () => HttpResponse.json(nodes)),
+      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
+      http.post("*/api/v1/deployments/plan", () =>
+        HttpResponse.json({
+          ...plan,
+          placements: [],
+          ready: false,
+          conflicts: [{
+            resource: "gpu:n-spark2:GPU-a",
+            occupied_by: "dep-occupant",
+            deployment_id: "dep-occupant",
+          }],
+          diagnostics: [{
+            code: "placement.no_capacity",
+            severity: "error",
+            message: "no eligible node for rank 0",
+          }],
+        }),
+      ),
+    );
+    renderDialog();
+    const recipeSelect = await screen.findByLabelText("Recipe");
+    await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
+    await user.selectOptions(recipeSelect, D);
+    await user.click(screen.getByRole("button", { name: /preview placement/i }));
+
+    expect(await screen.findByText("No placement available")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "dep-occupant" })).toHaveAttribute(
+      "href",
+      "/serving/deployments/dep-occupant",
+    );
+    expect(screen.getByRole("button", { name: /^launch$/i })).toBeDisabled();
   });
 
   it("preselects the caller recipe and resets it on every reopen", async () => {

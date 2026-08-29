@@ -75,9 +75,46 @@ func TestInstallRepositoryCommitKeepsOldVersionAndRejectsMovedHead(t *testing.T)
 
 	writeNativeBundle(t, repositoryPath, "1.1.0", repositoryPath, "second")
 	c2 := commitRepository(t, repositoryPath, "c2")
-	second, err := service.InstallRepositoryCommit(ctx, repositoryID, c2)
+	candidate, err := service.PreviewRepositoryCommit(ctx, repositoryID, c2)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if candidate.Digest == first.Digest {
+		t.Fatal("new commit reused the old package digest")
+	}
+	afterPreview, err := service.GetRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterPreview.Versions) != 1 || afterPreview.Current == nil || afterPreview.Current.Digest != first.Digest || afterPreview.InstalledCommit != c1 {
+		t.Fatalf("preview changed repository: %+v", afterPreview)
+	}
+	if _, err := service.Get(ctx, candidate.Digest); !errors.Is(err, recipe.ErrUnknown) {
+		t.Fatalf("preview persisted candidate recipe: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(packageRoot, strings.TrimPrefix(candidate.Digest, "sha256:"))); !os.IsNotExist(err) {
+		t.Fatalf("preview persisted candidate package: %v", err)
+	}
+	second, err := service.StageRepositoryCommit(ctx, repositoryID, c2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterStage, err := service.GetRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterStage.Versions) != 2 || afterStage.Current == nil ||
+		afterStage.Current.Digest != first.Digest || afterStage.InstalledCommit != c1 {
+		t.Fatalf("stage changed repository current: %+v", afterStage)
+	}
+	if _, err := os.Stat(filepath.Join(packageRoot, strings.TrimPrefix(candidate.Digest, "sha256:"))); err != nil {
+		t.Fatalf("stage did not persist candidate package: %v", err)
+	}
+	if err := recipe.ActivateRepositoryVersion(ctx, queries, repositoryID, second.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if second.Digest != candidate.Digest {
+		t.Fatalf("installed digest %q != preview digest %q", second.Digest, candidate.Digest)
 	}
 	if second.Digest == first.Digest {
 		t.Fatal("new commit reused the old package digest")

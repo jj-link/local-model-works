@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/recipe"
@@ -20,6 +19,8 @@ const (
 	QwenRepositoryURL     = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
 	DeepSeekRepositoryURL = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
 )
+
+const qwenManagedLicense = "patch/sglang/LICENSE"
 
 type Compiler = recipe.RepositoryCompiler
 
@@ -135,11 +136,12 @@ func compileManaged(source recipe.RepositorySource, checkout, template string, u
 		return nil, err
 	}
 	assets := make(map[string][]byte, len(manifest.Assets))
-	allowedUpstream := make(map[string]struct{})
+	requiredUpstream := make(map[string]struct{})
+	optionalUpstream := map[string]struct{}{qwenManagedLicense: {}}
 	for _, asset := range manifest.Assets {
 		var content []byte
-		if upstreamPatches && strings.HasPrefix(asset, "patch/sglang/") {
-			allowedUpstream[filepath.ToSlash(asset)] = struct{}{}
+		if upstreamPatches && strings.HasPrefix(asset, "patch/sglang/") && asset != qwenManagedLicense {
+			requiredUpstream[filepath.ToSlash(asset)] = struct{}{}
 			content, err = readRegular(filepath.Join(root, filepath.FromSlash(asset)))
 		} else {
 			content, err = recipeassets.Templates.ReadFile(template + "/" + asset)
@@ -150,7 +152,11 @@ func compileManaged(source recipe.RepositorySource, checkout, template string, u
 		assets[asset] = content
 	}
 	if upstreamPatches {
-		if err := rejectUnexpectedPatchFiles(filepath.Join(root, "patch", "sglang"), allowedUpstream); err != nil {
+		if err := rejectUnexpectedPatchFiles(
+			filepath.Join(root, "patch", "sglang"),
+			requiredUpstream,
+			optionalUpstream,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -200,8 +206,8 @@ func validatePinnedManifest(manifest *recipe.Manifest) error {
 	return nil
 }
 
-func rejectUnexpectedPatchFiles(root string, allowed map[string]struct{}) error {
-	seen := make([]string, 0, len(allowed))
+func rejectUnexpectedPatchFiles(root string, required, optional map[string]struct{}) error {
+	seenRequired := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -217,17 +223,19 @@ func rejectUnexpectedPatchFiles(root string, allowed map[string]struct{}) error 
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if _, ok := allowed[rel]; !ok {
-			return &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: rel, Message: "unexpected upstream patch file"}
+		if _, ok := required[rel]; ok {
+			seenRequired++
+			return nil
 		}
-		seen = append(seen, rel)
-		return nil
+		if _, ok := optional[rel]; ok {
+			return nil
+		}
+		return &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: rel, Message: "unexpected upstream patch file"}
 	})
 	if err != nil {
 		return err
 	}
-	sort.Strings(seen)
-	if len(seen) != len(allowed) {
+	if seenRequired != len(required) {
 		return &recipe.PackError{Code: "recipe.repository_layout_changed", Message: "required upstream patch file is missing"}
 	}
 	return nil

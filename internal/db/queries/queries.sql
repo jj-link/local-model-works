@@ -21,6 +21,18 @@ DELETE FROM sessions WHERE token_hash = ?;
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at < ?;
 
+-- name: CreateBrowserLoginToken :exec
+INSERT INTO browser_login_tokens (token_hash, username, created_at, expires_at)
+VALUES (?, ?, ?, ?);
+
+-- name: ConsumeBrowserLoginToken :one
+DELETE FROM browser_login_tokens
+WHERE token_hash = ? AND expires_at > ?
+RETURNING username;
+
+-- name: DeleteExpiredBrowserLoginTokens :exec
+DELETE FROM browser_login_tokens WHERE expires_at <= ?;
+
 -- name: CreateEnrollmentToken :exec
 INSERT INTO enrollment_tokens (id, token_hash, description, expires_at)
 VALUES (?, ?, ?, ?);
@@ -342,6 +354,35 @@ UPDATE deployments SET observed_state = ?,
                        diagnostics = COALESCE(?, diagnostics),
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ?;
+
+-- name: SetDeploymentStopping :exec
+UPDATE deployments SET desired_state = 'stopped',
+                       observed_state = 'stopping',
+                       endpoint = NULL,
+                       diagnostics = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: RestartDeployment :exec
+UPDATE deployments SET run_id = ?,
+                       placement = ?,
+                       fabric = ?,
+                       endpoint = ?,
+                       endpoint_model = ?,
+                       endpoint_path = ?,
+                       desired_state = 'running',
+                       observed_state = 'unknown',
+                       dispatch = '{}',
+                       diagnostics = '[]',
+                       model_capabilities = NULL,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: ClearStoppedDeploymentEndpoint :exec
+UPDATE deployments SET endpoint = NULL,
+                       diagnostics = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND desired_state = 'stopped' AND observed_state = 'stopped';
 
 -- name: UpdateDeploymentFabric :exec
 UPDATE deployments SET fabric = ? WHERE id = ?;

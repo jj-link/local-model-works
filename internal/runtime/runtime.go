@@ -60,19 +60,20 @@ type ContainerSpec struct {
 	// Ulimits carries per-resource rlimits (e.g. memlock, stack). Required for
 	// RoCE/NCCL workloads: the container drops all capabilities, so the default
 	// RLIMIT_MEMLOCK (8 KiB) makes ibv_reg_mr_iova2 fail with ENOMEM.
-	Ulimits         []Ulimit          `json:"ulimits,omitempty"`
+	Ulimits []Ulimit `json:"ulimits,omitempty"`
 }
 
 // ContainerInfo is the observed container state.
 type ContainerInfo struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	State    string            `json:"state"` // created|running|exited|paused|removing|dead
-	Status   string            `json:"status"`
-	ExitCode int               `json:"exitCode,omitempty"`
-	Error    string            `json:"error,omitempty"`
-	Ports    []int             `json:"ports,omitempty"`
-	Labels   map[string]string `json:"labels,omitempty"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	State     string            `json:"state"` // created|running|exited|paused|removing|dead
+	Status    string            `json:"status"`
+	ExitCode  int               `json:"exitCode,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	OOMKilled bool              `json:"oomKilled,omitempty"`
+	Ports     []int             `json:"ports,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
 }
 
 // Runtime is the container engine abstraction.

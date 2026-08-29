@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
@@ -20,10 +21,8 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	oldDigest := "sha256:" + strings.Repeat("1", 64)
 	newDigest := "sha256:" + strings.Repeat("2", 64)
 	h.seedRecipe(t, oldDigest, noArtifactManifest)
-	h.seedRecipe(t, newDigest, noArtifactManifest)
 	repositoryID := "https://fixtures.local/recipe\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("a", 40), true)
-	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), true)
 
 	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
 	if err != nil {
@@ -34,15 +33,31 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 		t.Fatal(err)
 	}
 	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	candidateManifest, err := recipe.Parse([]byte(noArtifactManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateManifest.Metadata.Name = "test"
+	candidatePlan, err := h.svc.PlanRepositoryUpdateCandidate(ctx, repositoryID, &recipe.RepositoryCandidate{
+		Digest: newDigest, Manifest: candidateManifest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.seedRecipeUnplaced(t, newDigest, noArtifactManifest)
+	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), false)
 	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, newDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !updatePlan.Ready || len(updatePlan.Targets) != 1 {
+	if candidatePlan.Digest != updatePlan.Digest {
+		t.Fatalf("candidate plan digest %q != installed plan digest %q", candidatePlan.Digest, updatePlan.Digest)
+	}
+	if !updatePlan.Ready || len(updatePlan.InstalledDevices) != 1 || len(updatePlan.RunningDeployments) != 1 {
 		t.Fatalf("update plan = %+v", updatePlan)
 	}
-	if target := updatePlan.Targets[0]; target.NodeID != "node-a" || target.SourceDeploymentID != source.ID || target.Rank != 0 {
-		t.Fatalf("target = %+v", target)
+	if target := updatePlan.RunningDeployments[0]; target.NodeID != "node-a" || target.SourceDeploymentID != source.ID || target.Rank != 0 {
+		t.Fatalf("running deployment target = %+v", target)
 	}
 	if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, newDigest, "sha256:stale"); !errors.Is(err, ErrPlanStale) {
 		t.Fatalf("stale plan error = %v", err)
@@ -55,15 +70,16 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ackRecipeUpdateFetch(t, h, newDigest, "node-a")
 	ackDeploymentStop(t, h, source.ID, newDigest)
 	replacementID := driveReplacementHealthy(t, h, newDigest)
 	updateRun := waitRunState(t, h, runID, string(runs.Succeeded))
-	if updateRun.Progress["completed_hardware"] != float64(1) {
+	if updateRun.Progress["completed_devices"] != float64(1) || updateRun.Progress["completed_running_targets"] != float64(1) {
 		t.Fatalf("progress = %#v", updateRun.Progress)
 	}
-	hardware := updateRun.Progress["hardware"].([]any)[0].(map[string]any)
+	hardware := updateRun.Progress["running_deployments"].([]any)[0].(map[string]any)
 	if hardware["current_step"] != float64(5) || hardware["phase"] != "ready" || hardware["replacement_deployment_id"] != replacementID {
-		t.Fatalf("hardware progress = %#v", hardware)
+		t.Fatalf("running deployment progress = %#v", hardware)
 	}
 	oldRow := deploymentRow(t, h, source.ID)
 	newRow := deploymentRow(t, h, replacementID)
@@ -78,6 +94,267 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	if len(oldPlacement.Entries) != 1 || len(newPlacement.Entries) != 1 || oldPlacement.Entries[0].NodeID != newPlacement.Entries[0].NodeID || oldPlacement.Entries[0].Rank != newPlacement.Entries[0].Rank {
 		t.Fatalf("placement changed: old=%+v new=%+v", oldPlacement, newPlacement)
 	}
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != newDigest {
+		t.Fatalf("repository current = %+v", repository.CurrentDigest)
+	}
+}
+
+func TestRepositoryUpdateInstallsOnDeviceWithoutRunningDeployments(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	oldDigest := "sha256:" + strings.Repeat("8", 64)
+	targetDigest := "sha256:" + strings.Repeat("9", 64)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	h.seedNode(t, "node-a", nil, "")
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/idle\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("d", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("e", 40), false)
+
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Ready || len(plan.InstalledDevices) != 1 || len(plan.RunningDeployments) != 0 || len(plan.Deployments) != 0 {
+		t.Fatalf("idle update plan = %+v", plan)
+	}
+	if device := plan.InstalledDevices[0]; device.NodeID != "node-a" ||
+		len(device.InstalledDigests) != 1 || device.InstalledDigests[0] != oldDigest {
+		t.Fatalf("installed device = %+v", device)
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, targetDigest, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+	updateRun := waitRunState(t, h, runID, string(runs.Succeeded))
+	if updateRun.Progress["total_devices"] != float64(1) || updateRun.Progress["completed_devices"] != float64(1) {
+		t.Fatalf("idle update progress = %#v", updateRun.Progress)
+	}
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != targetDigest {
+		t.Fatalf("repository current = %+v", repository.CurrentDigest)
+	}
+	artifact, err := h.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, valid := h.svc.validPlacement(ctx, artifact.ID, "node-a"); !valid {
+		t.Fatal("candidate package was not installed on node-a")
+	}
+}
+
+func TestRepositoryUpdateOutlivesRequestContext(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	oldDigest := "sha256:" + strings.Repeat("4", 64)
+	targetDigest := "sha256:" + strings.Repeat("5", 64)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	h.seedNode(t, "node-a", nil, "")
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/request-context\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("8", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("9", 40), false)
+
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	runID, err := h.svc.CreateRepositoryUpdate(requestCtx, repositoryID, targetDigest, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelRequest()
+
+	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != targetDigest {
+		t.Fatalf("repository current = %+v", repository.CurrentDigest)
+	}
+}
+
+func TestRepositoryUpdatePackageFailureKeepsCurrentVersion(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	oldDigest := "sha256:" + strings.Repeat("6", 64)
+	targetDigest := "sha256:" + strings.Repeat("7", 64)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	h.seedNode(t, "node-a", nil, "")
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/failure\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("f", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("a", 40), false)
+
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, targetDigest, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failRecipeUpdateFetch(t, h, targetDigest, "node-a", "package unavailable")
+	waitRunState(t, h, runID, string(runs.Failed))
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != oldDigest {
+		t.Fatalf("failed update changed repository current: %+v", repository.CurrentDigest)
+	}
+}
+
+func failRecipeUpdateFetch(t *testing.T, h *harness, digest, nodeID, message string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sent := range h.nodes.artifactCommands() {
+			command := sent.msg.GetArtifactCommand()
+			if sent.nodeID == nodeID && command.GetArtifactIdentity() == "recipe://"+digest {
+				h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
+					CommandId: command.GetCommandId(), Ok: false, Error: message,
+				})
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for repository package fetch")
+}
+
+func TestRepositoryUpdateCoordinatorResumesDeviceInstallation(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	oldDigest := "sha256:" + strings.Repeat("a", 64)
+	targetDigest := "sha256:" + strings.Repeat("b", 64)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	h.seedNode(t, "node-a", nil, "")
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/resume\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("1", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("2", 40), false)
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := repositoryUpdateRunInput{
+		RepositoryID: repositoryID, TargetDigest: targetDigest,
+		InstalledDevices: append([]RepositoryUpdateDevice(nil), plan.InstalledDevices...),
+		Targets:          append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
+		Plan:             *plan,
+	}
+	runID, err := h.svc.runs.Create(ctx, "library", "recipe-update", structMap(input), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := repositoryUpdateProgress{
+		Phase: "installing_recipe", TotalDevices: len(plan.InstalledDevices),
+		InstalledDevices: repositoryUpdateDeviceProgressFrom(plan.InstalledDevices),
+	}
+	if err := h.svc.runs.SetProgress(ctx, runID, structMap(progress)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.runs.SetState(ctx, runID, runs.Waiting, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	h.nodes.setOnline("node-a", false)
+	h.svc = New(h.dbh, h.q, h.svc.bus, h.svc.runs, h.nodes, h.svc.ca)
+	h.svc.RunRepositoryUpdateCoordinator(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		updateRun, getErr := h.svc.runs.Get(ctx, runID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		devices, _ := updateRun.Progress["installed_devices"].([]any)
+		if len(devices) == 1 {
+			device, _ := devices[0].(map[string]any)
+			if device["phase"] == "waiting_offline" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("update did not wait for reconnect: state=%s progress=%#v", updateRun.State, updateRun.Progress)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if commands := h.nodes.artifactCommands(); len(commands) != 0 {
+		t.Fatalf("sent package fetch while node was offline: %+v", commands)
+	}
+	h.nodes.setOnline("node-a", true)
+	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != targetDigest {
+		t.Fatalf("resumed update current = %+v", repository.CurrentDigest)
+	}
+}
+
+func TestRepositoryUpdatePlanRejectsOfflineInstalledDevice(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	oldDigest := "sha256:" + strings.Repeat("c", 64)
+	targetDigest := "sha256:" + strings.Repeat("d", 64)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	h.seedNode(t, "node-a", nil, "")
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	if err := h.q.SetNodeStatus(ctx, db.SetNodeStatusParams{Status: "offline", ID: "node-a"}); err != nil {
+		t.Fatal(err)
+	}
+	repositoryID := "https://fixtures.local/offline\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("3", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("4", 40), false)
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Ready || len(plan.InstalledDevices) != 1 ||
+		len(plan.Diagnostics) != 1 || plan.Diagnostics[0].Code != "recipe.update_device_offline" {
+		t.Fatalf("offline update plan = %+v", plan)
+	}
+}
+
+func ackRecipeUpdateFetch(t *testing.T, h *harness, digest, nodeID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sent := range h.nodes.artifactCommands() {
+			command := sent.msg.GetArtifactCommand()
+			if sent.nodeID != nodeID || command.GetArtifactIdentity() != "recipe://"+digest {
+				continue
+			}
+			artifact, err := h.q.GetArtifactByIdentity(context.Background(), command.GetArtifactIdentity())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.q.UpsertPlacement(context.Background(), db.UpsertPlacementParams{
+				ArtifactID: artifact.ID, NodeID: nodeID, Path: "/var/lib/lmw/recipes/" + strings.TrimPrefix(digest, "sha256:"),
+				State: "valid", Diagnostics: "[]",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for repository package fetch")
 }
 
 func seedRepositoryVersion(t *testing.T, h *harness, repositoryID, digest, commit string, current bool) {

@@ -48,21 +48,29 @@ export function PlanPreview({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {plan.placements.map((p) => (
-            <TableRow key={p.rank}>
-              <TableCell className="font-mono text-xs tnum">{p.rank}</TableCell>
-              <TableCell>
-                <Link to={`/fleet/nodes/${p.node_id}`} className="text-foreground underline-offset-2 hover:underline control">
-                  {nodeName(p.node_id)}
-                </Link>
-                <span className="ml-2 font-mono text-[11px] text-muted">{shortId(p.node_id)}</span>
-              </TableCell>
-              <TableCell className="font-mono text-xs tnum">
-                {p.accelerator_index}
-                {p.accelerator_uuid ? <span className="text-muted"> · {p.accelerator_uuid.slice(0, 8)}</span> : null}
+          {plan.placements.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={3} className="py-6 text-center font-mono text-xs text-faint">
+                No placement available
               </TableCell>
             </TableRow>
-          ))}
+          ) : (
+            plan.placements.map((p) => (
+              <TableRow key={p.rank}>
+                <TableCell className="font-mono text-xs tnum">{p.rank}</TableCell>
+                <TableCell>
+                  <Link to={`/fleet/nodes/${p.node_id}`} className="text-foreground underline-offset-2 hover:underline control">
+                    {nodeName(p.node_id)}
+                  </Link>
+                  <span className="ml-2 font-mono text-[11px] text-muted">{shortId(p.node_id)}</span>
+                </TableCell>
+                <TableCell className="font-mono text-xs tnum">
+                  {p.accelerator_index}
+                  {p.accelerator_uuid ? <span className="text-muted"> · {p.accelerator_uuid.slice(0, 8)}</span> : null}
+                </TableCell>
+              </TableRow>
+            ))
+          )}
         </TableBody>
       </Table>
 
@@ -105,11 +113,20 @@ export function PlanPreview({
         <div className="mt-3">
           <p className="lmw-label mb-1.5">conflicts</p>
           <ul className="flex flex-col gap-1">
-            {plan.conflicts.map((c, i) => (
-              <li key={i} className="rounded border border-fault/40 bg-fault/5 px-3 py-2 text-xs">
+            {plan.conflicts.map((c) => (
+              <li key={c.resource} className="rounded border border-fault/40 bg-fault/5 px-3 py-2 text-xs">
                 <span className="text-fault">{c.resource}</span>
                 <span className="text-muted"> — occupied by </span>
-                <span className="font-mono text-foreground">{c.occupied_by}</span>
+                {c.deployment_id ? (
+                  <Link
+                    to={`/serving/deployments/${c.deployment_id}`}
+                    className="control font-mono text-foreground underline-offset-2 hover:underline"
+                  >
+                    {c.occupied_by}
+                  </Link>
+                ) : (
+                  <span className="font-mono text-foreground">{c.occupied_by}</span>
+                )}
               </li>
             ))}
           </ul>

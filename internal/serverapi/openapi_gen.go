@@ -14,6 +14,11 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// BrowserLoginRequest defines model for BrowserLoginRequest.
+type BrowserLoginRequest struct {
+	Token string `json:"token"`
+}
+
 // CreateEnrollmentTokenRequest defines model for CreateEnrollmentTokenRequest.
 type CreateEnrollmentTokenRequest struct {
 	Description *string `json:"description,omitempty"`
@@ -130,6 +135,9 @@ type StreamEventsParams struct {
 	Types *string `form:"types,omitempty" json:"types,omitempty"`
 }
 
+// BrowserLoginJSONRequestBody defines body for BrowserLogin for application/json ContentType.
+type BrowserLoginJSONRequestBody = BrowserLoginRequest
+
 // CreateEnrollmentTokenJSONRequestBody defines body for CreateEnrollmentToken for application/json ContentType.
 type CreateEnrollmentTokenJSONRequestBody = CreateEnrollmentTokenRequest
 
@@ -144,6 +152,9 @@ type MigrationScanJSONRequestBody = MigrationScanRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// BrowserLogin Exchange a local one-use token for a session cookie
+	// (POST /browser-login)
+	BrowserLogin(w http.ResponseWriter, r *http.Request)
 
 	// (GET /enrollment-tokens)
 	ListEnrollmentTokens(w http.ResponseWriter, r *http.Request)
@@ -185,6 +196,12 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// BrowserLogin Exchange a local one-use token for a session cookie
+// (POST /browser-login)
+func (_ Unimplemented) BrowserLogin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // (GET /enrollment-tokens)
 func (_ Unimplemented) ListEnrollmentTokens(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +279,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// BrowserLogin operation middleware
+func (siw *ServerInterfaceWrapper) BrowserLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BrowserLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListEnrollmentTokens operation middleware
 func (siw *ServerInterfaceWrapper) ListEnrollmentTokens(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +608,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/browser-login", wrapper.BrowserLogin)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/logout", wrapper.Logout)

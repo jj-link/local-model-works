@@ -7,6 +7,7 @@ import {
   utilizationTone,
   temperatureTone,
   deploymentsOnNode,
+  isCurrentDeployment,
 } from "~/lib/telemetry";
 import type { Deployment, Node, NodePayload } from "~/lib/api";
 
@@ -83,6 +84,15 @@ describe("thresholds", () => {
     expect(temperatureTone(60)).toBe("ok");
     expect(temperatureTone(70)).toBe("warn");
     expect(temperatureTone(90)).toBe("fault");
+  });
+});
+
+describe("isCurrentDeployment", () => {
+  it("keeps every lifecycle state active except fully stopped history", () => {
+    expect(isCurrentDeployment({ desired_state: "running", observed_state: "failed" } as Deployment)).toBe(true);
+    expect(isCurrentDeployment({ desired_state: "stopped", observed_state: "stopping" } as Deployment)).toBe(true);
+    expect(isCurrentDeployment({ desired_state: "stopped", observed_state: "unknown" } as Deployment)).toBe(true);
+    expect(isCurrentDeployment({ desired_state: "stopped", observed_state: "stopped" } as Deployment)).toBe(false);
   });
 });
 

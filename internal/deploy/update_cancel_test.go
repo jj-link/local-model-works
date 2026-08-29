@@ -16,10 +16,10 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 	oldDigest := "sha256:" + strings.Repeat("3", 64)
 	newDigest := "sha256:" + strings.Repeat("4", 64)
 	h.seedRecipe(t, oldDigest, noArtifactManifest)
-	h.seedRecipe(t, newDigest, noArtifactManifest)
+	h.seedRecipeUnplaced(t, newDigest, noArtifactManifest)
 	repositoryID := "https://fixtures.local/cancel\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("c", 40), true)
-	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("d", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("d", 40), false)
 
 	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
 	if err != nil {
@@ -38,6 +38,7 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ackRecipeUpdateFetch(t, h, newDigest, "node-a")
 	ackDeploymentStop(t, h, source.ID, newDigest)
 	replacementID := waitDeploymentDigest(t, h, newDigest)
 	if err := h.svc.CancelRepositoryUpdate(ctx, runID); err != nil {
@@ -55,6 +56,13 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 	}
 	if replacementRow.DesiredState != "stopped" || replacementRow.ObservedState != "stopped" {
 		t.Fatalf("replacement not rolled back: %+v", replacementRow)
+	}
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != oldDigest {
+		t.Fatalf("cancel changed repository current: %+v", repository.CurrentDigest)
 	}
 }
 

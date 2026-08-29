@@ -255,7 +255,7 @@ export default function Chat() {
           title="No chat-ready deployment"
           hint="Chat requires a deployment that is running, healthy, and reports its served model."
           icon={<Server className="h-6 w-6" />}
-          action={<Button onClick={() => setPlanOpen(true)}>Plan deployment</Button>}
+          action={<Button onClick={() => setPlanOpen(true)}>Launch deployment</Button>}
         />
         <PlanDeploymentDialog open={planOpen} onOpenChange={setPlanOpen} />
       </>

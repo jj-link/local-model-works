@@ -233,6 +233,7 @@ message CommandResult {
   // code N", which ok/exit_code alone cannot.
   string container_state = 6;
   bytes output_json = 7;
+  bool oom_killed = 8;
 }
 
 message StateUpdate {
@@ -247,6 +248,8 @@ message StateUpdate {
   int32 rank = 8;
   string diagnostic_code = 6;
   string diagnostic_message = 7;
+  int32 exit_code = 9;
+  bool oom_killed = 10;
 }
 
 message LogChunk {

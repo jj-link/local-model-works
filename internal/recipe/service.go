@@ -192,6 +192,10 @@ func (s *Service) Store(ctx context.Context, doc []byte, source RecipeSource, tr
 }
 
 func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeSource, trustState string) (Recipe, error) {
+	return s.storePackWithCurrent(ctx, res, source, trustState, true)
+}
+
+func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, source RecipeSource, trustState string, setCurrent bool) (Recipe, error) {
 	if trustState != TrustVerified && trustState != TrustLocal && trustState != TrustUntrusted {
 		return Recipe{}, fmt.Errorf("%w: %s", ErrTrustState, trustState)
 	}
@@ -241,7 +245,7 @@ func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeS
 	}
 	if err == nil {
 		if _, linkErr := qtx.GetRecipeRepositoryVersionByDigest(ctx, digest); errors.Is(linkErr, sql.ErrNoRows) {
-			if linkErr = attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, row.InstalledAt); linkErr != nil {
+			if linkErr = attachRepositoryVersionWithCurrent(ctx, qtx, manifest, digest, source.Tree, row.InstalledAt, setCurrent); linkErr != nil {
 				return Recipe{}, linkErr
 			}
 		} else if linkErr != nil {
@@ -317,7 +321,7 @@ func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeS
 	if err != nil {
 		return Recipe{}, err
 	}
-	if err := attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, createdRow.InstalledAt); err != nil {
+	if err := attachRepositoryVersionWithCurrent(ctx, qtx, manifest, digest, source.Tree, createdRow.InstalledAt, setCurrent); err != nil {
 		return Recipe{}, err
 	}
 	if err := tx.Commit(); err != nil {

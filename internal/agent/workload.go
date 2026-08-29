@@ -212,7 +212,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
-		a.result(cmdID, true, int32(info.ExitCode), info.Error, info.ID, info.State)
+		a.resultInfo(cmdID, true, int32(info.ExitCode), info.Error, info.ID, info.State, info.OOMKilled)
 	case agentv1.WorkloadOp_WORKLOAD_OP_LOGS:
 		if _, err := a.resolve(name, deploymentID, runID, wc.GetRank()); err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
@@ -244,6 +244,10 @@ func (a *Agent) resolve(name, deploymentID, runID string, rank int32) (string, e
 }
 
 func (a *Agent) result(cmdID string, ok bool, exit int32, errMsg, containerID, state string) {
+	a.resultInfo(cmdID, ok, exit, errMsg, containerID, state, false)
+}
+
+func (a *Agent) resultInfo(cmdID string, ok bool, exit int32, errMsg, containerID, state string, oomKilled bool) {
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_CommandResult{
 		CommandResult: &agentv1.CommandResult{
 			CommandId:      cmdID,
@@ -252,6 +256,7 @@ func (a *Agent) result(cmdID string, ok bool, exit int32, errMsg, containerID, s
 			Error:          errMsg,
 			ContainerId:    containerID,
 			ContainerState: state,
+			OomKilled:      oomKilled,
 		},
 	}})
 }
@@ -383,6 +388,8 @@ func (w *workloads) reportState(c *runtime.ContainerInfo) {
 		ContainerId:  c.ID,
 		State:        c.State,
 		Rank:         rank,
+		ExitCode:     int32(c.ExitCode),
+		OomKilled:    c.OOMKilled,
 	}
 	if c.Error != "" {
 		update.DiagnosticCode = "container.error"
