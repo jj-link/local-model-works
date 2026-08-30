@@ -29,10 +29,11 @@ import (
 )
 
 var (
-	ErrUnknownKind = errors.New("unknown job kind")
-	ErrInput       = errors.New("job input invalid")
-	ErrSchema      = errors.New("job schema invalid")
-	ErrNoWorkspace = errors.New("job workspace unavailable")
+	ErrUnknownKind   = errors.New("unknown job kind")
+	ErrInput         = errors.New("job input invalid")
+	ErrSchema        = errors.New("job schema invalid")
+	ErrNoWorkspace   = errors.New("job workspace unavailable")
+	ErrLeaseConflict = errors.New("job lease conflict")
 )
 
 // Spec declares one job kind.
@@ -198,57 +199,128 @@ func normalizeJSON(value any) (any, error) {
 	return normalized, nil
 }
 
-// Submit validates the input, creates a run, and starts the executor. The
-// request ctx only covers creation; execution outlives the request.
-func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any) (string, error) {
+// prepareSubmission validates and normalizes a job submission before any
+// durable state is created.
+func (r *Registry) prepareSubmission(kind string, input map[string]any) (Spec, string, map[string]any, error) {
 	r.mu.RLock()
 	spec, ok := r.specs[kind]
 	module := r.moduleOf[kind]
 	in, hasIn := r.inSchemas[kind]
 	r.mu.RUnlock()
 	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrUnknownKind, kind)
+		return Spec{}, "", nil, fmt.Errorf("%w: %s", ErrUnknownKind, kind)
 	}
 	if input == nil {
 		input = map[string]any{}
 	}
 	normalized, err := normalizeJSON(input)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInput, err)
+		return Spec{}, "", nil, fmt.Errorf("%w: %v", ErrInput, err)
 	}
 	input = normalized.(map[string]any)
 	if hasIn {
 		if err := in.Validate(input); err != nil {
-			return "", fmt.Errorf("%w: %v", ErrInput, err)
+			return Spec{}, "", nil, fmt.Errorf("%w: %v", ErrInput, err)
 		}
 	}
+	return spec, module, input, nil
+}
+
+func (r *Registry) createSubmission(ctx context.Context, module, kind string, input map[string]any) (string, string, error) {
 	runID, err := r.runs.Create(ctx, module, kind, input, "")
+	if err != nil {
+		return "", "", err
+	}
+	workspace := filepath.Join(r.runRoot, "jobs", runID)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		_ = r.runs.Complete(ctx, runID, runs.Failed, "run.workspace_failed", err.Error())
+		return "", "", fmt.Errorf("%w: %v", ErrNoWorkspace, err)
+	}
+	return runID, workspace, nil
+}
+
+func (r *Registry) failLeaseSubmission(runID string, cause error) error {
+	finishCtx, cancel := context.WithTimeout(r.lc, 5*time.Second)
+	defer cancel()
+	_ = r.runs.Complete(finishCtx, runID, runs.Failed, "run.lease_conflict", cause.Error())
+	return fmt.Errorf("%w: %v", ErrLeaseConflict, cause)
+}
+
+func leaseResources(spec Spec, input map[string]any) []string {
+	if spec.LeaseResources == nil {
+		return nil
+	}
+	return spec.LeaseResources(input)
+}
+
+// Submit validates the input, creates a run, acquires its leases, and starts
+// the executor. The request context only covers creation.
+func (r *Registry) Submit(ctx context.Context, kind string, input map[string]any) (string, error) {
+	spec, module, input, err := r.prepareSubmission(kind, input)
 	if err != nil {
 		return "", err
 	}
-	ws := filepath.Join(r.runRoot, "jobs", runID)
-	if err := os.MkdirAll(ws, 0o700); err != nil {
-		_ = r.runs.Complete(ctx, runID, runs.Failed, "run.workspace_failed", err.Error())
-		return "", fmt.Errorf("%w: %v", ErrNoWorkspace, err)
+	runID, workspace, err := r.createSubmission(ctx, module, kind, input)
+	if err != nil {
+		return "", err
 	}
-	if spec.LeaseResources != nil {
-		resources := spec.LeaseResources(input)
-		if len(resources) > 0 {
-			tx, err := r.db.BeginTx(ctx, nil)
-			if err != nil {
-				return "", err
-			}
-			if err := r.runs.AcquireLeases(ctx, r.q.WithTx(tx), "run", runID, resources); err != nil {
-				tx.Rollback()
-				_ = r.runs.Complete(ctx, runID, runs.Failed, "run.lease_conflict", err.Error())
-				return "", err
-			}
-			if err := tx.Commit(); err != nil {
-				return "", err
-			}
+	resources := leaseResources(spec, input)
+	if len(resources) > 0 {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := r.runs.AcquireLeases(ctx, r.q.WithTx(tx), "run", runID, resources); err != nil {
+			_ = tx.Rollback()
+			return "", r.failLeaseSubmission(runID, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
 		}
 	}
-	r.start(module, spec, runID, ws, input)
+	r.start(module, spec, runID, workspace, input)
+	return runID, nil
+}
+
+// SubmitChained creates a child job and atomically transfers the parent's
+// active resource leases before the child executor can start.
+func (r *Registry) SubmitChained(ctx context.Context, parentRunID, kind string, input map[string]any) (string, error) {
+	if parentRunID == "" {
+		return "", fmt.Errorf("%w: parent run is required", ErrInput)
+	}
+	spec, module, input, err := r.prepareSubmission(kind, input)
+	if err != nil {
+		return "", err
+	}
+	runID, workspace, err := r.createSubmission(ctx, module, kind, input)
+	if err != nil {
+		return "", err
+	}
+	resources := leaseResources(spec, input)
+	if len(resources) > 0 {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return "", err
+		}
+		qtx := r.q.WithTx(tx)
+		for _, resource := range resources {
+			rows, transferErr := qtx.TransferActiveLease(ctx, db.TransferActiveLeaseParams{
+				NewOwnerKind: "run", NewOwnerID: runID, Resource: resource,
+				ParentOwnerKind: "run", ParentOwnerID: parentRunID,
+			})
+			if transferErr != nil || rows != 1 {
+				_ = tx.Rollback()
+				if transferErr == nil {
+					transferErr = fmt.Errorf("lease %s is not owned by run/%s", resource, parentRunID)
+				}
+				return "", r.failLeaseSubmission(runID, transferErr)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+	}
+	r.start(module, spec, runID, workspace, input)
 	return runID, nil
 }
 

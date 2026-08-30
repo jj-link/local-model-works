@@ -56,13 +56,13 @@ func (s State) Terminal() bool {
 
 // transitions is the allowed state graph.
 var transitions = map[State][]State{
-	Queued:     {Planning, Waiting, Running, Cancelling, Failed},
-	Planning:   {Waiting, Running, Verifying, Cancelling, Failed},
-	Waiting:    {Running, Cancelling, Failed},
+	Queued:     {Planning, Waiting, Running, Cancelling, Failed, Interrupted},
+	Planning:   {Waiting, Running, Verifying, Cancelling, Failed, Interrupted},
+	Waiting:    {Running, Cancelling, Failed, Interrupted},
 	Running:    {Paused, Verifying, Cancelling, Failed, Interrupted},
 	Paused:     {Running, Cancelling, Failed, Interrupted},
-	Verifying:  {Succeeded, Failed, Cancelling},
-	Cancelling: {Cancelled, Failed},
+	Verifying:  {Succeeded, Failed, Cancelling, Interrupted},
+	Cancelling: {Cancelled, Failed, Interrupted},
 }
 
 // IsOneShot reports whether a run kind cannot outlive its work: on
@@ -308,6 +308,9 @@ func (s *Service) MarkInterrupted(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := s.SetState(ctx, r.ID, Interrupted, "run.interrupted", "controller restart"); err != nil {
+			return n, err
+		}
+		if err := s.ReleaseLeasesFor(ctx, "run", r.ID); err != nil {
 			return n, err
 		}
 		n++
