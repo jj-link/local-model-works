@@ -150,18 +150,41 @@ func TestRepositoryDetailDeduplicatesVersionsAndShowsInstalledDevices(t *testing
 
 func TestRepositoryUpdatePlanResponseUsesEmptyArrays(t *testing.T) {
 	response := repositoryUpdatePlanResponse(&deploy.RepositoryUpdatePlan{})
-	if response.InstalledDevices == nil || response.RunningDeployments == nil || response.Diagnostics == nil {
-		t.Fatalf("response arrays = devices %#v deployments %#v diagnostics %#v",
+	if response.CurrentPermissions == nil || response.CandidatePermissions == nil ||
+		response.AddedPermissions == nil || response.RemovedPermissions == nil ||
+		response.InstalledDevices == nil || response.RunningDeployments == nil || response.Diagnostics == nil {
+		t.Fatalf("response arrays = current %#v candidate %#v added %#v removed %#v devices %#v deployments %#v diagnostics %#v",
+			response.CurrentPermissions, response.CandidatePermissions,
+			response.AddedPermissions, response.RemovedPermissions,
 			response.InstalledDevices, response.RunningDeployments, response.Diagnostics)
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"installed_devices":[]`) ||
-		!strings.Contains(string(encoded), `"running_deployments":[]`) ||
-		!strings.Contains(string(encoded), `"diagnostics":[]`) {
-		t.Fatalf("response = %s", encoded)
+	for _, want := range []string{
+		`"current_permissions":[]`, `"candidate_permissions":[]`,
+		`"added_permissions":[]`, `"removed_permissions":[]`,
+		`"installed_devices":[]`, `"running_deployments":[]`, `"diagnostics":[]`,
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("response missing %s: %s", want, encoded)
+		}
+	}
+}
+
+func TestStartRepositoryUpdateRequiresPermissionApproval(t *testing.T) {
+	request := httptest.NewRequest(
+		"POST",
+		"/recipe-repositories/repo/update",
+		strings.NewReader(`{"expected_head_commit":"abc","plan_digest":"sha256:plan","permission_diff_accepted":false}`),
+	)
+	response := httptest.NewRecorder()
+
+	(&Module{}).startRecipeRepositoryUpdate(response, request)
+
+	if response.Code != 422 || !strings.Contains(response.Body.String(), `"code":"recipe.permission_diff_pending"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
 

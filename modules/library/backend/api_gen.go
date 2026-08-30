@@ -551,8 +551,9 @@ type RecipeRepositoryUpdatePlanRequest struct {
 
 // RecipeRepositoryUpdateRequest defines model for RecipeRepositoryUpdateRequest.
 type RecipeRepositoryUpdateRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
-	PlanDigest         string `json:"plan_digest"`
+	ExpectedHeadCommit     string `json:"expected_head_commit"`
+	PermissionDiffAccepted bool   `json:"permission_diff_accepted"`
+	PlanDigest             string `json:"plan_digest"`
 }
 
 // RecipeRepositoryVersion defines model for RecipeRepositoryVersion.
@@ -601,11 +602,15 @@ type RecipeUpdateDevice struct {
 
 // RecipeUpdatePlan defines model for RecipeUpdatePlan.
 type RecipeUpdatePlan struct {
-	Diagnostics        []Diagnostic                    `json:"diagnostics"`
-	InstalledDevices   []RecipeUpdateDevice            `json:"installed_devices"`
-	PlanDigest         string                          `json:"plan_digest"`
-	Ready              bool                            `json:"ready"`
-	RunningDeployments []RecipeUpdateRunningDeployment `json:"running_deployments"`
+	AddedPermissions     []string                        `json:"added_permissions"`
+	CandidatePermissions []string                        `json:"candidate_permissions"`
+	CurrentPermissions   []string                        `json:"current_permissions"`
+	Diagnostics          []Diagnostic                    `json:"diagnostics"`
+	InstalledDevices     []RecipeUpdateDevice            `json:"installed_devices"`
+	PlanDigest           string                          `json:"plan_digest"`
+	Ready                bool                            `json:"ready"`
+	RemovedPermissions   []string                        `json:"removed_permissions"`
+	RunningDeployments   []RecipeUpdateRunningDeployment `json:"running_deployments"`
 }
 
 // RecipeUpdateRunningDeployment defines model for RecipeUpdateRunningDeployment.

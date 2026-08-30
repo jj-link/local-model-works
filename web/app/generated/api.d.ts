@@ -1562,6 +1562,7 @@ export interface components {
         };
         RecipeRepositoryUpdateRequest: {
             expected_head_commit: string;
+            permission_diff_accepted: boolean;
             plan_digest: string;
         };
         RecipeRepositoryVersion: {
@@ -1597,10 +1598,14 @@ export interface components {
             node_status: string;
         };
         RecipeUpdatePlan: {
+            added_permissions: string[];
+            candidate_permissions: string[];
+            current_permissions: string[];
             diagnostics: components["schemas"]["Diagnostic"][];
             installed_devices: components["schemas"]["RecipeUpdateDevice"][];
             plan_digest: string;
             ready: boolean;
+            removed_permissions: string[];
             running_deployments: components["schemas"]["RecipeUpdateRunningDeployment"][];
         };
         RecipeUpdateRunningDeployment: {

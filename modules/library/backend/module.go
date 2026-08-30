@@ -239,19 +239,28 @@ type repositoryUpdatePlanRequest struct {
 }
 
 type repositoryUpdateRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
-	PlanDigest         string `json:"plan_digest"`
+	ExpectedHeadCommit     string `json:"expected_head_commit"`
+	PlanDigest             string `json:"plan_digest"`
+	PermissionDiffAccepted bool   `json:"permission_diff_accepted"`
 }
 
 type repositoryUpdatePlanView struct {
-	PlanDigest         string                          `json:"plan_digest"`
-	Ready              bool                            `json:"ready"`
-	InstalledDevices   []deploy.RepositoryUpdateDevice `json:"installed_devices"`
-	RunningDeployments []deploy.RepositoryUpdateTarget `json:"running_deployments"`
-	Diagnostics        []diag.Diagnostic               `json:"diagnostics"`
+	PlanDigest           string                          `json:"plan_digest"`
+	Ready                bool                            `json:"ready"`
+	CurrentPermissions   []string                        `json:"current_permissions"`
+	CandidatePermissions []string                        `json:"candidate_permissions"`
+	AddedPermissions     []string                        `json:"added_permissions"`
+	RemovedPermissions   []string                        `json:"removed_permissions"`
+	InstalledDevices     []deploy.RepositoryUpdateDevice `json:"installed_devices"`
+	RunningDeployments   []deploy.RepositoryUpdateTarget `json:"running_deployments"`
+	Diagnostics          []diag.Diagnostic               `json:"diagnostics"`
 }
 
 func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryUpdatePlanView {
+	currentPermissions := append([]string{}, plan.CurrentPermissions...)
+	candidatePermissions := append([]string{}, plan.CandidatePermissions...)
+	addedPermissions := append([]string{}, plan.AddedPermissions...)
+	removedPermissions := append([]string{}, plan.RemovedPermissions...)
 	installedDevices := plan.InstalledDevices
 	if installedDevices == nil {
 		installedDevices = []deploy.RepositoryUpdateDevice{}
@@ -266,6 +275,8 @@ func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryU
 	}
 	return repositoryUpdatePlanView{
 		PlanDigest: plan.Digest, Ready: plan.Ready,
+		CurrentPermissions: currentPermissions, CandidatePermissions: candidatePermissions,
+		AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
 		InstalledDevices: installedDevices, RunningDeployments: runningDeployments,
 		Diagnostics: diagnostics,
 	}
@@ -334,6 +345,10 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "expected_head_commit and plan_digest are required")
 		return
 	}
+	if !request.PermissionDiffAccepted {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.permission_diff_pending", "review and accept the candidate permission contract")
+		return
+	}
 	repositoryID := chi.URLParam(r, "id")
 	repository, err := m.env.Recipes.GetRepository(r.Context(), repositoryID)
 	if err != nil {
@@ -352,7 +367,9 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
 		return
 	}
-	installed, err := m.env.Recipes.StageRepositoryCommit(r.Context(), repositoryID, request.ExpectedHeadCommit)
+	installed, err := m.env.Recipes.StageApprovedRepositoryCommit(
+		r.Context(), repositoryID, request.ExpectedHeadCommit, request.PermissionDiffAccepted,
+	)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
@@ -368,6 +385,8 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 func writeRecipeUpdateError(w http.ResponseWriter, err error) {
 	var packError *recipe.PackError
 	switch {
+	case errors.Is(err, recipe.ErrDiffPending):
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.permission_diff_pending", "review and accept the candidate permission contract")
 	case errors.As(err, &packError) && packError.Code == "recipe.update_stale":
 		httpx.WriteErr(w, http.StatusConflict, packError.Code, packError.Message)
 	case errors.As(err, &packError) && packError.Code == recipe.RepositoryUnsupportedCode:
