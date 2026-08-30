@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "required": ["name", "version", "displayName", "description", "license", "source"],
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9]([A-Za-z0-9./-]{1,100}[A-Za-z0-9])?$" },
         "version": { "type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?(\\+([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*))?$" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
         "description": { "type": "string", "minLength": 1, "maxLength": 4000 },

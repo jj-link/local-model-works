@@ -1,9 +1,9 @@
 apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
-  name: qwen38-27b-nvfp4-mtp-dgx-spark
+  name: MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark
   version: 1.0.0
-  displayName: MiaAI-Lab Qwen3.8-27B NVFP4 MTP · DGX Spark
+  displayName: MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark
   model: qwen3.8-27b-sglang
   engine: sglang
   description: >-
