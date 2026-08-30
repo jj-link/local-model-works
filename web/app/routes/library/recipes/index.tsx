@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { useCheckRecipeUpdates, useRecipeRepositories } from "~/lib/queries";
 import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
@@ -25,7 +24,6 @@ function repositoryDisplayName(repository: RecipeRepository): string {
 }
 
 export default function RecipesRoute() {
-  const navigate = useNavigate();
   const repositoriesQuery = useRecipeRepositories();
   const checkUpdates = useCheckRecipeUpdates();
   const [search, setSearch] = useState("");
@@ -163,7 +161,6 @@ export default function RecipesRoute() {
                 const fabric = recipe.compatibility?.fabric;
                 const transport = typeof fabric?.transport === "string" ? fabric.transport : "";
                 const installedCount = repository.installed_devices.length;
-                const requiresTrust = recipe.trust_state === "untrusted";
                 const compatibility = nodeCount
                   ? `${nodeCount} ${nodeCount === 1 ? "node" : "nodes"}${transport ? ` · ${transport === "roce" ? "RDMA" : transport.toUpperCase()} fabric` : ""}`
                   : "Compatibility not reported";
@@ -173,12 +170,8 @@ export default function RecipesRoute() {
                     <button
                       type="button"
                       className="sample-a-card"
-                      aria-label={`${requiresTrust ? "Review trust for" : "Plan launch for"} ${recipeDisplayName(recipe)}`}
+                      aria-label={`Plan launch for ${recipeDisplayName(recipe)}`}
                       onClick={() => {
-                        if (requiresTrust) {
-                          navigate(`/library/recipes/${recipe.digest}`);
-                          return;
-                        }
                         setSelectedRecipeDigest(recipe.digest);
                         setPlanOpen(true);
                       }}
@@ -196,9 +189,7 @@ export default function RecipesRoute() {
                           ) : repository.observed_head_commit ? (
                             <span className="sample-a-update-state is-current">Up to date</span>
                           ) : null}
-                          {requiresTrust ? (
-                            <span className="sample-a-install-state is-untrusted">Approval required</span>
-                          ) : installedCount > 0 ? (
+                          {installedCount > 0 ? (
                             <span className="sample-a-install-state is-installed">
                               Recipe ready on {installedCount} {installedCount === 1 ? "node" : "nodes"}
                             </span>
@@ -213,7 +204,7 @@ export default function RecipesRoute() {
                       </span>
                       <span className="sample-a-compat">{compatibility}</span>
                       <span className="sample-a-updrow">
-                        <span className="sample-a-upd">{requiresTrust ? "Review trust →" : "Plan launch →"}</span>
+                        <span className="sample-a-upd">Plan launch →</span>
                       </span>
                       <span className="sample-a-meta">
                         {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}

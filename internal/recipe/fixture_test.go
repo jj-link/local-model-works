@@ -1,8 +1,7 @@
 package recipe_test
 
 // TestRecipeFixtures runs every case under internal/recipe/testdata through
-// the real validator (plus the real pack/install/trust/plan paths where the
-// case kind requires it) and asserts the exact stable code on failure.
+// the real validator and pack/install paths and asserts stable failure codes.
 // Each case dir holds recipe.yaml (the document), optional assets, and a
 // case.json describing the expected outcome.
 //
@@ -15,11 +14,9 @@ package recipe_test
 //	git       — Import{type:git} with a non-40-hex revision must fail with
 //	            the stable sentinel before any clone.
 //	gitpass   — Import{type:git, file://<repo>@<40-hex>} must succeed and
-//	            store the recipe untrusted with the full commit recorded.
+//	            preserve the full commit and tree provenance.
 //	catalog   — the case dir is packed into an on-disk OCI layout under a
 //	            temp catalog root; Import{type:catalog} must succeed.
-//	trust     — the recipe is stored untrusted; the deploy Plan/Create
-//	            trust gate must block it before any run/deployment row.
 
 import (
 	"context"
@@ -32,48 +29,33 @@ import (
 	"strings"
 	"testing"
 
-	sigsign "github.com/sigstore/sigstore-go/pkg/sign"
-	"google.golang.org/protobuf/encoding/protojson"
-
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
-	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
-	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/recipe"
-	"github.com/jj-link/local-model-works/internal/runs"
-	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 // fixtureCase is one case.json.
 type fixtureCase struct {
 	Outcome  string   `json:"outcome"`
-	Kind     string   `json:"kind,omitempty"` // validator (default) | pack | git | gitpass | trust | catalog
+	Kind     string   `json:"kind,omitempty"` // validator (default) | pack | git | gitpass | catalog
 	Code     string   `json:"code,omitempty"`
 	Revision string   `json:"revision,omitempty"`
 	HighRisk []string `json:"highRisk,omitempty"`
 	Note     string   `json:"note,omitempty"`
 }
 
-// offlineNodes answers the deploy service without a live fleet.
-type offlineNodes struct{}
-
-func (offlineNodes) Send(string, *agentv1.ServerMessage) bool { return false }
-func (offlineNodes) Online(string) bool                       { return false }
-
 // fixtureEnv wires the real validator, recipe store, and deploy service
 // against a fresh migrated database.
 type fixtureEnv struct {
-	ctx           context.Context
-	t             *testing.T
-	validator     *recipe.Validator
-	dbh           *sql.DB
-	q             *db.Queries
-	svc           *recipe.Service
-	dep           *deploy.Service
-	catalogRoot   string
-	catalogSigner *sigsign.EphemeralKeypair
-	gitRepo       string // temp repo holding testdata/pass-git-pinned under "pkg"
+	ctx         context.Context
+	t           *testing.T
+	validator   *recipe.Validator
+	dbh         *sql.DB
+	q           *db.Queries
+	svc         *recipe.Service
+	catalogRoot string
+	gitRepo     string // temp repo holding testdata/pass-git-pinned under "pkg"
 }
 
 func newFixtureEnv(t *testing.T) *fixtureEnv {
@@ -91,29 +73,12 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 		t.Fatalf("validator: %v", err)
 	}
 	catalogRoot := t.TempDir()
-	signer, err := sigsign.NewEphemeralKeypair(nil)
-	if err != nil {
-		t.Fatalf("catalog signer: %v", err)
-	}
-	publicKey, err := signer.GetPublicKeyPem()
-	if err != nil {
-		t.Fatalf("catalog public key: %v", err)
-	}
-	trustPath := filepath.Join(t.TempDir(), "trust.pem")
-	if err := os.WriteFile(trustPath, []byte(publicKey), 0o600); err != nil {
-		t.Fatalf("catalog trust key: %v", err)
-	}
 	packageRoot := filepath.Join(t.TempDir(), "recipes")
 	t.Cleanup(func() { _ = recipe.RemovePackage(packageRoot) })
-	svc, err := recipe.New(dbh, q, bus, v, trustPath, catalogRoot, packageRoot)
+	svc, err := recipe.New(dbh, q, bus, v, catalogRoot, packageRoot)
 	if err != nil {
 		t.Fatalf("recipe service: %v", err)
 	}
-	caCA, err := ca.New()
-	if err != nil {
-		t.Fatalf("ca: %v", err)
-	}
-	dep := deploy.New(dbh, q, bus, runs.New(dbh, q, bus, t.TempDir()), offlineNodes{}, caCA)
 
 	// One committed temp repo (the pass-git-pinned package under "pkg")
 	// serves both git fixture kinds.
@@ -150,8 +115,8 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 	}
 	_ = rev
 	return &fixtureEnv{
-		ctx: ctx, t: t, validator: v, dbh: dbh, q: q, svc: svc, dep: dep,
-		catalogRoot: catalogRoot, catalogSigner: signer, gitRepo: repo,
+		ctx: ctx, t: t, validator: v, dbh: dbh, q: q, svc: svc,
+		catalogRoot: catalogRoot, gitRepo: repo,
 	}
 }
 
@@ -318,9 +283,6 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		if err != nil {
 			t.Fatalf("git import: %v", err)
 		}
-		if rec.TrustState != recipe.TrustUntrusted {
-			t.Fatalf("git import must store untrusted, got %q", rec.TrustState)
-		}
 		var src struct {
 			Revision string `json:"revision"`
 			Tree     string `json:"tree"`
@@ -357,22 +319,7 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := recipe.Canonical(indexJSON)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bundle, err := sigsign.Bundle(&sigsign.PlainData{Data: canonical}, env.catalogSigner, sigsign.BundleOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		bundleJSON, err := protojson.Marshal(bundle)
-		if err != nil {
-			t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.json"), indexJSON, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.sigstore.json"), bundleJSON, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := env.svc.Import(env.ctx, recipe.RecipeSource{Type: "catalog", Reference: m.Metadata.Name})
@@ -381,9 +328,6 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 		}
 		if rec.Digest != res.ManifestDigest {
 			t.Fatalf("digest %q != packed manifest digest %q", rec.Digest, res.ManifestDigest)
-		}
-		if rec.TrustState != recipe.TrustVerified {
-			t.Fatalf("signed catalog import must be verified, got %q", rec.TrustState)
 		}
 		if rec.Model != m.Metadata.Model || rec.Engine != m.Metadata.Engine {
 			t.Fatalf("recipe metadata model=%q engine=%q, want model=%q engine=%q", rec.Model, rec.Engine, m.Metadata.Model, m.Metadata.Engine)
@@ -399,86 +343,7 @@ func runFixture(t *testing.T, env *fixtureEnv, fc fixtureCase, dir string) {
 				t.Fatalf("installed recipe did not upsert artifact %s: %v", identity, err)
 			}
 		}
-	case "trust":
-		doc := loadDoc(t, dir)
-		rec, err := env.svc.Store(env.ctx, doc, recipe.RecipeSource{Type: "local", Path: dir}, recipe.TrustUntrusted)
-		if err != nil {
-			t.Fatalf("store: %v", err)
-		}
-		if _, err := env.dep.Plan(env.ctx, deploy.PlanRequest{RecipeDigest: rec.Digest}); !errors.Is(err, deploy.ErrUntrusted) {
-			t.Fatalf("Plan must block with ErrUntrusted, got %v", err)
-		}
-		if _, err := env.dep.Create(env.ctx, deploy.CreateRequest{RecipeDigest: rec.Digest}); !errors.Is(err, deploy.ErrUntrusted) {
-			t.Fatalf("Create must block with ErrUntrusted, got %v", err)
-		}
-		deps, err := env.q.ListDeployments(env.ctx)
-		if err != nil {
-			t.Fatalf("list deployments: %v", err)
-		}
-		runRows, err := env.q.ListRuns(env.ctx, db.ListRunsParams{})
-		if err != nil {
-			t.Fatalf("list runs: %v", err)
-		}
-		if len(deps) != 0 || len(runRows) != 0 {
-			t.Fatalf("untrusted launch must create nothing: %d deployments, %d runs", len(deps), len(runRows))
-		}
-		// After operator approval the gate opens: planning proceeds to the
-		// (empty-fleet) capacity check instead of the trust error.
-		if _, err := env.svc.SetTrust(env.ctx, rec.Digest, recipe.TrustLocal, true); err != nil {
-			t.Fatalf("set trust: %v", err)
-		}
-		plan, err := env.dep.Plan(env.ctx, deploy.PlanRequest{RecipeDigest: rec.Digest})
-		if err != nil {
-			t.Fatalf("Plan after approval must pass the trust gate, got %v", err)
-		}
-		if plan == nil || plan.Ready {
-			t.Fatalf("empty-fleet plan must be not-ready, got %+v", plan)
-		}
-
 	default:
 		t.Fatalf("unknown fixture kind %q", fc.Kind)
-	}
-}
-func TestCatalogRejectsTamperedSignedIndex(t *testing.T) {
-	env := newFixtureEnv(t)
-	index := map[string]any{
-		"apiVersion": "localmodelworks/v1alpha1",
-		"kind":       "RecipeCatalog",
-		"metadata":   map[string]any{"name": "signed-catalog"},
-		"recipes": []any{map[string]any{
-			"name": "catalog-demo", "version": "1.0.0", "summary": "signed",
-			"oci": map[string]any{
-				"reference": "registry.example.test/lmw/catalog-demo",
-				"digest":    "sha256:" + strings.Repeat("a", 64),
-			},
-		}},
-	}
-	indexJSON, err := json.Marshal(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := recipe.Canonical(indexJSON)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundle, err := sigsign.Bundle(&sigsign.PlainData{Data: canonical}, env.catalogSigner, sigsign.BundleOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundleJSON, err := protojson.Marshal(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.sigstore.json"), bundleJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	index["metadata"] = map[string]any{"name": "tampered-catalog"}
-	tampered, _ := json.Marshal(index)
-	if err := os.WriteFile(filepath.Join(env.catalogRoot, "catalog.json"), tampered, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := env.svc.Import(env.ctx, recipe.RecipeSource{Type: "catalog", Reference: "catalog-demo"}); err == nil ||
-		!strings.Contains(err.Error(), "catalog signature") {
-		t.Fatalf("tampered catalog error = %v", err)
 	}
 }

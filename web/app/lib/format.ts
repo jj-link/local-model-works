@@ -41,10 +41,6 @@ const STATES: Record<string, StateInfo> = {
   complete: { label: "complete", tone: "ok" },
   valid: { label: "valid", tone: "ok" },
   invalid: { label: "invalid", tone: "fault" },
-  // recipe trust
-  verified: { label: "verified", tone: "ok" },
-  local: { label: "local", tone: "warn" },
-  untrusted: { label: "untrusted", tone: "fault" },
   // diagnostic severity
   warning: { label: "warning", tone: "warn" },
   error: { label: "error", tone: "fault" },

@@ -66,7 +66,7 @@ export default function RecipeDraftRoute() {
     if (!draft) return;
     setBusy(true);
     try {
-      const installed = await installRecipeDraft(draft.id, true);
+      const installed = await installRecipeDraft(draft.id);
       await draftQuery.refetch();
       toast.success(`Installed ${installed.name}@${installed.version}`);
     } catch (error) {

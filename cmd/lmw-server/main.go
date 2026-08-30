@@ -19,7 +19,6 @@ import (
 	"github.com/jj-link/local-model-works/internal/config"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/server"
-	"github.com/jj-link/local-model-works/internal/sign"
 )
 
 // Version and commit are stamped at build time.
@@ -42,23 +41,6 @@ func run(cfg config.Server, version, commit string) error {
 	for _, d := range []string{cfg.StateRoot, filepath.Join(cfg.StateRoot, "ca"), cfg.RecipeRoot(), cfg.RunRoot(), cfg.CatalogRoot()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("state root: %w", err)
-		}
-	}
-
-	// Materialize the recipe/catalog trust key once: an operator-supplied PEM
-	// from the environment wins; otherwise generate a fresh Ed25519 key on
-	// first boot so the server never fails to start on an empty state dir.
-	if cfg.TrustKeyPEM != "" {
-		if err := os.WriteFile(cfg.TrustKeyPath(), []byte(cfg.TrustKeyPEM+"\n"), 0o600); err != nil {
-			return fmt.Errorf("trust key: %w", err)
-		}
-	} else if _, err := os.Stat(cfg.TrustKeyPath()); os.IsNotExist(err) {
-		keyPEM, genErr := sign.NewKeyPEM()
-		if genErr != nil {
-			return fmt.Errorf("trust key: %w", genErr)
-		}
-		if err := os.WriteFile(cfg.TrustKeyPath(), keyPEM, 0o600); err != nil {
-			return fmt.Errorf("trust key: %w", err)
 		}
 	}
 

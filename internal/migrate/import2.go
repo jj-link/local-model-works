@@ -149,8 +149,8 @@ func copyFileSHA(src, dst string) error {
 }
 
 // importDB performs the single transactional DB mutation: plan record, node
-// seeds, recipes (trust_local), terminal runs (legacy state map + original
-// timestamps), benchmark result rows, and validated cache placements.
+// seeds, recipes, terminal runs (legacy state map + original timestamps),
+// benchmark result rows, and validated cache placements.
 func importDB(ctx context.Context, sqlDB *sql.DB, validator *recipe.Validator,
 	plan *Plan, rep *ImportReport, opts ImportOptions) error {
 	tx, err := sqlDB.BeginTx(ctx, nil)
@@ -202,20 +202,18 @@ func importDB(ctx context.Context, sqlDB *sql.DB, validator *recipe.Validator,
 		} else if bad := launchBlockers(vdiags); len(bad) > 0 {
 			return fmt.Errorf("import recipe %s: %v", r.Name, bad)
 		} else if r.Image.Mutable {
-			// Mutable images import as trust_local but are not launchable
-			// until published by digest; the strict validator's
-			// recipe.image-latest finding is expected and recorded.
+			// Mutable images are stored but are not launchable until published
+			// by digest; the strict validator finding is expected and recorded.
 			rep.Warnings = append(rep.Warnings, fmt.Sprintf(
 				"recipe %s: stored with mutable image %s; not launchable until published by digest",
 				r.Name, r.Image.Reference))
 		}
 		if err := q.CreateRecipe(ctx, db.CreateRecipeParams{
-			Digest:     r.Digest,
-			Name:       r.Name,
-			Version:    "1.0.0",
-			Source:     r.Packages[0],
-			TrustState: string(recipe.TrustLocal),
-			Manifest:   string(r.Document),
+			Digest:   r.Digest,
+			Name:     r.Name,
+			Version:  "1.0.0",
+			Source:   r.Packages[0],
+			Manifest: string(r.Document),
 		}); err != nil {
 			return fmt.Errorf("create recipe %s: %w", r.Name, err)
 		}
@@ -443,8 +441,8 @@ func legacyStateMessage(r RunEntry) string {
 
 // launchBlockers returns the validation findings that make a converted
 // recipe unimportable. recipe.image-latest is tolerated: mutable-image
-// recipes are stored verbatim as trust_local and become launchable only
-// once the operator pins them by digest (scan reports them separately).
+// recipes are stored verbatim and become launchable once the operator pins
+// them by digest (scan reports them separately).
 func launchBlockers(diags []recipe.Diagnostic) []recipe.Diagnostic {
 	var out []recipe.Diagnostic
 	for _, d := range diags {

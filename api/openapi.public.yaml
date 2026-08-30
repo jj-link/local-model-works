@@ -1060,17 +1060,6 @@ paths:
       operationId: installRecipeDraft
       parameters:
         - $ref: '#/components/parameters/ID'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                permission_diff_accepted:
-                  type: boolean
-              required:
-                - permission_diff_accepted
-              type: object
-        required: true
       responses:
         "201":
           content:
@@ -1253,37 +1242,6 @@ paths:
           $ref: '#/components/responses/NotFound'
       tags:
         - recipes
-  /recipes/{digest}/trust:
-    post:
-      operationId: setRecipeTrust
-      parameters:
-        - in: path
-          name: digest
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RecipeTrustRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Recipe'
-          description: Recipe with updated trust state
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "409":
-          $ref: '#/components/responses/Conflict'
-      summary: Approve trust (local) after reviewing the permission diff
-      tags:
-        - recipes
   /recipes/check-updates:
     post:
       operationId: checkRecipeUpdates
@@ -1316,7 +1274,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Recipe'
-          description: Installed recipe (trust untrusted unless verified)
+          description: Installed recipe
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
@@ -2934,12 +2892,6 @@ components:
           type: integer
         source:
           $ref: '#/components/schemas/RecipeSource'
-        trust_state:
-          enum:
-            - verified
-            - local
-            - untrusted
-          type: string
         update:
           $ref: '#/components/schemas/RecipeUpdateStatus'
         variant_count:
@@ -2953,7 +2905,6 @@ components:
         - digest
         - name
         - version
-        - trust_state
         - installed_at
       type: object
     RecipeDetail:
@@ -3126,14 +3077,11 @@ components:
       properties:
         expected_head_commit:
           type: string
-        permission_diff_accepted:
-          type: boolean
         plan_digest:
           type: string
       required:
         - expected_head_commit
         - plan_digest
-        - permission_diff_accepted
       type: object
     RecipeRepositoryVersion:
       properties:
@@ -3175,19 +3123,6 @@ components:
           type: string
       required:
         - type
-      type: object
-    RecipeTrustRequest:
-      properties:
-        permission_diff_accepted:
-          type: boolean
-        trust_state:
-          enum:
-            - local
-            - untrusted
-          type: string
-      required:
-        - trust_state
-        - permission_diff_accepted
       type: object
     RecipeUpdateAccepted:
       properties:

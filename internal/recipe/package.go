@@ -20,12 +20,11 @@ import (
 
 // Media types and artifact types for the recipe package format.
 const (
-	ArtifactType               = "application/vnd.localmodelworks.recipe.v1"
-	ConfigMediaType            = "application/vnd.localmodelworks.recipe.config.v1+json"
-	LayerMediaType             = "application/vnd.localmodelworks.recipe.assets.v1.tar+gzip"
-	CatalogArtifactType        = "application/vnd.localmodelworks.catalog.v1"
-	CatalogConfigType          = "application/vnd.localmodelworks.catalog.config.v1+json"
-	SigstoreBundleArtifactType = "application/vnd.dev.sigstore.bundle.v0.3+json"
+	ArtifactType        = "application/vnd.localmodelworks.recipe.v1"
+	ConfigMediaType     = "application/vnd.localmodelworks.recipe.config.v1+json"
+	LayerMediaType      = "application/vnd.localmodelworks.recipe.assets.v1.tar+gzip"
+	CatalogArtifactType = "application/vnd.localmodelworks.catalog.v1"
+	CatalogConfigType   = "application/vnd.localmodelworks.catalog.config.v1+json"
 
 	// LabelPrefix marks LMW-managed containers.
 	LabelPrefix = "dev.localmodelworks."

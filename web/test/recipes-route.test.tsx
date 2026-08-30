@@ -27,7 +27,6 @@ const recipes = [
     version_count: 2,
     description: "A verified two-node recipe.",
     license: "MIT",
-    trust_state: "verified",
     source: { type: "catalog", remote: "https://catalog.example/alpha" },
     compatibility: { nodeCount: 2, fabric: { transport: "roce" } },
     installed_at: "2026-01-03T00:00:00Z",
@@ -49,7 +48,6 @@ const recipes = [
     version: "1.0.0",
     description: "A local single-node recipe.",
     license: "Apache-2.0",
-    trust_state: "local",
     source: { type: "git", remote: "https://git.example/beta" },
     compatibility: { nodeCount: 1 },
     installed_at: "2026-01-01T00:00:00Z",
@@ -59,9 +57,8 @@ const recipes = [
     name: "gamma-recipe",
     display_name: "Gamma Model",
     version: "1.5.0",
-    description: "An untrusted local recipe.",
+    description: "A local recipe.",
     license: "BSD-3-Clause",
-    trust_state: "untrusted",
     source: { type: "local", remote: "/srv/gamma" },
     compatibility: { nodeCount: 2 },
     installed_at: "2026-01-02T00:00:00Z",
@@ -217,12 +214,11 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
-    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(2);
-    const gammaCard = screen.getByRole("button", { name: "Review trust for Gamma Model" });
-    expect(within(gammaCard).getByText("Approval required")).toBeInTheDocument();
-    expect(within(gammaCard).getByText("Review trust →")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(3);
+    const gammaCard = screen.getByRole("button", { name: "Plan launch for Gamma Model" });
+    expect(within(gammaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("button", { name: "Review trust for Gamma Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan launch for Gamma Model" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Plan launch for Alpha Model" })).not.toBeInTheDocument();
   });
 
@@ -248,7 +244,7 @@ describe("RecipesRoute repository catalog", () => {
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
   });
 
-  it("resolves a GitHub URL, reviews the immutable contract, and trusts it for launch", async () => {
+  it("resolves a GitHub URL and exposes its immutable contract for launch", async () => {
     installCatalogHandlers();
     const commit = "07aee44f76a23245b5822f4efbc01ea7ddc7bdb1";
     let importBody: Record<string, unknown> | undefined;
@@ -261,7 +257,6 @@ describe("RecipesRoute repository catalog", () => {
       version: "1.0.0",
       description: "Two Spark GLM launch contract.",
       license: "MIT",
-      trust_state: "untrusted",
       source: { type: "git", remote: "https://github.com/MiaAI-Lab/GLM", revision: commit },
       compatibility: { nodeCount: 2, fabric: { transport: "roce" } },
       permissions: ["devices.rdma", "network.host", "rootfs.write"],
@@ -292,8 +287,6 @@ describe("RecipesRoute repository catalog", () => {
           }],
         },
       })),
-      http.post(`*/api/v1/recipes/${glmDigest}/trust`, () =>
-        HttpResponse.json({ ...imported, trust_state: "local" })),
     );
 
     const user = userEvent.setup();
@@ -309,9 +302,8 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(dialog).getByText("164 GiB")).toBeInTheDocument();
     expect((importBody?.source as Record<string, unknown>).revision).toBeUndefined();
 
-    await user.click(within(dialog).getByRole("checkbox"));
-    await user.click(within(dialog).getByRole("button", { name: "Trust exact contract" }));
-    expect(await within(dialog).findByText("trusted · launchable")).toBeInTheDocument();
+    expect(await within(dialog).findByText("compiled · launchable")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Permissions:/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Plan launch" })).toBeEnabled();
   });
   it("shows installed devices and confirms an update without running deployments", async () => {
@@ -330,7 +322,10 @@ describe("RecipesRoute repository catalog", () => {
         }),
       ),
       http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update`, async ({ request }) => {
-        expect(await request.json()).toMatchObject({ permission_diff_accepted: true });
+        expect(await request.json()).toEqual({
+          expected_head_commit: "2222222222222222222222222222222222222222",
+          plan_digest: "sha256:empty-update",
+        });
         return HttpResponse.json({ run_id: "run-empty-update" }, { status: 202 });
       }),
       http.get("*/api/v1/runs/run-empty-update", () =>
@@ -351,7 +346,7 @@ describe("RecipesRoute repository catalog", () => {
     await user.click(await screen.findByRole("button", { name: "Update recipe" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
-    expect(within(dialog).getByRole("heading", { name: "Permission contract" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Permission changes" })).toBeInTheDocument();
     expect(within(dialog).getByText("rootfs.write")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Installed devices" })).toBeInTheDocument();
     expect(within(dialog).getByText("spark1")).toBeInTheDocument();
@@ -360,8 +355,6 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(dialog).queryByText("fetching")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("heading", { name: "Running deployments to replace" })).not.toBeInTheDocument();
     const updateButton = within(dialog).getByRole("button", { name: "Update recipe" });
-    expect(updateButton).toBeDisabled();
-    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
     expect(updateButton).toBeEnabled();
     await user.click(updateButton);
     expect(await screen.findByRole("heading", { name: "Update complete" })).toBeInTheDocument();
@@ -407,7 +400,6 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(installedSection).getByText("spark1")).toBeInTheDocument();
     expect(within(installedSection).getByText("spark2")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Running deployments to replace" })).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
     await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
     expect((await within(installedSection).findAllByText("fetching")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("pulling")).length).toBeGreaterThan(0);
@@ -441,7 +433,6 @@ describe("RecipesRoute repository catalog", () => {
     renderCatalog();
     await user.click(await screen.findByRole("button", { name: "Update recipe" }));
     const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
-    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
     await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
     expect(await screen.findByRole("heading", { name: "Update failed" })).toBeInTheDocument();
     expect(screen.getByText("workload.start_failed: container exited")).toBeInTheDocument();

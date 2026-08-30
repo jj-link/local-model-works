@@ -40,7 +40,7 @@ export default function DashboardRoute() {
   const nodesOnline = nodes.filter((n) => n.status === "online").length;
   const depHealthy = activeDeployments.filter((d) => d.observed_state === "healthy").length;
   const activeRuns = runs.filter((r) => ACTIVE_RUN_STATES.includes(r.state)).length;
-  const trusted = recipes.filter((r) => r.trust_state !== "untrusted").length;
+  const recipeCount = recipes.length;
 
   const error = nodesQ.error ?? deploymentsQ.error ?? recipesQ.error ?? runsQ.error;
 
@@ -67,8 +67,8 @@ export default function DashboardRoute() {
           tone={activeRuns > 0 ? "info" : "muted"}
         />
         <StatTile
-          label="recipes launchable"
-          value={`${trusted}/${recipes.length}`}
+          label="recipes installed"
+          value={String(recipeCount)}
           sub={<Link to="/library/recipes" className="text-faint hover:text-foreground">library →</Link>}
           tone={recipes.length === 0 ? "muted" : "info"}
         />

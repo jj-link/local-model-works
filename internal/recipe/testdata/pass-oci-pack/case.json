@@ -1,5 +1,5 @@
 {
   "outcome": "pass",
   "kind": "catalog",
-  "note": "Packed into an on-disk OCI layout under a temp catalog root; installed via type=catalog and stored trust=local."
+  "note": "Packed into an on-disk OCI layout under a temp catalog root and installed via type=catalog."
 }

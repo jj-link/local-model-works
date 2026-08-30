@@ -9,11 +9,8 @@ package fakeagent
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/x509"
 	"database/sql"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -87,22 +84,6 @@ func NewServer(t *testing.T, root, agentListen string) *Server {
 		SessionTTL:     12 * time.Hour,
 	}
 	t.Cleanup(func() { _ = recipe.RemovePackage(cfg.RecipeRoot()) })
-	// Materialize the recipe/catalog trust key once, mirroring
-	// cmd/lmw-server (the recipe store loads it by path).
-	if _, err := os.Stat(cfg.TrustKeyPath()); os.IsNotExist(err) {
-		_, pub, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("trust key: %v", err)
-		}
-		der, err := x509.MarshalPKIXPublicKey(ed25519.PublicKey(pub))
-		if err != nil {
-			t.Fatalf("trust key: %v", err)
-		}
-		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-		if err := os.WriteFile(cfg.TrustKeyPath(), pemBytes, 0o600); err != nil {
-			t.Fatalf("trust key: %v", err)
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	sqlDB, err := db.Open(ctx, cfg.DBPath())
 	if err != nil {

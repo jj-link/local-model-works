@@ -410,10 +410,7 @@ func (s *Service) Package(ctx context.Context, draftID string) (*Draft, error) {
 	return s.Get(ctx, draftID)
 }
 
-func (s *Service) Install(ctx context.Context, draftID string, permissionDiffAccepted bool) (*recipe.Recipe, error) {
-	if !permissionDiffAccepted {
-		return nil, fmt.Errorf("permission diff acceptance is required")
-	}
+func (s *Service) Install(ctx context.Context, draftID string) (*recipe.Recipe, error) {
 	draft, err := s.Get(ctx, draftID)
 	if err != nil {
 		return nil, err

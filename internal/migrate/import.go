@@ -102,7 +102,7 @@ func validateMappedNodes(ctx context.Context, q *db.Queries, plan *Plan, opts Im
 //     skips importing it);
 //  4. copy benchmark result trees (hardlink on one filesystem, else copy +
 //     SHA-256 verify) and run logs into the new run root;
-//  5. one DB transaction: plan record, node seeds, recipes (trust_local),
+//  5. one DB transaction: plan record, node seeds, recipes,
 //     terminal runs with the legacy state map and original timestamps,
 //     benchmark result rows, and validated cache placements;
 //  6. verify: logs readable through the runs service with recorded end

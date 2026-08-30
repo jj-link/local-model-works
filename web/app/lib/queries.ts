@@ -396,19 +396,6 @@ export function useImportRecipe() {
   });
 }
 
-export function useSetRecipeTrust() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ digest, ...body }: { digest: string } & api.RecipeTrustRequest) =>
-      api.setRecipeTrust(digest, body),
-    onSuccess: (r) => {
-      invalidates(qk.recipes)(qc);
-      qc.setQueryData<api.RecipeDetail>(qk.recipe(r.digest), (old) =>
-        old ? { ...old, ...r } : (r as api.RecipeDetail),
-      );
-    },
-  });
-}
 
 export function useDeleteRecipe() {
   const qc = useQueryClient();

@@ -39,7 +39,7 @@ func TestRepositoryDetailDeduplicatesVersionsAndShowsInstalledDevices(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	recipes, err := recipe.New(database, queries, bus, validator, "", t.TempDir(), t.TempDir())
+	recipes, err := recipe.New(database, queries, bus, validator, t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,21 +173,6 @@ func TestRepositoryUpdatePlanResponseUsesEmptyArrays(t *testing.T) {
 	}
 }
 
-func TestStartRepositoryUpdateRequiresPermissionApproval(t *testing.T) {
-	request := httptest.NewRequest(
-		"POST",
-		"/recipe-repositories/repo/update",
-		strings.NewReader(`{"expected_head_commit":"abc","plan_digest":"sha256:plan","permission_diff_accepted":false}`),
-	)
-	response := httptest.NewRecorder()
-
-	(&Module{}).startRecipeRepositoryUpdate(response, request)
-
-	if response.Code != 422 || !strings.Contains(response.Body.String(), `"code":"recipe.permission_diff_pending"`) {
-		t.Fatalf("response = %d %s", response.Code, response.Body.String())
-	}
-}
-
 func insertAPIRecipe(t *testing.T, ctx context.Context, queries *db.Queries, digest, name, remote, commit string) {
 	t.Helper()
 	manifest := map[string]any{
@@ -208,7 +193,7 @@ func insertAPIRecipe(t *testing.T, ctx context.Context, queries *db.Queries, dig
 	}
 	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: name, Version: "1.0.0", Source: `{"type":"local"}`,
-		TrustState: recipe.TrustLocal, Manifest: string(encoded),
+		Manifest: string(encoded),
 	}); err != nil {
 		t.Fatal(err)
 	}

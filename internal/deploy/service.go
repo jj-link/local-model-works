@@ -90,14 +90,14 @@ func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service
 
 // Plan previews a deployment from the current fleet state.
 func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
-	return s.plan(ctx, req, nil, false)
+	return s.plan(ctx, req, nil)
 }
 
-func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, allowUntrusted bool) (*Plan, error) {
-	return s.planWithRecipe(ctx, req, ignoredDeployments, allowUntrusted, nil)
+func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool) (*Plan, error) {
+	return s.planWithRecipe(ctx, req, ignoredDeployments, nil)
 }
 
-func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, allowUntrusted bool, recipeCandidate *recipe.RepositoryCandidate) (*Plan, error) {
+func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, recipeCandidate *recipe.RepositoryCandidate) (*Plan, error) {
 	var (
 		m             *recipe.Manifest
 		recipeName    string
@@ -108,11 +108,6 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
 		}
-		// Trust gate: an untrusted recipe is inspectable but not launchable.
-		// Plan (and thus Create) blocks before any run or deployment row exists.
-		if row.TrustState == recipe.TrustUntrusted && !allowUntrusted {
-			return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
-		}
 		m, err = recipe.Parse([]byte(row.Manifest))
 		if err != nil {
 			return nil, fmt.Errorf("recipe manifest: %w", err)
@@ -122,9 +117,6 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 	} else {
 		if recipeCandidate.Manifest == nil || recipeCandidate.Digest != req.RecipeDigest {
 			return nil, fmt.Errorf("%w: invalid repository candidate", ErrRecipe)
-		}
-		if !allowUntrusted {
-			return nil, fmt.Errorf("%w: %s: approve the permission diff or verify a signature first", ErrUntrusted, req.RecipeDigest)
 		}
 		m = recipeCandidate.Manifest
 		recipeName = m.Metadata.Name

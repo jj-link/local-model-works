@@ -28,7 +28,6 @@ export type RecipeUpdateRunningDeployment = Schemas["RecipeUpdateRunningDeployme
 export type RecipeUpdateAccepted = Schemas["RecipeUpdateAccepted"];
 export type RecipeSource = Schemas["RecipeSource"];
 export type RecipeImport = Schemas["RecipeImport"];
-export type RecipeTrustRequest = Schemas["RecipeTrustRequest"];
 export type RecipeDraft = Schemas["RecipeDraft"];
 export type RecipeDraftSource = Schemas["RecipeDraftSource"];
 export type Artifact = Schemas["Artifact"];
@@ -171,8 +170,6 @@ export const checkRecipeUpdates = () =>
 export const deleteRecipe = (digest: string) =>
   http.del<void>(`/recipes/${digest}`, { headers: { "if-match": digest } });
 
-export const setRecipeTrust = (digest: string, body: RecipeTrustRequest) =>
-  http.post<Recipe>(`/recipes/${digest}/trust`, body);
 
 export const importRecipe = (body: RecipeImport) => http.post<Recipe>("/recipes/import", body);
 
@@ -189,8 +186,8 @@ export const updateRecipeDraft = (
 ) => http.put<RecipeDraft>(`/recipe-drafts/${id}`, body, { headers: { "if-match": String(version) } });
 export const packageRecipeDraft = (id: string) =>
   http.post<RecipeDraft>(`/recipe-drafts/${id}/package`);
-export const installRecipeDraft = (id: string, permissionDiffAccepted: boolean) =>
-  http.post<Recipe>(`/recipe-drafts/${id}/install`, { permission_diff_accepted: permissionDiffAccepted });
+export const installRecipeDraft = (id: string) =>
+  http.post<Recipe>(`/recipe-drafts/${id}/install`);
 export const deleteRecipeDraft = (id: string) => http.del<void>(`/recipe-drafts/${id}`);
 
 /* ------------------------------------------------------------------ */

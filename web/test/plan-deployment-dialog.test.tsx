@@ -18,7 +18,6 @@ const recipe = {
   name: "deepseek-v4-flash-0731-dspark-tp2",
   version: "1.0.0",
   digest: D,
-  trust_state: "local",
   installed_at: "2026-08-21T06:17:58Z",
   compatibility: { nodeCount: 2, accelerator: { vendor: "nvidia", architectures: ["sm_121"], count: 1 } },
 };

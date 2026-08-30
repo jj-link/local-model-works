@@ -215,7 +215,7 @@ func (h *harness) seedRecipeUnplaced(t *testing.T, digest, manifest string) {
 	ctx := context.Background()
 	if err := h.q.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: "test", Version: "1",
-		Source: "{}", TrustState: "local", Manifest: manifest,
+		Source: "{}", Manifest: manifest,
 	}); err != nil {
 		t.Fatalf("create recipe: %v", err)
 	}

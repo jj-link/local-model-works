@@ -27,7 +27,7 @@ func TestCheckUpdatesCachesGitHubHeadAcrossRecipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(database, queries, events.NewEventBus(queries), validator, "", filepath.Join(root, "catalog"), filepath.Join(root, "packages"))
+	service, err := New(database, queries, events.NewEventBus(queries), validator, filepath.Join(root, "catalog"), filepath.Join(root, "packages"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func createUpdateRecipe(t *testing.T, ctx context.Context, queries *db.Queries, 
 	digest := "sha256:" + hex.EncodeToString(sum[:])
 	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: name, Version: "1.0.0", Source: `{"type":"local","path":"fixture"}`,
-		TrustState: TrustLocal, Manifest: string(manifestJSON),
+		Manifest: string(manifestJSON),
 	}); err != nil {
 		t.Fatal(err)
 	}

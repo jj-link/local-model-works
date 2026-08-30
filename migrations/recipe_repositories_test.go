@@ -19,7 +19,7 @@ func TestRecipeRepositoryMigrationRetainsDuplicatePackages(t *testing.T) {
 CREATE TABLE recipes (
  digest TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
  display_name TEXT, description TEXT, license TEXT, source TEXT NOT NULL,
- trust_state TEXT NOT NULL, manifest TEXT NOT NULL, installed_at TEXT NOT NULL
+ manifest TEXT NOT NULL, installed_at TEXT NOT NULL
 );
 CREATE TABLE recipe_update_checks (
  recipe_digest TEXT PRIMARY KEY, remote TEXT NOT NULL, tracking_ref TEXT NOT NULL,
@@ -34,8 +34,8 @@ CREATE TABLE recipe_update_checks (
 		t.Helper()
 		manifest := fmt.Sprintf(`{"metadata":{"name":%q,"source":{"url":%q,"path":".","revision":%q}}}`, name, remote, commit)
 		if _, err := database.Exec(`INSERT INTO recipes
-(digest,name,version,source,trust_state,manifest,installed_at)
-VALUES (?,?, '1.0.0','{"type":"local"}','local',?,?)`, digest, name, manifest, installedAt); err != nil {
+(digest,name,version,source,manifest,installed_at)
+VALUES (?,?, '1.0.0','{"type":"local"}',?,?)`, digest, name, manifest, installedAt); err != nil {
 			t.Fatal(err)
 		}
 	}

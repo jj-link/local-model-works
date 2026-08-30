@@ -54,7 +54,7 @@ func NewValidator() (*Validator, error) {
 }
 
 // Validate runs the JSON schema plus every semantic rule and returns all
-// diagnostics. An empty result means the recipe is launchable-pending-trust.
+// diagnostics. An empty result means the recipe is launchable.
 func (v *Validator) Validate(doc []byte) ([]Diagnostic, error) {
 	dec := json.NewDecoder(strings.NewReader(string(doc)))
 	dec.UseNumber()

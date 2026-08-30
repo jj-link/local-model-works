@@ -1,6 +1,0 @@
-{
-  "outcome": "fail",
-  "kind": "trust",
-  "code": "ErrUntrusted",
-  "note": "A recipe stored untrusted is inspectable but not launchable: deploy Plan (and thus Create) blocks before any run or deployment row exists; API code recipe.untrusted (409)."
-}

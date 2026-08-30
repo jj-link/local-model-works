@@ -152,7 +152,7 @@ func InstallRecipe(t *testing.T, s *Server, r FixtureRecipe) (string, *recipe.Ma
 		t.Fatalf("parse canonical: %v", err)
 	}
 	stored, err := s.Srv.Env().Recipes.Store(
-		s.Ctx, canon, recipe.RecipeSource{Type: "local", Path: "fakeagent"}, recipe.TrustLocal,
+		s.Ctx, canon, recipe.RecipeSource{Type: "local", Path: "fakeagent"},
 	)
 	if err != nil {
 		t.Fatalf("store recipe: %v", err)

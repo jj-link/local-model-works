@@ -163,7 +163,6 @@ type Recipe struct {
 	Description sql.NullString `json:"description"`
 	License     sql.NullString `json:"license"`
 	Source      string         `json:"source"`
-	TrustState  string         `json:"trust_state"`
 	Manifest    string         `json:"manifest"`
 	InstalledAt string         `json:"installed_at"`
 }
