@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   NDJSONEventDecoder,
   reconstructActiveInvocations,
   summarizeAutoResearchUsage,
+  storeRunEvents,
   type AutoResearchEvent,
 } from "~/routes/autoresearch/events";
 
@@ -90,5 +91,28 @@ describe("summarizeAutoResearchUsage", () => {
       outputRate: null,
       contextPercent: null,
     });
+  });
+});
+
+describe("AutoResearch event replay storage", () => {
+  it("does not interrupt event handling when sessionStorage rejects writes", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    expect(() => storeRunEvents("run-1", {
+      lastEventId: "e1",
+      events: [event("e1", "agent.text.delta", "primary-1", "idea.creator", { delta: "still rendered" })],
+    })).not.toThrow();
+    setItem.mockRestore();
+  });
+
+  it("caps persisted replay data by event count and serialized bytes", () => {
+    const events = Array.from({ length: 2_000 }, (_, index) =>
+      event(`large-${index}`, "agent.text.delta", "primary-1", "idea.creator", { delta: "x".repeat(2_000) }));
+    storeRunEvents("large-run", { lastEventId: "large-1999", events });
+    const raw = sessionStorage.getItem("autoresearch.events.large-run");
+    expect(raw).not.toBeNull();
+    expect(new TextEncoder().encode(raw ?? "").byteLength).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect((JSON.parse(raw ?? "{}").events as unknown[]).length).toBeLessThanOrEqual(1_500);
   });
 });

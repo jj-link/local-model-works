@@ -1,6 +1,6 @@
 -- name: CreateAutoResearchProject :exec
-INSERT INTO autoresearch_projects (id, name, status, runner_node_id, idea_prompt, config_json)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO autoresearch_projects (id, name, status, idea_prompt, config_json)
+VALUES (?, ?, ?, ?, ?);
 
 -- name: GetAutoResearchProject :one
 SELECT * FROM autoresearch_projects WHERE id = ?;
@@ -10,16 +10,16 @@ SELECT * FROM autoresearch_projects ORDER BY updated_at DESC, id;
 
 -- name: UpdateAutoResearchProject :execrows
 UPDATE autoresearch_projects
-SET name = ?, status = ?, runner_node_id = ?, idea_prompt = ?, config_json = ?,
+SET name = ?, status = ?, idea_prompt = ?, config_json = ?,
     version = version + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ? AND version = ?;
 
--- name: UpdateAutoResearchProjectStatus :execrows
+-- name: SetAutoResearchProjectStatus :execrows
 UPDATE autoresearch_projects
 SET status = ?, version = version + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE id = ? AND version = ?;
+WHERE id = ?;
 
 -- name: CreateAutoResearchSource :exec
 INSERT INTO autoresearch_sources
@@ -52,6 +52,25 @@ UPDATE autoresearch_ideas
 SET title = ?, body = ?, version = version + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ? AND project_id = ? AND version = ?;
+
+-- name: ClearAutoResearchIdeaSelections :exec
+UPDATE autoresearch_ideas
+SET selected = 0, version = version + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE project_id = ? AND selected = 1 AND id <> ?;
+
+-- name: DeleteUnselectedGeneratedAutoResearchIdeas :exec
+DELETE FROM autoresearch_ideas
+WHERE project_id = ? AND source = 'generated' AND selected = 0;
+
+-- name: GetMaxAutoResearchIdeaOrdinal :one
+SELECT CAST(COALESCE(MAX(ordinal), 0) AS INTEGER) FROM autoresearch_ideas WHERE project_id = ?;
+
+-- name: GetSelectedAutoResearchIdea :one
+SELECT * FROM autoresearch_ideas
+WHERE project_id = ? AND selected = 1
+ORDER BY updated_at DESC, id DESC
+LIMIT 1;
 
 -- name: SelectAutoResearchIdea :execrows
 UPDATE autoresearch_ideas

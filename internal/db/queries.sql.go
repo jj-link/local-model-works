@@ -2317,6 +2317,38 @@ func (q *Queries) SetRunOutput(ctx context.Context, arg SetRunOutputParams) erro
 	return err
 }
 
+const transferActiveLease = `-- name: TransferActiveLease :execrows
+UPDATE leases
+SET owner_kind = ?1,
+    owner_id = ?2
+WHERE resource = ?3
+  AND owner_kind = ?4
+  AND owner_id = ?5
+  AND state = 'active'
+`
+
+type TransferActiveLeaseParams struct {
+	NewOwnerKind    string `json:"new_owner_kind"`
+	NewOwnerID      string `json:"new_owner_id"`
+	Resource        string `json:"resource"`
+	ParentOwnerKind string `json:"parent_owner_kind"`
+	ParentOwnerID   string `json:"parent_owner_id"`
+}
+
+func (q *Queries) TransferActiveLease(ctx context.Context, arg TransferActiveLeaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, transferActiveLease,
+		arg.NewOwnerKind,
+		arg.NewOwnerID,
+		arg.Resource,
+		arg.ParentOwnerKind,
+		arg.ParentOwnerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateDeploymentEndpointMetadata = `-- name: UpdateDeploymentEndpointMetadata :exec
 UPDATE deployments SET endpoint_model = ?, endpoint_path = ?,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')

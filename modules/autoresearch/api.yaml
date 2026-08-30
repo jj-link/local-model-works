@@ -344,11 +344,11 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/AutoResearchPaperChatRequest'}
       responses:
-        '200':
-          description: Completed writer edit and changed-file digest set
+        '202':
+          description: Queued writer edit run
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AutoResearchPaperChatResponse'}
+              schema: {$ref: '#/components/schemas/Run'}
         '409': {$ref: '#/components/responses/Conflict'}
   /autoresearch/projects/{projectId}/paper/release:
     post:
@@ -457,7 +457,6 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 200}
         idea_prompt: {type: string, minLength: 1, maxLength: 100000}
-        runner_node_id: {type: string, format: uuid}
         config: {$ref: '#/components/schemas/AutoResearchProjectConfig'}
     AutoResearchProjectPatch:
       type: object
@@ -465,7 +464,6 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 200}
         idea_prompt: {type: string, maxLength: 100000}
-        runner_node_id: {type: string, format: uuid}
         config: {$ref: '#/components/schemas/AutoResearchProjectConfig'}
     AutoResearchProject:
       type: object
@@ -474,7 +472,6 @@ components:
         id: {type: string, format: uuid}
         name: {type: string}
         status: {$ref: '#/components/schemas/AutoResearchProjectStatus'}
-        runner_node_id: {type: string, format: uuid, nullable: true}
         idea_prompt: {type: string}
         config: {$ref: '#/components/schemas/AutoResearchProjectConfig'}
         version: {type: integer}
@@ -520,7 +517,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         project_id: {type: string, format: uuid}
-        ordinal: {type: integer, minimum: 1, maximum: 10}
+        ordinal: {type: integer, minimum: 0}
         source: {type: string, enum: [human, generated]}
         title: {type: string}
         body: {type: string}
@@ -554,11 +551,3 @@ components:
         base_etags:
           type: object
           additionalProperties: {type: string}
-    AutoResearchPaperChatResponse:
-      type: object
-      required: [run, changed_paths, before_digests, after_digests]
-      properties:
-        run: {$ref: '#/components/schemas/Run'}
-        changed_paths: {type: array, items: {type: string}}
-        before_digests: {type: object, additionalProperties: {type: string}}
-        after_digests: {type: object, additionalProperties: {type: string}}

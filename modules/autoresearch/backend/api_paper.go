@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,12 +14,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/httpx"
 	"github.com/jj-link/local-model-works/internal/id"
-	runsvc "github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/jobs"
 )
 
 const maxPaperSourceFile = 5 << 20
@@ -175,6 +175,11 @@ func (m *Module) UpdateAutoResearchPaperFile(w http.ResponseWriter, r *http.Requ
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "autoresearch.paper_path_invalid", "invalid paper source path")
 		return
 	}
+	unlock := m.lockProject(projectID.String())
+	defer unlock()
+	if m.rejectProjectBusy(w, r, projectID.String()) {
+		return
+	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		httpx.HandleErr(w, err)
@@ -253,20 +258,45 @@ func (m *Module) GetAutoResearchPaperPdf(w http.ResponseWriter, r *http.Request,
 	_, _ = w.Write(contents)
 }
 
-func (m *Module) submitPaperJob(r *http.Request, project db.AutoresearchProject, kind string, input map[string]any) (string, error) {
+func (m *Module) submitPaperJobLocked(r *http.Request, project db.AutoresearchProject, kind string, input map[string]any) (string, error) {
+	if err := m.ensureCredentialCleanup(); err != nil {
+		return "", err
+	}
+	settings, err := m.requireWorkerSettings(r.Context())
+	if err != nil {
+		return "", err
+	}
+	providerConfig, err := effectiveProviderSnapshot(project.ConfigJson, settings, input["provider_overrides"])
+	if err != nil {
+		return "", err
+	}
+	configSnapshotJSON, err := json.Marshal(providerConfig)
+	if err != nil {
+		return "", err
+	}
 	input["project_id"] = project.ID
-	input["provider_config"] = m.projectConfigWithDefaults(r.Context(), project.ConfigJson)
+	input["provider_config"] = providerConfig
 	runID, err := m.env.Jobs.Submit(r.Context(), kind, input)
 	if err != nil {
 		return "", err
 	}
 	if err := m.env.Q.CreateAutoResearchRun(r.Context(), db.CreateAutoResearchRunParams{
-		RunID: runID, ProjectID: project.ID, Factory: "paper", WorkerNodeID: project.RunnerNodeID, ConfigSnapshot: project.ConfigJson,
+		RunID: runID, ProjectID: project.ID, Factory: "paper",
+		WorkerNodeID: nullString(settings.RunnerNodeID), ConfigSnapshot: string(configSnapshotJSON),
 	}); err != nil {
 		_ = m.env.Runs.Cancel(r.Context(), runID)
 		return "", err
 	}
 	return runID, nil
+}
+
+func (m *Module) submitPaperJob(r *http.Request, project db.AutoresearchProject, kind string, input map[string]any) (string, error) {
+	unlock := m.lockProject(project.ID)
+	defer unlock()
+	if owner := m.activeProjectOperation(r.Context(), project.ID); owner != "" {
+		return "", fmt.Errorf("%w: project operation %s is active", jobs.ErrLeaseConflict, owner)
+	}
+	return m.submitPaperJobLocked(r, project, kind, input)
 }
 
 func (m *Module) CompileAutoResearchPaper(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId) {
@@ -276,6 +306,9 @@ func (m *Module) CompileAutoResearchPaper(w http.ResponseWriter, r *http.Request
 	}
 	runID, err := m.submitPaperJob(r, project, "autoresearch-paper-compile", map[string]any{})
 	if err != nil {
+		if writeAutoResearchSubmissionError(w, err) {
+			return
+		}
 		httpx.HandleErr(w, err)
 		return
 	}
@@ -297,6 +330,12 @@ func (m *Module) ChatEditAutoResearchPaper(w http.ResponseWriter, r *http.Reques
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
+	unlock := m.lockProject(project.ID)
+	defer unlock()
+	if owner := m.activeProjectOperation(r.Context(), project.ID); owner != "" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.project_busy", "project operation "+owner+" is active")
+		return
+	}
 	for requested, expected := range req.BaseEtags {
 		path, err := securePaperPath(m.paperRoot(projectID.String()), requested, true)
 		if err != nil {
@@ -309,8 +348,17 @@ func (m *Module) ChatEditAutoResearchPaper(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	runID, err := m.submitPaperJobLocked(r, project, "autoresearch-paper-edit", map[string]any{"message": req.Message, "base_etags": req.BaseEtags})
+	if err != nil {
+		if writeAutoResearchSubmissionError(w, err) {
+			return
+		}
+		httpx.HandleErr(w, err)
+		return
+	}
 	messageID, err := id.New()
 	if err != nil {
+		_ = m.env.Jobs.Cancel(r.Context(), runID)
 		httpx.HandleErr(w, err)
 		return
 	}
@@ -318,42 +366,7 @@ func (m *Module) ChatEditAutoResearchPaper(w http.ResponseWriter, r *http.Reques
 	if err := m.env.Q.CreateAutoResearchMessage(r.Context(), db.CreateAutoResearchMessageParams{
 		ID: messageID, ProjectID: project.ID, Role: "human", Body: req.Message, ChangedPathsJson: string(emptyChanges),
 	}); err != nil {
-		httpx.HandleErr(w, err)
-		return
-	}
-	runID, err := m.submitPaperJob(r, project, "autoresearch-paper-edit", map[string]any{"message": req.Message, "base_etags": req.BaseEtags})
-	if err != nil {
-		httpx.HandleErr(w, err)
-		return
-	}
-	run, err := m.waitForPaperRun(r, runID)
-	if err != nil {
-		if strings.Contains(err.Error(), "paper.edit_conflict") {
-			httpx.WriteErr(w, http.StatusConflict, "paper.edit_conflict", err.Error())
-			return
-		}
-		httpx.HandleErr(w, err)
-		return
-	}
-	changed, _ := run.Output["changed_paths"].([]any)
-	if typed, ok := run.Output["changed_paths"].([]string); ok {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"run": run, "changed_paths": typed, "before_digests": run.Output["before_digests"], "after_digests": run.Output["after_digests"],
-		})
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"run": run, "changed_paths": changed, "before_digests": run.Output["before_digests"], "after_digests": run.Output["after_digests"],
-	})
-}
-
-func (m *Module) ReleaseAutoResearchPaper(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId) {
-	project, ok := m.requireProject(w, r, projectID.String())
-	if !ok {
-		return
-	}
-	runID, err := m.submitFactoryRun(r, project, "paper", map[string]any{"release": true}, "")
-	if err != nil {
+		_ = m.env.Jobs.Cancel(r.Context(), runID)
 		httpx.HandleErr(w, err)
 		return
 	}
@@ -365,30 +378,25 @@ func (m *Module) ReleaseAutoResearchPaper(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusAccepted, run)
 }
 
-func (m *Module) waitForPaperRun(r *http.Request, runID string) (runsvc.Run, error) {
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		run, err := m.env.Runs.Get(r.Context(), runID)
-		if err != nil {
-			return runsvc.Run{}, err
-		}
-		if runsvc.State(run.State).Terminal() {
-			if run.State != string(runsvc.Succeeded) {
-				message := "paper job failed"
-				if run.ErrorMessage != nil {
-					message = *run.ErrorMessage
-				}
-				return run, errors.New(message)
-			}
-			return run, nil
-		}
-		select {
-		case <-r.Context().Done():
-			return runsvc.Run{}, r.Context().Err()
-		case <-ticker.C:
-		}
+func (m *Module) ReleaseAutoResearchPaper(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId) {
+	project, ok := m.requireProject(w, r, projectID.String())
+	if !ok {
+		return
 	}
+	runID, err := m.submitFactoryRun(r, project, "paper", map[string]any{"release": true}, "")
+	if err != nil {
+		if writeAutoResearchSubmissionError(w, err) {
+			return
+		}
+		httpx.HandleErr(w, err)
+		return
+	}
+	run, err := m.env.Runs.Get(r.Context(), runID)
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, run)
 }
 
 func jsonMarshal(value any) ([]byte, error) {

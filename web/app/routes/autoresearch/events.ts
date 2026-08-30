@@ -167,6 +167,35 @@ function readStoredEvents(runId: string): StoredRunEvents {
   }
 }
 
+const MAX_STORED_EVENTS = 1500;
+const MAX_STORED_EVENT_BYTES = 2 * 1024 * 1024;
+
+function serializedBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+export function storeRunEvents(runId: string, value: StoredRunEvents) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const events = value.events.slice(-MAX_STORED_EVENTS);
+    let serialized = JSON.stringify({ lastEventId: value.lastEventId, events });
+    if (serializedBytes(serialized) > MAX_STORED_EVENT_BYTES) {
+      let low = 0;
+      let high = events.length;
+      while (low < high) {
+        const midpoint = Math.floor((low + high) / 2);
+        const candidate = JSON.stringify({ lastEventId: value.lastEventId, events: events.slice(midpoint) });
+        if (serializedBytes(candidate) > MAX_STORED_EVENT_BYTES) low = midpoint + 1;
+        else high = midpoint;
+      }
+      serialized = JSON.stringify({ lastEventId: value.lastEventId, events: events.slice(low) });
+    }
+    sessionStorage.setItem(`autoresearch.events.${runId}`, serialized);
+  } catch {
+    // Storage is an optional replay cache; the in-memory stream remains authoritative.
+  }
+}
+
 export function useAutoResearchEvents(runId: string | undefined, active: boolean) {
   const initial = useMemo(() => runId ? readStoredEvents(runId) : { lastEventId: null, events: [] }, [runId]);
   const [events, setEvents] = useState<AutoResearchEvent[]>(initial.events);
@@ -204,8 +233,8 @@ export function useAutoResearchEvents(runId: string | undefined, active: boolean
           if (decoded.length === 0) return;
           setEvents((previous) => {
             const known = new Set(previous.map((event) => event.event_id));
-            const merged = [...previous, ...decoded.filter((event) => !known.has(event.event_id))].slice(-1500);
-            sessionStorage.setItem(`autoresearch.events.${runId}`, JSON.stringify({ lastEventId, events: merged }));
+            const merged = [...previous, ...decoded.filter((event) => !known.has(event.event_id))].slice(-MAX_STORED_EVENTS);
+            storeRunEvents(runId, { lastEventId, events: merged });
             return merged;
           });
         } catch (reason) {

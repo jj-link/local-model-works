@@ -321,14 +321,6 @@ type AutoResearchPaperChatRequest struct {
 	Message   string            `json:"message"`
 }
 
-// AutoResearchPaperChatResponse defines model for AutoResearchPaperChatResponse.
-type AutoResearchPaperChatResponse struct {
-	AfterDigests  map[string]string `json:"after_digests"`
-	BeforeDigests map[string]string `json:"before_digests"`
-	ChangedPaths  []string          `json:"changed_paths"`
-	Run           Run               `json:"run"`
-}
-
 // AutoResearchPaperFile defines model for AutoResearchPaperFile.
 type AutoResearchPaperFile struct {
 	Path   string `json:"path"`
@@ -338,15 +330,14 @@ type AutoResearchPaperFile struct {
 
 // AutoResearchProject defines model for AutoResearchProject.
 type AutoResearchProject struct {
-	Config       AutoResearchProjectConfig `json:"config"`
-	CreatedAt    time.Time                 `json:"created_at"`
-	Id           openapi_types.UUID        `json:"id"`
-	IdeaPrompt   string                    `json:"idea_prompt"`
-	Name         string                    `json:"name"`
-	RunnerNodeId *openapi_types.UUID       `json:"runner_node_id,omitempty"`
-	Status       AutoResearchProjectStatus `json:"status"`
-	UpdatedAt    time.Time                 `json:"updated_at"`
-	Version      int                       `json:"version"`
+	Config     AutoResearchProjectConfig `json:"config"`
+	CreatedAt  time.Time                 `json:"created_at"`
+	Id         openapi_types.UUID        `json:"id"`
+	IdeaPrompt string                    `json:"idea_prompt"`
+	Name       string                    `json:"name"`
+	Status     AutoResearchProjectStatus `json:"status"`
+	UpdatedAt  time.Time                 `json:"updated_at"`
+	Version    int                       `json:"version"`
 }
 
 // AutoResearchProjectConfig defines model for AutoResearchProjectConfig.
@@ -362,18 +353,16 @@ type AutoResearchProjectConfig struct {
 
 // AutoResearchProjectCreate defines model for AutoResearchProjectCreate.
 type AutoResearchProjectCreate struct {
-	Config       *AutoResearchProjectConfig `json:"config,omitempty"`
-	IdeaPrompt   string                     `json:"idea_prompt"`
-	Name         *string                    `json:"name,omitempty"`
-	RunnerNodeId *openapi_types.UUID        `json:"runner_node_id,omitempty"`
+	Config     *AutoResearchProjectConfig `json:"config,omitempty"`
+	IdeaPrompt string                     `json:"idea_prompt"`
+	Name       *string                    `json:"name,omitempty"`
 }
 
 // AutoResearchProjectPatch defines model for AutoResearchProjectPatch.
 type AutoResearchProjectPatch struct {
-	Config       *AutoResearchProjectConfig `json:"config,omitempty"`
-	IdeaPrompt   *string                    `json:"idea_prompt,omitempty"`
-	Name         *string                    `json:"name,omitempty"`
-	RunnerNodeId *openapi_types.UUID        `json:"runner_node_id,omitempty"`
+	Config     *AutoResearchProjectConfig `json:"config,omitempty"`
+	IdeaPrompt *string                    `json:"idea_prompt,omitempty"`
+	Name       *string                    `json:"name,omitempty"`
 }
 
 // AutoResearchProjectStatus defines model for AutoResearchProjectStatus.

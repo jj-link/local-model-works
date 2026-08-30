@@ -50,14 +50,14 @@ export function IdeaWorkspace({
   }, [activeIdea]);
 
   const pending = updateIdea.isPending || selectIdea.isPending || generate.isPending || createSource.isPending || uploadSource.isPending || createRun.isPending;
-  const selectedCount = ideas.filter((idea) => idea.selected).length;
+  const selectedIdea = ideas.find((idea) => idea.selected);
   const sourceBlocked = sources.some((source) => source.status !== "ready");
 
   return (
     <section className="lmw-panel overflow-hidden">
       <header className="lmw-panel-head">
         <h2 className="lmw-label">alternative ideas &amp; sources</h2>
-        <span className="ml-auto font-mono text-[10px] text-faint">{selectedCount} selected · {sources.length} sources</span>
+        <span className="ml-auto font-mono text-[10px] text-faint">{selectedIdea ? `selected: ${selectedIdea.title}` : "no idea selected"} · {sources.length} sources</span>
       </header>
       <div className="grid gap-px bg-hairline xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="bg-panel p-3">
@@ -97,9 +97,9 @@ export function IdeaWorkspace({
 
         <div className="min-w-0 bg-panel">
           <div className="flex gap-1 overflow-x-auto border-b border-hairline px-3 pt-2" role="tablist" aria-label="Idea candidates">
-            {ideas.map((idea, index) => (
+            {ideas.map((idea) => (
               <button key={idea.id} role="tab" aria-selected={activeIdea?.id === idea.id} className={cn("control shrink-0 rounded-t border border-b-0 px-3 py-1.5 font-mono text-[10px]", activeIdea?.id === idea.id ? "border-primary/50 bg-raised text-foreground" : "border-hairline text-faint hover:text-foreground")} onClick={() => setActiveId(idea.id)}>
-                {String(index + 1).padStart(2, "0")} {idea.selected ? "✓" : ""}
+                {String(idea.ordinal).padStart(2, "0")} {idea.selected ? "✓" : ""}
               </button>
             ))}
           </div>
@@ -112,7 +112,7 @@ export function IdeaWorkspace({
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" disabled={pending || title.trim() === "" || body.trim() === "" || (title === activeIdea.title && body === activeIdea.body)} onClick={() => updateIdea.mutate({ ideaId: activeIdea.id, version: activeIdea.version, body: { title, body } })}>save candidate</Button>
                 <Button variant="outline" size="sm" disabled={pending || activeIdea.selected} onClick={() => selectIdea.mutate(activeIdea.id)}><Check aria-hidden /> {activeIdea.selected ? "selected" : "select"}</Button>
-                <Button size="sm" className="ml-auto" disabled={pending || selectedCount === 0} onClick={() => createRun.mutate({})}><Rocket aria-hidden /> continue with selected idea</Button>
+                <Button size="sm" className="ml-auto" disabled={pending || !selectedIdea} onClick={() => createRun.mutate({})}><Rocket aria-hidden /> continue with selected idea</Button>
               </div>
             </div>
           ) : <div className="grid min-h-[460px] place-items-center p-6 text-center"><div><p className="font-display text-lg">No alternative ideas</p><p className="mt-1 max-w-sm font-mono text-xs text-faint">Generate alternatives from the project question and any supporting sources.</p></div></div>}

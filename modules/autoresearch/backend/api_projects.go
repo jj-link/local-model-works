@@ -52,13 +52,6 @@ func parseDBTime(value string) time.Time {
 
 func uuidValue(value string) (uuid.UUID, error) { return uuid.Parse(value) }
 
-func nullableUUID(value *uuid.UUID) sql.NullString {
-	if value == nil {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: value.String(), Valid: true}
-}
-
 func ptrString(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
@@ -76,17 +69,9 @@ func (m *Module) projectView(row db.AutoresearchProject) (AutoResearchProject, e
 	if err := json.Unmarshal([]byte(row.ConfigJson), &config); err != nil {
 		return AutoResearchProject{}, fmt.Errorf("decode project config: %w", err)
 	}
-	var runnerID *uuid.UUID
-	if row.RunnerNodeID.Valid {
-		parsed, err := uuidValue(row.RunnerNodeID.String)
-		if err != nil {
-			return AutoResearchProject{}, err
-		}
-		runnerID = &parsed
-	}
 	return AutoResearchProject{
 		Id: projectID, Name: row.Name, Status: AutoResearchProjectStatus(row.Status),
-		RunnerNodeId: runnerID, IdeaPrompt: row.IdeaPrompt, Config: config,
+		IdeaPrompt: row.IdeaPrompt, Config: config,
 		Version: int(row.Version), CreatedAt: parseDBTime(row.CreatedAt), UpdatedAt: parseDBTime(row.UpdatedAt),
 	}, nil
 }
@@ -187,7 +172,7 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := m.env.Q.CreateAutoResearchProject(r.Context(), db.CreateAutoResearchProjectParams{
-		ID: projectID, Name: name, Status: "idea_intake", RunnerNodeID: nullableUUID(req.RunnerNodeId),
+		ID: projectID, Name: name, Status: "idea_intake",
 		IdeaPrompt: question, ConfigJson: string(configJSON),
 	}); err != nil {
 		httpx.HandleErr(w, err)
@@ -201,7 +186,7 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 	ideaID, err := id.New()
 	if err == nil {
 		err = m.env.Q.CreateAutoResearchIdea(r.Context(), db.CreateAutoResearchIdeaParams{
-			ID: ideaID, ProjectID: projectID, Ordinal: 1, Source: "human",
+			ID: ideaID, ProjectID: projectID, Ordinal: 0, Source: "human",
 			Title: initialIdeaTitle(question), Body: question, Selected: 1,
 		})
 	}
@@ -209,7 +194,7 @@ func (m *Module) CreateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		var idea db.AutoresearchIdea
 		idea, err = m.env.Q.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID, ProjectID: projectID})
 		if err == nil {
-			err = adoptIdea(m.projectRoot(projectID), idea)
+			err = syncSelectedIdeaArtifacts(m.projectRoot(projectID), idea)
 		}
 	}
 	if err != nil {
@@ -280,9 +265,6 @@ func (m *Module) UpdateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 	if req.IdeaPrompt != nil {
 		row.IdeaPrompt = *req.IdeaPrompt
 	}
-	if req.RunnerNodeId != nil {
-		row.RunnerNodeID = nullableUUID(req.RunnerNodeId)
-	}
 	if req.Config != nil {
 		encoded, err := json.Marshal(req.Config)
 		if err != nil {
@@ -292,7 +274,7 @@ func (m *Module) UpdateAutoResearchProject(w http.ResponseWriter, r *http.Reques
 		row.ConfigJson = string(encoded)
 	}
 	updated, err := m.env.Q.UpdateAutoResearchProject(r.Context(), db.UpdateAutoResearchProjectParams{
-		Name: row.Name, Status: row.Status, RunnerNodeID: row.RunnerNodeID, IdeaPrompt: row.IdeaPrompt,
+		Name: row.Name, Status: row.Status, IdeaPrompt: row.IdeaPrompt,
 		ConfigJson: row.ConfigJson, ID: row.ID, Version: version,
 	})
 	if err != nil {
@@ -324,6 +306,21 @@ func (m *Module) ListAutoResearchIdeas(w http.ResponseWriter, r *http.Request, p
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+func (m *Module) rejectProjectBusy(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	if owner := m.activeProjectOperation(r.Context(), projectID); owner != "" {
+		httpx.WriteErr(w, http.StatusConflict, "autoresearch.project_busy", "project operation "+owner+" is active")
+		return true
+	}
+	return false
+}
+
+func restoreIdeaArtifacts(artifacts, baseline string, cause error) error {
+	if restoreErr := restoreArtifactBaseline(artifacts, baseline, "ideas"); restoreErr != nil {
+		return fmt.Errorf("%w (artifact rollback failed: %v)", cause, restoreErr)
+	}
+	return cause
+}
+
 func (m *Module) UpdateAutoResearchIdea(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId, ideaID AutoResearchIdeaId, params UpdateAutoResearchIdeaParams) {
 	version, err := parseVersionETag(params.IfMatch)
 	if err != nil {
@@ -340,7 +337,37 @@ func (m *Module) UpdateAutoResearchIdea(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "title and body are required")
 		return
 	}
-	updated, err := m.env.Q.UpdateAutoResearchIdea(r.Context(), db.UpdateAutoResearchIdeaParams{
+	unlock := m.lockProject(projectID.String())
+	defer unlock()
+	if m.rejectProjectBusy(w, r, projectID.String()) {
+		return
+	}
+	tx, err := m.env.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	defer tx.Rollback()
+	qtx := db.New(tx)
+	current, err := qtx.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID.String(), ProjectID: projectID.String()})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", "idea not found")
+		} else {
+			httpx.HandleErr(w, err)
+		}
+		return
+	}
+	artifacts := filepath.Join(m.projectRoot(projectID.String()), "artifacts")
+	baseline := ""
+	if current.Selected == 1 {
+		baseline, err = artifactBaseline(artifacts)
+		if err != nil {
+			httpx.HandleErr(w, err)
+			return
+		}
+	}
+	updated, err := qtx.UpdateAutoResearchIdea(r.Context(), db.UpdateAutoResearchIdeaParams{
 		Title: req.Title, Body: req.Body, ID: ideaID.String(), ProjectID: projectID.String(), Version: version,
 	})
 	if err != nil {
@@ -351,11 +378,41 @@ func (m *Module) UpdateAutoResearchIdea(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteErr(w, http.StatusConflict, "autoresearch.edit_conflict", "idea changed since it was read")
 		return
 	}
+	if current.Selected == 1 {
+		selected, getErr := qtx.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID.String(), ProjectID: projectID.String()})
+		if getErr != nil {
+			httpx.HandleErr(w, getErr)
+			return
+		}
+		if err := syncSelectedIdeaArtifacts(m.projectRoot(projectID.String()), selected); err != nil {
+			httpx.HandleErr(w, restoreIdeaArtifacts(artifacts, baseline, err))
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		if baseline != "" {
+			err = restoreIdeaArtifacts(artifacts, baseline, err)
+		}
+		httpx.HandleErr(w, err)
+		return
+	}
 	m.writeIdeaResponse(w, r, projectID, ideaID)
 }
 
 func (m *Module) SelectAutoResearchIdea(w http.ResponseWriter, r *http.Request, projectID AutoResearchProjectId, ideaID AutoResearchIdeaId) {
-	row, err := m.env.Q.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID.String(), ProjectID: projectID.String()})
+	unlock := m.lockProject(projectID.String())
+	defer unlock()
+	if m.rejectProjectBusy(w, r, projectID.String()) {
+		return
+	}
+	tx, err := m.env.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	defer tx.Rollback()
+	qtx := db.New(tx)
+	row, err := qtx.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: ideaID.String(), ProjectID: projectID.String()})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", "idea not found")
@@ -364,8 +421,20 @@ func (m *Module) SelectAutoResearchIdea(w http.ResponseWriter, r *http.Request, 
 		httpx.HandleErr(w, err)
 		return
 	}
+	artifacts := filepath.Join(m.projectRoot(projectID.String()), "artifacts")
+	baseline, err := artifactBaseline(artifacts)
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	if err := qtx.ClearAutoResearchIdeaSelections(r.Context(), db.ClearAutoResearchIdeaSelectionsParams{
+		ProjectID: row.ProjectID, ID: row.ID,
+	}); err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
 	if row.Selected == 0 {
-		updated, err := m.env.Q.SelectAutoResearchIdea(r.Context(), db.SelectAutoResearchIdeaParams{ID: row.ID, ProjectID: row.ProjectID, Version: row.Version})
+		updated, err := qtx.SelectAutoResearchIdea(r.Context(), db.SelectAutoResearchIdeaParams{ID: row.ID, ProjectID: row.ProjectID, Version: row.Version})
 		if err != nil {
 			httpx.HandleErr(w, err)
 			return
@@ -374,12 +443,19 @@ func (m *Module) SelectAutoResearchIdea(w http.ResponseWriter, r *http.Request, 
 			httpx.WriteErr(w, http.StatusConflict, "autoresearch.edit_conflict", "idea changed since it was read")
 			return
 		}
-		if err := adoptIdea(m.projectRoot(projectID.String()), row); err != nil {
-			_, _ = m.env.DB.ExecContext(r.Context(), `UPDATE autoresearch_ideas SET selected=0, version=version+1,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND project_id=?`, row.ID, row.ProjectID)
-			httpx.HandleErr(w, err)
-			return
-		}
+	}
+	selected, err := qtx.GetAutoResearchIdea(r.Context(), db.GetAutoResearchIdeaParams{ID: row.ID, ProjectID: row.ProjectID})
+	if err != nil {
+		httpx.HandleErr(w, err)
+		return
+	}
+	if err := syncSelectedIdeaArtifacts(m.projectRoot(projectID.String()), selected); err != nil {
+		httpx.HandleErr(w, restoreIdeaArtifacts(artifacts, baseline, err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.HandleErr(w, restoreIdeaArtifacts(artifacts, baseline, err))
+		return
 	}
 	m.writeIdeaResponse(w, r, projectID, ideaID)
 }

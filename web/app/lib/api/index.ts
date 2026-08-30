@@ -63,7 +63,6 @@ export type AutoResearchSourceCreate = Schemas["AutoResearchSourceCreate"];
 export type AutoResearchRunCreate = Schemas["AutoResearchRunCreate"];
 export type AutoResearchPaperFile = Schemas["AutoResearchPaperFile"];
 export type AutoResearchPaperChatRequest = Schemas["AutoResearchPaperChatRequest"];
-export type AutoResearchPaperChatResponse = Schemas["AutoResearchPaperChatResponse"];
 export interface AutoResearchPaperContents {
   path: string;
   contents: string;
@@ -429,7 +428,7 @@ export const compileAutoResearchPaper = (projectId: string) =>
   http.post<Run>(`/autoresearch/projects/${projectId}/paper/compile`);
 
 export const chatEditAutoResearchPaper = (projectId: string, body: AutoResearchPaperChatRequest) =>
-  http.post<AutoResearchPaperChatResponse>(`/autoresearch/projects/${projectId}/paper/chat`, body);
+  http.post<Run>(`/autoresearch/projects/${projectId}/paper/chat`, body);
 
 export const releaseAutoResearchPaper = (projectId: string) =>
   http.post<Run>(`/autoresearch/projects/${projectId}/paper/release`);

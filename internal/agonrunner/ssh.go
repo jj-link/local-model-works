@@ -24,16 +24,12 @@ func preflightSSH(ctx context.Context, config projectConfig, scratch string) err
 	if len(config.Worker.SSHHosts) == 0 {
 		return errors.New("autoresearch.ssh_hosts_missing")
 	}
-	key, err := credentialValue(secretName)
+	keyPath, err := credentialPath(secretName)
 	if err != nil {
 		return err
 	}
 	sshDirectory := filepath.Join(scratch, "ssh")
 	if err := os.MkdirAll(sshDirectory, 0o700); err != nil {
-		return err
-	}
-	keyPath := filepath.Join(sshDirectory, "id_key")
-	if err := os.WriteFile(keyPath, []byte(key), 0o600); err != nil {
 		return err
 	}
 	configPath := filepath.Join(sshDirectory, "config")

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Beaker } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import {
@@ -9,31 +9,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
-import type { AutoResearchProject, Node } from "~/lib/api";
+import type { AutoResearchProject } from "~/lib/api";
 import { useCreateAutoResearchProject } from "~/lib/queries";
 
 export function NewAutoResearchProjectDialog({
   open,
   onOpenChange,
-  nodes,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  nodes: Node[];
   onCreated: (project: AutoResearchProject) => void;
 }) {
   const createProject = useCreateAutoResearchProject();
   const [name, setName] = useState("");
   const [researchQuestion, setResearchQuestion] = useState("");
-  const [runnerNodeId, setRunnerNodeId] = useState("");
-
-  useEffect(() => {
-    if (!runnerNodeId) {
-      const online = nodes.find((node) => node.status === "online");
-      if (online) setRunnerNodeId(online.id);
-    }
-  }, [nodes, runnerNodeId]);
 
   const create = () => {
     const trimmedName = name.trim();
@@ -41,7 +31,6 @@ export function NewAutoResearchProjectDialog({
       {
         idea_prompt: researchQuestion.trim(),
         ...(trimmedName ? { name: trimmedName } : {}),
-        runner_node_id: runnerNodeId || undefined,
       },
       {
         onSuccess: (project) => {
@@ -82,13 +71,6 @@ export function NewAutoResearchProjectDialog({
               onChange={(event) => setName(event.target.value)}
               placeholder="Sparse world models"
             />
-          </label>
-          <label>
-            Runner node
-            <select aria-label="Runner node" value={runnerNodeId} onChange={(event) => setRunnerNodeId(event.target.value)}>
-              <option value="">not configured</option>
-              {nodes.map((node) => <option key={node.id} value={node.id}>{node.display_name} · {node.status}</option>)}
-            </select>
           </label>
           {createProject.error ? <p className="arf-inline-error" role="alert">{createProject.error.message}</p> : null}
         </div>

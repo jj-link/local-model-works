@@ -425,6 +425,15 @@ FROM migration_plans WHERE plan_digest = ?;
 INSERT INTO leases (resource, owner_kind, owner_id, state)
 VALUES (?, ?, ?, 'active');
 
+-- name: TransferActiveLease :execrows
+UPDATE leases
+SET owner_kind = sqlc.arg(new_owner_kind),
+    owner_id = sqlc.arg(new_owner_id)
+WHERE resource = sqlc.arg(resource)
+  AND owner_kind = sqlc.arg(parent_owner_kind)
+  AND owner_id = sqlc.arg(parent_owner_id)
+  AND state = 'active';
+
 -- name: ReleaseLeases :exec
 UPDATE leases SET state = 'released',
                   released_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')

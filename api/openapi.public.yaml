@@ -255,12 +255,12 @@ paths:
               $ref: '#/components/schemas/AutoResearchPaperChatRequest'
         required: true
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutoResearchPaperChatResponse'
-          description: Completed writer edit and changed-file digest set
+                $ref: '#/components/schemas/Run'
+          description: Queued writer edit run
         "409":
           $ref: '#/components/responses/Conflict'
       tags:
@@ -2122,8 +2122,7 @@ components:
           format: uuid
           type: string
         ordinal:
-          maximum: 10
-          minimum: 1
+          minimum: 0
           type: integer
         project_id:
           format: uuid
@@ -2214,28 +2213,6 @@ components:
         - message
         - base_etags
       type: object
-    AutoResearchPaperChatResponse:
-      properties:
-        after_digests:
-          additionalProperties:
-            type: string
-          type: object
-        before_digests:
-          additionalProperties:
-            type: string
-          type: object
-        changed_paths:
-          items:
-            type: string
-          type: array
-        run:
-          $ref: '#/components/schemas/Run'
-      required:
-        - run
-        - changed_paths
-        - before_digests
-        - after_digests
-      type: object
     AutoResearchPaperFile:
       properties:
         path:
@@ -2262,10 +2239,6 @@ components:
         idea_prompt:
           type: string
         name:
-          type: string
-        runner_node_id:
-          format: uuid
-          nullable: true
           type: string
         status:
           $ref: '#/components/schemas/AutoResearchProjectStatus'
@@ -2333,9 +2306,6 @@ components:
           maxLength: 200
           minLength: 1
           type: string
-        runner_node_id:
-          format: uuid
-          type: string
       required:
         - idea_prompt
       type: object
@@ -2350,9 +2320,6 @@ components:
         name:
           maxLength: 200
           minLength: 1
-          type: string
-        runner_node_id:
-          format: uuid
           type: string
       type: object
     AutoResearchProjectStatus:

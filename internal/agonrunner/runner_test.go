@@ -119,6 +119,26 @@ func TestProjectRoleProviderAndFallbacksOverrideAgonDefaults(t *testing.T) {
 	}
 }
 
+func TestExplicitEmptyRoleFallbackDisablesDefaultChain(t *testing.T) {
+	config := projectConfig{
+		Roles: map[string]providerConfig{
+			"default":      {Source: "external", Backend: "codex", Model: "primary", SecretName: "primary"},
+			"idea-creator": {Source: "external", Backend: "codex", Model: "role", SecretName: "role"},
+		},
+		Fallbacks: map[string][]providerConfig{
+			"default":      {{Source: "external", Backend: "claude", Model: "fallback", SecretName: "fallback"}},
+			"idea-creator": {},
+		},
+	}
+	candidates, err := providerCandidates(config, "idea-creator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Model != "role" {
+		t.Fatalf("candidates = %#v, want only role primary", candidates)
+	}
+}
+
 func TestMissingProjectRolePreservesAgonDefaults(t *testing.T) {
 	options := AgentOptions{
 		Role: "idea-creator", Backend: "claude", Model: "agon-default",
@@ -145,5 +165,45 @@ func TestSSHPreflightIsExplicit(t *testing.T) {
 	err := preflightSSH(context.Background(), projectConfig{Input: map[string]any{"ssh_secret_name": "spark-key"}}, t.TempDir())
 	if err == nil || err.Error() != "autoresearch.ssh_hosts_missing" {
 		t.Fatalf("missing host error = %v", err)
+	}
+}
+
+func TestSSHPreflightUsesMountedCredentialWithoutScratchCopy(t *testing.T) {
+	root := t.TempDir()
+	credentials := filepath.Join(root, "credentials")
+	if err := os.Mkdir(credentials, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(credentials, "spark-key")
+	if err := os.WriteFile(keyPath, []byte("private-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fakeSSH := filepath.Join(bin, "ssh")
+	if err := os.WriteFile(fakeSSH, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LMW_CREDENTIAL_DIR", credentials)
+	scratch := filepath.Join(root, "scratch")
+	config := projectConfig{
+		Input:  map[string]any{"ssh_secret_name": "spark-key"},
+		Worker: workerConfig{SSHHosts: []sshHost{{Alias: "spark", Hostname: "100.86.3.45", User: "runner"}}},
+	}
+	if err := preflightSSH(context.Background(), config, scratch); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(scratch, "ssh", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "IdentityFile "+keyPath) {
+		t.Fatalf("ssh config = %s", contents)
+	}
+	if _, err := os.Stat(filepath.Join(scratch, "ssh", "id_key")); !os.IsNotExist(err) {
+		t.Fatalf("scratch key copy exists: %v", err)
 	}
 }

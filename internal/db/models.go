@@ -72,15 +72,14 @@ type AutoresearchMessage struct {
 }
 
 type AutoresearchProject struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Status       string         `json:"status"`
-	RunnerNodeID sql.NullString `json:"runner_node_id"`
-	IdeaPrompt   string         `json:"idea_prompt"`
-	ConfigJson   string         `json:"config_json"`
-	Version      int64          `json:"version"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	IdeaPrompt string `json:"idea_prompt"`
+	ConfigJson string `json:"config_json"`
+	Version    int64  `json:"version"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type AutoresearchRun struct {

@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,5 +129,95 @@ func TestJobResourceContracts(t *testing.T) {
 	}
 	if leaseCount != 0 {
 		t.Fatalf("terminal job retained %d leases", leaseCount)
+	}
+}
+
+func TestProjectLeaseConflictAndChainedTransfer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := t.TempDir()
+	database, err := db.Open(ctx, filepath.Join(root, "lmw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	queries := db.New(database)
+	runsSvc := runs.New(database, queries, events.NewEventBus(queries), root)
+	registry := New(runsSvc, root, ctx, database, queries)
+
+	started := make(chan string, 4)
+	parentRelease := make(chan struct{})
+	childRelease := make(chan struct{})
+	otherRelease := make(chan struct{})
+	if err := registry.Register("test", Spec{
+		Kind: "project-job",
+		LeaseResources: func(input map[string]any) []string {
+			return []string{"autoresearch-project:" + input["project_id"].(string)}
+		},
+		Executor: func(_ context.Context, job *Context) (map[string]any, error) {
+			role, _ := job.Input["role"].(string)
+			started <- role
+			switch role {
+			case "parent":
+				<-parentRelease
+			case "child":
+				<-childRelease
+			case "other":
+				<-otherRelease
+			}
+			return map[string]any{"role": role}, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parentID, err := registry.Submit(ctx, "project-job", map[string]any{"project_id": "project-1", "role": "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role := <-started; role != "parent" {
+		t.Fatalf("first executor = %q", role)
+	}
+	if _, err := registry.Submit(ctx, "project-job", map[string]any{"project_id": "project-1", "role": "conflict"}); !errors.Is(err, ErrLeaseConflict) {
+		t.Fatalf("same-project submission error = %v, want ErrLeaseConflict", err)
+	}
+	if _, err := registry.Submit(ctx, "project-job", map[string]any{"project_id": "project-2", "role": "other"}); err != nil {
+		t.Fatalf("different-project submission: %v", err)
+	}
+	if role := <-started; role != "other" {
+		t.Fatalf("concurrent executor = %q", role)
+	}
+
+	childID, err := registry.SubmitChained(ctx, parentID, "project-job", map[string]any{"project_id": "project-1", "role": "child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role := <-started; role != "child" {
+		t.Fatalf("chained executor = %q", role)
+	}
+	owners := runsSvc.ActiveOwners(ctx, "autoresearch-project:project-1")
+	if len(owners) != 1 || owners[0].OwnerKind != "run" || owners[0].OwnerID != childID {
+		t.Fatalf("lease owners after transfer = %#v, want run/%s", owners, childID)
+	}
+
+	close(parentRelease)
+	close(childRelease)
+	close(otherRelease)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		child, getErr := runsSvc.Get(ctx, childID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if runs.State(child.State).Terminal() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child remained %s", child.State)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if owners := runsSvc.ActiveOwners(ctx, "autoresearch-project:project-1"); len(owners) != 0 {
+		t.Fatalf("terminal child retained lease: %#v", owners)
 	}
 }

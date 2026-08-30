@@ -136,8 +136,12 @@ export function effectiveFallbacks(
   role: string,
   fallbacks: Record<string, ProviderRef[]>,
 ): { refs: ProviderRef[]; inherited: boolean } {
-  if (fallbacks[role]?.length) return { refs: fallbacks[role], inherited: false };
-  if (role !== "default" && fallbacks.default?.length) return { refs: fallbacks.default, inherited: true };
+  if (Object.prototype.hasOwnProperty.call(fallbacks, role)) {
+    return { refs: fallbacks[role] ?? [], inherited: false };
+  }
+  if (role !== "default" && Object.prototype.hasOwnProperty.call(fallbacks, "default")) {
+    return { refs: fallbacks.default ?? [], inherited: true };
+  }
   return { refs: [], inherited: role !== "default" };
 }
 

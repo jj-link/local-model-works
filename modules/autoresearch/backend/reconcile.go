@@ -29,6 +29,13 @@ func (m *Module) ReconcileNode(ctx context.Context, nodeID string) {
 		return
 	}
 	for _, row := range rows {
+		if err := scrubRunCredentials(m.projectRoot(row.ProjectID), row.RunID); err != nil {
+			m.recordCredentialCleanupFailure(err)
+			m.publishReconcile(nodeID, row.RunID, "autoresearch.credential_cleanup_failed", err.Error())
+			continue
+		}
+		_ = m.setProjectStatus(ctx, row.ProjectID, "failed")
+		_ = m.env.Runs.ReleaseLeasesFor(ctx, "run", row.RunID)
 		client := workload.New(m.env.Nodes, m.env.Commands, nodeID, "", row.RunID, 0)
 		result, err := client.Do(ctx, agentv1.WorkloadOp_WORKLOAD_OP_INSPECT, nil, 15*time.Second)
 		if err != nil {
@@ -61,6 +68,7 @@ func (m *Module) ReconcileNode(ctx context.Context, nodeID string) {
 			m.publishReconcile(nodeID, row.RunID, "autoresearch.reconcile_remove", "could not remove orphan")
 			continue
 		}
+		_ = m.env.Runs.ReleaseLeasesFor(ctx, "run", row.RunID)
 		m.publishReconcile(nodeID, row.RunID, "autoresearch.reconciled", "interrupted container removed")
 	}
 }
