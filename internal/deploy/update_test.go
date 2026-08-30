@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -38,13 +39,18 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidateManifest.Metadata.Name = "test"
+	candidateManifest.Workloads[0].Permissions = []string{"rootfs.write"}
+	candidateDoc, err := json.Marshal(candidateManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	candidatePlan, err := h.svc.PlanRepositoryUpdateCandidate(ctx, repositoryID, &recipe.RepositoryCandidate{
 		Digest: newDigest, Manifest: candidateManifest,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.seedRecipeUnplaced(t, newDigest, noArtifactManifest)
+	h.seedRecipeUnplaced(t, newDigest, string(candidateDoc))
 	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), false)
 	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, newDigest)
 	if err != nil {
@@ -52,6 +58,14 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	}
 	if candidatePlan.Digest != updatePlan.Digest {
 		t.Fatalf("candidate plan digest %q != installed plan digest %q", candidatePlan.Digest, updatePlan.Digest)
+	}
+	if len(candidatePlan.CurrentPermissions) != 0 ||
+		len(candidatePlan.CandidatePermissions) != 1 || candidatePlan.CandidatePermissions[0] != "rootfs.write" ||
+		len(candidatePlan.AddedPermissions) != 1 || candidatePlan.AddedPermissions[0] != "rootfs.write" ||
+		len(candidatePlan.RemovedPermissions) != 0 {
+		t.Fatalf("candidate permission diff = current %v candidate %v added %v removed %v",
+			candidatePlan.CurrentPermissions, candidatePlan.CandidatePermissions,
+			candidatePlan.AddedPermissions, candidatePlan.RemovedPermissions)
 	}
 	if !updatePlan.Ready || len(updatePlan.InstalledDevices) != 1 || len(updatePlan.RunningDeployments) != 1 {
 		t.Fatalf("update plan = %+v", updatePlan)

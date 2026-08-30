@@ -75,14 +75,18 @@ type RepositoryUpdateDeployment struct {
 // RepositoryUpdatePlan separates physical package installations from running
 // deployment replacements. Deployment state never defines installation state.
 type RepositoryUpdatePlan struct {
-	RepositoryID       string                       `json:"repository_id"`
-	TargetDigest       string                       `json:"target_digest"`
-	InstalledDevices   []RepositoryUpdateDevice     `json:"installed_devices"`
-	RunningDeployments []RepositoryUpdateTarget     `json:"running_deployments"`
-	Deployments        []RepositoryUpdateDeployment `json:"deployments"`
-	Diagnostics        []diag.Diagnostic            `json:"diagnostics,omitempty"`
-	Ready              bool                         `json:"ready"`
-	Digest             string                       `json:"plan_digest"`
+	RepositoryID         string                       `json:"repository_id"`
+	TargetDigest         string                       `json:"target_digest"`
+	CurrentPermissions   []string                     `json:"current_permissions"`
+	CandidatePermissions []string                     `json:"candidate_permissions"`
+	AddedPermissions     []string                     `json:"added_permissions"`
+	RemovedPermissions   []string                     `json:"removed_permissions"`
+	InstalledDevices     []RepositoryUpdateDevice     `json:"installed_devices"`
+	RunningDeployments   []RepositoryUpdateTarget     `json:"running_deployments"`
+	Deployments          []RepositoryUpdateDeployment `json:"deployments"`
+	Diagnostics          []diag.Diagnostic            `json:"diagnostics,omitempty"`
+	Ready                bool                         `json:"ready"`
+	Digest               string                       `json:"plan_digest"`
 }
 
 func (p *RepositoryUpdatePlan) PlanDigest() string {
@@ -91,6 +95,74 @@ func (p *RepositoryUpdatePlan) PlanDigest() string {
 	encoded, _ := json.Marshal(copy)
 	sum := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func permissionChanges(current, candidate []string) (added, removed []string) {
+	currentSet := make(map[string]struct{}, len(current))
+	candidateSet := make(map[string]struct{}, len(candidate))
+	for _, permission := range current {
+		currentSet[permission] = struct{}{}
+	}
+	for _, permission := range candidate {
+		candidateSet[permission] = struct{}{}
+		if _, ok := currentSet[permission]; !ok {
+			added = append(added, permission)
+		}
+	}
+	for _, permission := range current {
+		if _, ok := candidateSet[permission]; !ok {
+			removed = append(removed, permission)
+		}
+	}
+	if added == nil {
+		added = []string{}
+	}
+	if removed == nil {
+		removed = []string{}
+	}
+	return added, removed
+}
+
+func (s *Service) repositoryUpdatePermissions(
+	ctx context.Context,
+	repositoryID string,
+	targetDigest string,
+	candidate *recipe.RepositoryCandidate,
+) (current, target, added, removed []string, err error) {
+	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	var targetManifest *recipe.Manifest
+	if candidate != nil {
+		targetManifest = candidate.Manifest
+	} else {
+		targetRow, getErr := s.q.GetRecipe(ctx, targetDigest)
+		if getErr != nil {
+			return nil, nil, nil, nil, getErr
+		}
+		targetManifest, err = recipe.Parse([]byte(targetRow.Manifest))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+	}
+	target = append([]string{}, targetManifest.HighRiskPermissions()...)
+
+	current = []string{}
+	if repository.CurrentDigest.Valid {
+		currentRow, getErr := s.q.GetRecipe(ctx, repository.CurrentDigest.String)
+		if getErr != nil {
+			return nil, nil, nil, nil, getErr
+		}
+		currentManifest, parseErr := recipe.Parse([]byte(currentRow.Manifest))
+		if parseErr != nil {
+			return nil, nil, nil, nil, parseErr
+		}
+		current = append(current, currentManifest.HighRiskPermissions()...)
+	}
+	added, removed = permissionChanges(current, target)
+	return current, target, added, removed, nil
 }
 
 // PlanRepositoryUpdate preserves placements, profile, variants, workload,
@@ -113,12 +185,19 @@ func (s *Service) PlanRepositoryUpdateCandidate(ctx context.Context, repositoryI
 }
 
 func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, targetDigest string, candidate *recipe.RepositoryCandidate) (*RepositoryUpdatePlan, error) {
+	currentPermissions, candidatePermissions, addedPermissions, removedPermissions, err :=
+		s.repositoryUpdatePermissions(ctx, repositoryID, targetDigest, candidate)
+	if err != nil {
+		return nil, err
+	}
 	installedDevices, err := recipe.ListRepositoryInstalledDevices(ctx, s.q, repositoryID)
 	if err != nil {
 		return nil, err
 	}
 	plan := &RepositoryUpdatePlan{
 		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: len(installedDevices) > 0,
+		CurrentPermissions: currentPermissions, CandidatePermissions: candidatePermissions,
+		AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
 		InstalledDevices: make([]RepositoryUpdateDevice, 0, len(installedDevices)),
 	}
 	if len(installedDevices) == 0 {

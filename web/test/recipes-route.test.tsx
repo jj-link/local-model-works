@@ -187,6 +187,9 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
     http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update/plan`, () =>
       HttpResponse.json({
         plan_digest: "sha256:update-plan", ready: true,
+        current_permissions: ["network.host"],
+        candidate_permissions: ["network.host", "rootfs.write"],
+        added_permissions: ["rootfs.write"], removed_permissions: [],
         installed_devices: installedDevices, running_deployments: runningDeployments, diagnostics: [],
       }),
     ),
@@ -214,9 +217,12 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
-    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(2);
+    const gammaCard = screen.getByRole("button", { name: "Review trust for Gamma Model" });
+    expect(within(gammaCard).getByText("Approval required")).toBeInTheDocument();
+    expect(within(gammaCard).getByText("Review trust →")).toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("button", { name: "Plan launch for Gamma Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review trust for Gamma Model" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Plan launch for Alpha Model" })).not.toBeInTheDocument();
   });
 
@@ -317,12 +323,16 @@ describe("RecipesRoute repository catalog", () => {
       http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update/plan`, () =>
         HttpResponse.json({
           plan_digest: "sha256:empty-update", ready: true,
+          current_permissions: ["network.host"],
+          candidate_permissions: ["network.host", "rootfs.write"],
+          added_permissions: ["rootfs.write"], removed_permissions: [],
           installed_devices: installedDevices, running_deployments: null, diagnostics: null,
         }),
       ),
-      http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update`, () =>
-        HttpResponse.json({ run_id: "run-empty-update" }, { status: 202 }),
-      ),
+      http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update`, async ({ request }) => {
+        expect(await request.json()).toMatchObject({ permission_diff_accepted: true });
+        return HttpResponse.json({ run_id: "run-empty-update" }, { status: 202 });
+      }),
       http.get("*/api/v1/runs/run-empty-update", () =>
         HttpResponse.json({
           id: "run-empty-update", module: "library", kind: "recipe-update", state: "succeeded",
@@ -341,14 +351,19 @@ describe("RecipesRoute repository catalog", () => {
     await user.click(await screen.findByRole("button", { name: "Update recipe" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
+    expect(within(dialog).getByRole("heading", { name: "Permission contract" })).toBeInTheDocument();
+    expect(within(dialog).getByText("rootfs.write")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Installed devices" })).toBeInTheDocument();
     expect(within(dialog).getByText("spark1")).toBeInTheDocument();
     expect(within(dialog).getByText("spark2")).toBeInTheDocument();
     expect(within(dialog).queryByText(/sha256:/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText("fetching")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("heading", { name: "Running deployments to replace" })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Update recipe" })).toBeEnabled();
-    await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
+    const updateButton = within(dialog).getByRole("button", { name: "Update recipe" });
+    expect(updateButton).toBeDisabled();
+    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
+    expect(updateButton).toBeEnabled();
+    await user.click(updateButton);
     expect(await screen.findByRole("heading", { name: "Update complete" })).toBeInTheDocument();
     expect(screen.getByText("2 of 2 devices updated")).toBeInTheDocument();
   });
@@ -392,6 +407,7 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(installedSection).getByText("spark1")).toBeInTheDocument();
     expect(within(installedSection).getByText("spark2")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Running deployments to replace" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
     await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
     expect((await within(installedSection).findAllByText("fetching")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("pulling")).length).toBeGreaterThan(0);
@@ -424,7 +440,9 @@ describe("RecipesRoute repository catalog", () => {
     const user = userEvent.setup();
     renderCatalog();
     await user.click(await screen.findByRole("button", { name: "Update recipe" }));
-    await user.click(within(await screen.findByRole("dialog", { name: "Update recipe" })).getByRole("button", { name: "Update recipe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Update recipe" });
+    await user.click(within(dialog).getByRole("checkbox", { name: /Trust this exact update/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Update recipe" }));
     expect(await screen.findByRole("heading", { name: "Update failed" })).toBeInTheDocument();
     expect(screen.getByText("workload.start_failed: container exited")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Update complete" })).not.toBeInTheDocument();

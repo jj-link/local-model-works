@@ -3126,11 +3126,14 @@ components:
       properties:
         expected_head_commit:
           type: string
+        permission_diff_accepted:
+          type: boolean
         plan_digest:
           type: string
       required:
         - expected_head_commit
         - plan_digest
+        - permission_diff_accepted
       type: object
     RecipeRepositoryVersion:
       properties:
@@ -3214,6 +3217,18 @@ components:
       type: object
     RecipeUpdatePlan:
       properties:
+        added_permissions:
+          items:
+            type: string
+          type: array
+        candidate_permissions:
+          items:
+            type: string
+          type: array
+        current_permissions:
+          items:
+            type: string
+          type: array
         diagnostics:
           items:
             $ref: '#/components/schemas/Diagnostic'
@@ -3226,6 +3241,10 @@ components:
           type: string
         ready:
           type: boolean
+        removed_permissions:
+          items:
+            type: string
+          type: array
         running_deployments:
           items:
             $ref: '#/components/schemas/RecipeUpdateRunningDeployment'
@@ -3233,6 +3252,10 @@ components:
       required:
         - plan_digest
         - ready
+        - current_permissions
+        - candidate_permissions
+        - added_permissions
+        - removed_permissions
         - installed_devices
         - running_deployments
         - diagnostics

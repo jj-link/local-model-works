@@ -87,6 +87,32 @@ func (s *Service) StageRepositoryCommit(ctx context.Context, repositoryID, expec
 	return &staged, nil
 }
 
+// StageApprovedRepositoryCommit stages an exact upstream commit after the
+// operator accepts its permission contract. Approval applies only to the
+// compiled digest; future commits require another review.
+func (s *Service) StageApprovedRepositoryCommit(
+	ctx context.Context,
+	repositoryID string,
+	expectedCommit string,
+	permissionDiffAccepted bool,
+) (*Recipe, error) {
+	if !permissionDiffAccepted {
+		return nil, ErrDiffPending
+	}
+	staged, err := s.StageRepositoryCommit(ctx, repositoryID, expectedCommit)
+	if err != nil {
+		return nil, err
+	}
+	if staged.TrustState == TrustVerified || staged.TrustState == TrustLocal {
+		return staged, nil
+	}
+	trusted, err := s.SetTrust(ctx, staged.Digest, TrustLocal, true)
+	if err != nil {
+		return nil, err
+	}
+	return &trusted, nil
+}
+
 // InstallRepositoryCommit stages and activates one expected upstream commit.
 func (s *Service) InstallRepositoryCommit(ctx context.Context, repositoryID, expectedCommit string) (*Recipe, error) {
 	staged, err := s.StageRepositoryCommit(ctx, repositoryID, expectedCommit)

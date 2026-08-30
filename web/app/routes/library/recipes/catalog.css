@@ -281,6 +281,12 @@
   color: var(--cat-moss);
 }
 
+.sample-a-install-state.is-untrusted {
+  border-color: color-mix(in srgb, var(--cat-oxblood) 42%, transparent);
+  background: color-mix(in srgb, var(--cat-oxblood) 8%, transparent);
+  color: var(--cat-oxblood);
+}
+
 .sample-a-install-state.is-not-installed {
   border-color: var(--cat-line);
   background: var(--cat-parchment);

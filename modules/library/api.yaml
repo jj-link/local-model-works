@@ -674,12 +674,14 @@ components:
 
     RecipeRepositoryUpdateRequest:
       type: object
-      required: [expected_head_commit, plan_digest]
+      required: [expected_head_commit, plan_digest, permission_diff_accepted]
       properties:
         expected_head_commit:
           type: string
         plan_digest:
           type: string
+        permission_diff_accepted:
+          type: boolean
 
     RecipeUpdateDevice:
       type: object
@@ -734,12 +736,31 @@ components:
           type: string
     RecipeUpdatePlan:
       type: object
-      required: [plan_digest, ready, installed_devices, running_deployments, diagnostics]
+      required:
+        [plan_digest, ready, current_permissions, candidate_permissions,
+         added_permissions, removed_permissions, installed_devices,
+         running_deployments, diagnostics]
       properties:
         plan_digest:
           type: string
         ready:
           type: boolean
+        current_permissions:
+          type: array
+          items:
+            type: string
+        candidate_permissions:
+          type: array
+          items:
+            type: string
+        added_permissions:
+          type: array
+          items:
+            type: string
+        removed_permissions:
+          type: array
+          items:
+            type: string
         installed_devices:
           type: array
           items:
