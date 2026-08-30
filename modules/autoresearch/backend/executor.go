@@ -38,6 +38,52 @@ type workerSettings struct {
 	DefaultAdvisors map[string]any
 }
 
+type runnerNodeInventory struct {
+	Hostname string `json:"hostname"`
+}
+
+func (m *Module) localRunnerNodeID(ctx context.Context) (string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("resolve local runner hostname: %w", err)
+	}
+	nodeRows, err := m.env.Q.ListNodes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list nodes for local runner: %w", err)
+	}
+
+	var matching, online []string
+	for _, node := range nodeRows {
+		if node.Status == "pending" || !node.Inventory.Valid {
+			continue
+		}
+		var inventory runnerNodeInventory
+		if err := json.Unmarshal([]byte(node.Inventory.String), &inventory); err != nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(inventory.Hostname), strings.TrimSpace(hostname)) {
+			continue
+		}
+		matching = append(matching, node.ID)
+		if m.env.Nodes != nil && m.env.Nodes.Online(node.ID) {
+			online = append(online, node.ID)
+		}
+	}
+
+	switch len(online) {
+	case 1:
+		return online[0], nil
+	case 0:
+		switch len(matching) {
+		case 0:
+			return "", errors.New("autoresearch.runner_not_configured: no approved local runner is registered")
+		case 1:
+			return matching[0], nil
+		}
+	}
+	return "", errors.New("autoresearch.runner_not_configured: multiple approved local runners match this host")
+}
+
 func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error) {
 	values, _, err := m.env.Settings.Get(ctx, descriptor.ID)
 	if err != nil {
@@ -46,6 +92,12 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 	settings := workerSettings{}
 	if value, ok := values["runner_node_id"].(string); ok {
 		settings.RunnerNodeID = value
+	}
+	if strings.TrimSpace(settings.RunnerNodeID) == "" {
+		settings.RunnerNodeID, err = m.localRunnerNodeID(ctx)
+		if err != nil {
+			return workerSettings{}, err
+		}
 	}
 	if value, ok := values["worker_image"].(string); ok {
 		settings.WorkerImage = value
@@ -67,7 +119,7 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 			})
 		}
 	}
-	if settings.RunnerNodeID == "" || settings.WorkerImage == "" {
+	if settings.WorkerImage == "" {
 		return workerSettings{}, errors.New("autoresearch.runner_not_configured")
 	}
 	if !strings.Contains(settings.WorkerImage, "@sha256:") {

@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +24,10 @@ import (
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/moduleapi"
+	"github.com/jj-link/local-model-works/internal/nodes"
 	runsvc "github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/settings"
+	"github.com/jj-link/local-model-works/migrations"
 )
 
 func TestSelectedSecretScopes(t *testing.T) {
@@ -199,6 +203,189 @@ func TestMergeProjectDefaultsPreservesOverrides(t *testing.T) {
 	}
 	if advisors["paper-writer"].(map[string]any)["provider"].(map[string]any)["model"] != "advisor" {
 		t.Fatal("enabled advisor did not inherit the configured default provider")
+	}
+}
+
+func newRunnerSettingsModule(t *testing.T, values map[string]any) *Module {
+	t.Helper()
+	ctx := context.Background()
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(ctx, database, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database)
+	registry := settings.New(queries)
+	if err := registry.Register(descriptor.ID, descriptor.SettingsSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Set(ctx, descriptor.ID, values, "0"); err != nil {
+		t.Fatal(err)
+	}
+	return &Module{env: &moduleapi.Env{
+		Q: queries, DB: database, Settings: registry, Nodes: nodes.NewRegistry(),
+	}}
+}
+
+func runnerTestSettings() map[string]any {
+	return map[string]any{
+		"worker_image": "local/agon@sha256:" + strings.Repeat("a", 64),
+	}
+}
+
+func addRunnerNodeWithInventory(
+	t *testing.T,
+	module *Module,
+	inventory sql.NullString,
+	approved bool,
+	online bool,
+) string {
+	t.Helper()
+	ctx := context.Background()
+	nodeID := uuid.NewString()
+	if err := module.env.Q.CreateNode(ctx, db.CreateNodeParams{
+		ID: nodeID, DisplayName: nodeID, Labels: "{}", CreatedAt: nodeID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Valid {
+		if err := module.env.Q.SetNodeInventory(ctx, db.SetNodeInventoryParams{
+			ID: nodeID, Inventory: inventory,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if approved {
+		if err := module.env.Q.ApproveNode(ctx, nodeID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if online {
+		registry := module.env.Nodes
+		connection := nodes.NewConn(nodeID)
+		registry.Register(connection)
+		t.Cleanup(func() {
+			registry.Unregister(connection)
+			connection.Close()
+		})
+	}
+	return nodeID
+}
+
+func addRunnerNode(t *testing.T, module *Module, hostname string, approved, online bool) string {
+	t.Helper()
+	raw, err := json.Marshal(runnerNodeInventory{Hostname: hostname})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return addRunnerNodeWithInventory(
+		t,
+		module,
+		sql.NullString{String: string(raw), Valid: true},
+		approved,
+		online,
+	)
+}
+
+func localHostname(t *testing.T) string {
+	t.Helper()
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hostname
+}
+
+func TestLocalRunnerResolvesApprovedOnlineNode(t *testing.T) {
+	module := newRunnerSettingsModule(t, runnerTestSettings())
+	nodeID := addRunnerNode(t, module, "  "+strings.ToUpper(localHostname(t))+"  ", true, true)
+
+	got, err := module.requireWorkerSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RunnerNodeID != nodeID {
+		t.Fatalf("runner node = %q, want %q", got.RunnerNodeID, nodeID)
+	}
+}
+
+func TestExplicitRunnerOverridesLocalCandidate(t *testing.T) {
+	explicitNodeID := uuid.NewString()
+	values := runnerTestSettings()
+	values["runner_node_id"] = explicitNodeID
+	module := newRunnerSettingsModule(t, values)
+	_ = addRunnerNode(t, module, localHostname(t), true, true)
+	connection := nodes.NewConn(explicitNodeID)
+	module.env.Nodes.Register(connection)
+	t.Cleanup(func() {
+		module.env.Nodes.Unregister(connection)
+		connection.Close()
+	})
+
+	got, err := module.requireWorkerSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RunnerNodeID != explicitNodeID {
+		t.Fatalf("runner node = %q, want explicit %q", got.RunnerNodeID, explicitNodeID)
+	}
+}
+
+func TestLocalRunnerRejectsRemoteOnlyNodes(t *testing.T) {
+	module := newRunnerSettingsModule(t, runnerTestSettings())
+	_ = addRunnerNode(t, module, localHostname(t)+".remote", true, true)
+
+	_, err := module.requireWorkerSettings(context.Background())
+	const want = "autoresearch.runner_not_configured: no approved local runner is registered"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
+func TestLocalRunnerReportsApprovedOfflineNode(t *testing.T) {
+	module := newRunnerSettingsModule(t, runnerTestSettings())
+	_ = addRunnerNode(t, module, localHostname(t), true, false)
+	module.env.Nodes = nil
+
+	_, err := module.requireWorkerSettings(context.Background())
+	if err == nil || err.Error() != "autoresearch.runner_offline" {
+		t.Fatalf("error = %v, want autoresearch.runner_offline", err)
+	}
+}
+
+func TestLocalRunnerRejectsAmbiguousOnlineNodes(t *testing.T) {
+	module := newRunnerSettingsModule(t, runnerTestSettings())
+	hostname := localHostname(t)
+	_ = addRunnerNode(t, module, hostname, true, true)
+	_ = addRunnerNode(t, module, hostname, true, true)
+
+	_, err := module.requireWorkerSettings(context.Background())
+	const want = "autoresearch.runner_not_configured: multiple approved local runners match this host"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
+func TestLocalRunnerIgnoresPendingAndInvalidInventory(t *testing.T) {
+	module := newRunnerSettingsModule(t, runnerTestSettings())
+	_ = addRunnerNode(t, module, localHostname(t), false, true)
+	_ = addRunnerNodeWithInventory(
+		t,
+		module,
+		sql.NullString{String: "{not-json", Valid: true},
+		true,
+		true,
+	)
+	_ = addRunnerNodeWithInventory(t, module, sql.NullString{}, true, true)
+
+	_, err := module.requireWorkerSettings(context.Background())
+	const want = "autoresearch.runner_not_configured: no approved local runner is registered"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }
 
