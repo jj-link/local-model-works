@@ -26,8 +26,8 @@
 }
 
 .arf-canvas *, .arf-canvas *::before, .arf-canvas *::after { box-sizing: border-box; }
-.arf-canvas button, .arf-canvas input, .arf-canvas textarea, .arf-canvas select { font: inherit; }
-.arf-canvas button { color: inherit; }
+:where(.arf-canvas) button, :where(.arf-canvas) input, :where(.arf-canvas) textarea, :where(.arf-canvas) select { font: inherit; }
+:where(.arf-canvas) button { color: inherit; }
 .arf-display { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
 .arf-mono { font-family: "Commit Mono", monospace; }
 
