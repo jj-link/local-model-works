@@ -120,7 +120,6 @@ func createUpdateRecipe(t *testing.T, ctx context.Context, queries *db.Queries, 
 		Metadata: Metadata{
 			Name:        name,
 			Version:     "1.0.0",
-			DisplayName: name,
 			Description: "update fixture",
 			License:     "MIT",
 			Source:      &Source{URL: remote, Revision: revision, Path: sourcePath},

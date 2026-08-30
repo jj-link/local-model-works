@@ -1492,7 +1492,6 @@ export interface components {
             compatibility?: components["schemas"]["Compatibility"];
             description?: string;
             digest: string;
-            display_name?: string;
             engine?: string;
             high_risk?: string[];
             /** Format: date-time */

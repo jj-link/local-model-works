@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-variant
   version: 1.0.0
-  displayName: lmw-fail-variant
   description: Ambiguous variant fixture.
   license: MIT
   source:

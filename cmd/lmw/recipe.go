@@ -154,7 +154,7 @@ func runRecipeInit(args []string, stdout io.Writer) error {
 		"apiVersion": recipe.APIVersion,
 		"kind":       "Recipe",
 		"metadata": map[string]any{
-			"name": "draft-recipe", "version": "0.1.0", "displayName": "Draft recipe",
+			"name": "draft-recipe", "version": "0.1.0",
 			"description": "Inspect and complete this declarative recipe before installation.",
 			"license":     "NOASSERTION",
 			"source":      map[string]any{"url": report.Remote, "revision": report.Revision, "path": report.Path},

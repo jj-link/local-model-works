@@ -159,7 +159,6 @@ type Recipe struct {
 	Digest      string         `json:"digest"`
 	Name        string         `json:"name"`
 	Version     string         `json:"version"`
-	DisplayName sql.NullString `json:"display_name"`
 	Description sql.NullString `json:"description"`
 	License     sql.NullString `json:"license"`
 	Source      string         `json:"source"`

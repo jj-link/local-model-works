@@ -119,7 +119,6 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 			Digest:      versionRow.RecipeDigest,
 			Name:        versionRow.Name,
 			Version:     versionRow.Version,
-			DisplayName: versionRow.DisplayName,
 			Description: versionRow.Description,
 			License:     versionRow.License,
 			Source:      versionRow.Source,

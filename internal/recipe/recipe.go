@@ -58,7 +58,6 @@ type Manifest struct {
 type Metadata struct {
 	Name        string  `json:"name"`
 	Version     string  `json:"version"`
-	DisplayName string  `json:"displayName,omitempty"`
 	Model       string  `json:"model,omitempty"`
 	Engine      string  `json:"engine,omitempty"`
 	Description string  `json:"description,omitempty"`

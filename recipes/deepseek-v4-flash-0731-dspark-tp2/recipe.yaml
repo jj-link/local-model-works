@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: deepseek-v4-flash-0731-dspark-tp2
   version: 1.0.0
-  displayName: MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark
   model: DeepSeek V4 Flash
   engine: vllm
   description: >-

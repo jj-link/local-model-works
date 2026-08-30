@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-profiles
   version: 1.0.0
-  displayName: lmw-demo-profiles
   description: Validation fixture pass-profiles-params.
   license: MIT
   source:

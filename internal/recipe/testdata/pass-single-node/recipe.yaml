@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-serve
   version: 1.0.0
-  displayName: lmw-demo-serve
   description: Single-node demo server used by the recipe fixture suite.
   license: MIT
   source:

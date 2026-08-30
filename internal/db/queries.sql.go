@@ -407,16 +407,14 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) error {
 }
 
 const createRecipe = `-- name: CreateRecipe :exec
-INSERT OR IGNORE INTO recipes (digest, name, version, display_name, description,
-                               license, source, manifest)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT OR IGNORE INTO recipes (digest, name, version, description, license, source, manifest)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRecipeParams struct {
 	Digest      string         `json:"digest"`
 	Name        string         `json:"name"`
 	Version     string         `json:"version"`
-	DisplayName sql.NullString `json:"display_name"`
 	Description sql.NullString `json:"description"`
 	License     sql.NullString `json:"license"`
 	Source      string         `json:"source"`
@@ -428,7 +426,6 @@ func (q *Queries) CreateRecipe(ctx context.Context, arg CreateRecipeParams) erro
 		arg.Digest,
 		arg.Name,
 		arg.Version,
-		arg.DisplayName,
 		arg.Description,
 		arg.License,
 		arg.Source,
@@ -1070,8 +1067,7 @@ func (q *Queries) GetPlacement(ctx context.Context, arg GetPlacementParams) (Art
 }
 
 const getRecipe = `-- name: GetRecipe :one
-SELECT digest, name, version, display_name, description, license, source,
-       manifest, installed_at
+SELECT digest, name, version, description, license, source, manifest, installed_at
 FROM recipes WHERE digest = ?
 `
 
@@ -1082,7 +1078,6 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 		&i.Digest,
 		&i.Name,
 		&i.Version,
-		&i.DisplayName,
 		&i.Description,
 		&i.License,
 		&i.Source,
@@ -2223,8 +2218,7 @@ func (q *Queries) ListRecipeRepositories(ctx context.Context) ([]RecipeRepositor
 const listRecipeRepositoryVersions = `-- name: ListRecipeRepositoryVersions :many
 SELECT v.repository_id, v.recipe_digest, v.commit_sha, v.tree_sha,
        v.canonical, v.installed_at,
-       r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.manifest
+       r.name, r.version, r.description, r.license, r.source, r.manifest
 FROM recipe_repository_versions v
 JOIN recipes r ON r.digest = v.recipe_digest
 WHERE v.repository_id = ?
@@ -2240,7 +2234,6 @@ type ListRecipeRepositoryVersionsRow struct {
 	InstalledAt  string         `json:"installed_at"`
 	Name         string         `json:"name"`
 	Version      string         `json:"version"`
-	DisplayName  sql.NullString `json:"display_name"`
 	Description  sql.NullString `json:"description"`
 	License      sql.NullString `json:"license"`
 	Source       string         `json:"source"`
@@ -2265,7 +2258,6 @@ func (q *Queries) ListRecipeRepositoryVersions(ctx context.Context, repositoryID
 			&i.InstalledAt,
 			&i.Name,
 			&i.Version,
-			&i.DisplayName,
 			&i.Description,
 			&i.License,
 			&i.Source,
@@ -2334,8 +2326,7 @@ func (q *Queries) ListRecipeUpdateRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listRecipes = `-- name: ListRecipes :many
-SELECT digest, name, version, display_name, description, license, source,
-       manifest, installed_at
+SELECT digest, name, version, description, license, source, manifest, installed_at
 FROM recipes ORDER BY installed_at DESC
 `
 
@@ -2352,7 +2343,6 @@ func (q *Queries) ListRecipes(ctx context.Context) ([]Recipe, error) {
 			&i.Digest,
 			&i.Name,
 			&i.Version,
-			&i.DisplayName,
 			&i.Description,
 			&i.License,
 			&i.Source,
@@ -2589,8 +2579,7 @@ func (q *Queries) ListTransfers(ctx context.Context) ([]Transfer, error) {
 }
 
 const listUnlinkedRecipes = `-- name: ListUnlinkedRecipes :many
-SELECT r.digest, r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.manifest, r.installed_at
+SELECT r.digest, r.name, r.version, r.description, r.license, r.source, r.manifest, r.installed_at
 FROM recipes r
 WHERE NOT EXISTS (
     SELECT 1 FROM recipe_repository_versions v WHERE v.recipe_digest = r.digest
@@ -2611,7 +2600,6 @@ func (q *Queries) ListUnlinkedRecipes(ctx context.Context) ([]Recipe, error) {
 			&i.Digest,
 			&i.Name,
 			&i.Version,
-			&i.DisplayName,
 			&i.Description,
 			&i.License,
 			&i.Source,

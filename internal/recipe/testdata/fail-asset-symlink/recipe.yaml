@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-symlink
   version: 1.0.0
-  displayName: lmw-fail-symlink
   description: Symlink escaping the package root fixture.
   license: MIT
   source:

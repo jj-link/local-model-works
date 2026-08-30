@@ -130,9 +130,7 @@ export function RecipeUpdateDialog({
             {succeeded ? "Update complete" : failed ? "Update failed" : "Update recipe"}
           </DialogTitle>
           <DialogDescription>
-            {repositoryQuery.data?.current_recipe?.display_name ||
-              repositoryQuery.data?.current_recipe?.name ||
-              "Repository recipe"}
+            {repositoryQuery.data?.current_recipe?.name || "Repository recipe"}
             {repositoryQuery.data?.observed_head_commit
               ? ` · ${repositoryQuery.data.observed_head_commit.slice(0, 12)}`
               : ""}

@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-hnet
   version: 1.0.0
-  displayName: lmw-fail-hnet
   description: Validation fixture fail-helper-network.
   license: MIT
   source:

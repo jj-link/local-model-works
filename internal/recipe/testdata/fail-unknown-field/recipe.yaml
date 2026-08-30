@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-unknown
   version: 1.0.0
-  displayName: lmw-fail-unknown
   description: Unknown field fixture.
   license: MIT
   source:

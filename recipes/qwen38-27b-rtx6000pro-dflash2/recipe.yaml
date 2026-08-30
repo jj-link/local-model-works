@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: qwen38-27b-radixark-nvfp4-dflash2-avt
   version: 1.0.3
-  displayName: Qwen3.8-27B RadixArk NVFP4 DFlash2 — AVT
   model: Qwen3.8-27B
   engine: sglang
   description: >-

@@ -43,7 +43,6 @@ kind: Recipe
 metadata:
   name: lmw-immutable-demo
   version: 1.0.0
-  displayName: Immutable demo
   description: Immutability proof package (v1).
   license: Apache-2.0
   source:
@@ -72,7 +71,6 @@ kind: Recipe
 metadata:
   name: lmw-immutable-demo
   version: 1.1.0
-  displayName: Immutable demo
   description: Immutability proof package (v2, source changed).
   license: Apache-2.0
   source:

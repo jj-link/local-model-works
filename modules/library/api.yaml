@@ -776,8 +776,6 @@ components:
           type: string
         version:
           type: string
-        display_name:
-          type: string
         model:
           type: string
         engine:

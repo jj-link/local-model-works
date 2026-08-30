@@ -97,7 +97,7 @@ func (r FixtureRecipe) Manifest() recipe.Manifest {
 		Kind:       "Recipe",
 		Metadata: recipe.Metadata{
 			Name: r.Name, Version: r.Version,
-			DisplayName: r.Name, Description: "fakeagent fixture recipe", License: "MIT",
+			Description: "fakeagent fixture recipe", License: "MIT",
 			Source: &recipe.Source{
 				URL: "https://fixtures.local/fakeagent", Revision: strings.Repeat("0", 40), Path: ".",
 			},

@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-rdma
   version: 1.0.0
-  displayName: Demo RDMA Pair
   description: Two-node, two-rank demo workload over a RoCE fabric.
   license: MIT
   source:

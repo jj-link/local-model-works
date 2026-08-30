@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-gitshort
   version: 1.0.0
-  displayName: lmw-fail-gitshort
   description: Short Git ref fixture.
   license: MIT
   source:

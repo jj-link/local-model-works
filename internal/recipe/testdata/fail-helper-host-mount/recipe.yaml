@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-helpermount
   version: 1.0.0
-  displayName: lmw-fail-helpermount
   description: Validation fixture fail-helper-host-mount.
   license: MIT
   source:

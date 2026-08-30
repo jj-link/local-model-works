@@ -19,8 +19,7 @@ const alphaRepositoryId = "repo-alpha";
 const recipes = [
   {
     digest: alphaDigest,
-    name: "alpha-recipe",
-    display_name: "Alpha Model",
+    name: "MiaAI-Lab/alpha-recipe",
     model: "Alpha 27B",
     engine: "vllm",
     version: "2.0.0",
@@ -43,8 +42,7 @@ const recipes = [
   },
   {
     digest: betaDigest,
-    name: "beta-recipe",
-    display_name: "Beta Model",
+    name: "MiaAI-Lab/beta-recipe",
     version: "1.0.0",
     description: "A local single-node recipe.",
     license: "Apache-2.0",
@@ -54,8 +52,7 @@ const recipes = [
   },
   {
     digest: gammaDigest,
-    name: "gamma-recipe",
-    display_name: "Gamma Model",
+    name: "MiaAI-Lab/gamma-recipe",
     version: "1.5.0",
     description: "A local recipe.",
     license: "BSD-3-Clause",
@@ -72,7 +69,7 @@ const installedDevices = [
 
 const repositories = recipes.map((recipe, index) => ({
   id: index === 0 ? alphaRepositoryId : `repo-${recipe.name}`,
-  source_url: `https://github.com/MiaAI-Lab/${recipe.name}`,
+  source_url: `https://github.com/${recipe.name}`,
   source_path: ".",
   tracking_ref: "main",
   current_recipe: recipe,
@@ -203,9 +200,9 @@ describe("RecipesRoute repository catalog", () => {
     expect(await screen.findByRole("heading", { name: "All recipes" })).toBeInTheDocument();
 
     const alphaCard = screen.getByRole("button", {
-      name: "Plan launch for Alpha Model",
+      name: "Plan launch for MiaAI-Lab/alpha-recipe",
     });
-    expect(within(alphaCard).getByText("Alpha Model")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("MiaAI-Lab/alpha-recipe")).toBeInTheDocument();
     expect(within(alphaCard).getByText("A verified two-node recipe.")).toBeInTheDocument();
     expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Recipe ready on 2 nodes")).toBeInTheDocument();
@@ -215,11 +212,11 @@ describe("RecipesRoute repository catalog", () => {
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
     expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(3);
-    const gammaCard = screen.getByRole("button", { name: "Plan launch for Gamma Model" });
+    const gammaCard = screen.getByRole("button", { name: "Plan launch for MiaAI-Lab/gamma-recipe" });
     expect(within(gammaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("button", { name: "Plan launch for Gamma Model" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Plan launch for Alpha Model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan launch for MiaAI-Lab/gamma-recipe" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plan launch for MiaAI-Lab/alpha-recipe" })).not.toBeInTheDocument();
   });
 
   it("offers updates only for recipes with valid device placements", async () => {
@@ -229,7 +226,7 @@ describe("RecipesRoute repository catalog", () => {
     renderCatalog();
 
     const alphaCard = await screen.findByRole("button", {
-      name: "Plan launch for Alpha Model",
+      name: "Plan launch for MiaAI-Lab/alpha-recipe",
     });
     expect(within(alphaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
@@ -239,7 +236,7 @@ describe("RecipesRoute repository catalog", () => {
     installCatalogHandlers();
     const user = userEvent.setup();
     renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Plan launch for Alpha Model" }));
+    await user.click(await screen.findByRole("button", { name: "Plan launch for MiaAI-Lab/alpha-recipe" }));
     expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
   });
@@ -250,8 +247,7 @@ describe("RecipesRoute repository catalog", () => {
     let importBody: Record<string, unknown> | undefined;
     const imported = {
       digest: glmDigest,
-      name: "glm53-flash-exl3-dflash2-spark-tp2",
-      display_name: "GLM-5.3 Flash EXL3 · 2× DGX Spark",
+      name: "MiaAI-Lab/GLM",
       model: "GLM-5.3-Flash-EXL3",
       engine: "vllm",
       version: "1.0.0",
@@ -296,7 +292,7 @@ describe("RecipesRoute repository catalog", () => {
     await user.type(within(dialog).getByLabelText("Repository URL"), "https://github.com/MiaAI-Lab/GLM");
     await user.click(within(dialog).getByRole("button", { name: "Resolve & review" }));
 
-    expect(await within(dialog).findByText("GLM-5.3 Flash EXL3 · 2× DGX Spark")).toBeInTheDocument();
+    expect(await within(dialog).findByText("MiaAI-Lab/GLM")).toBeInTheDocument();
     expect(within(dialog).getByText("07aee44f76a2…")).toBeInTheDocument();
     expect(await within(dialog).findByTitle("hf://Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw")).toBeInTheDocument();
     expect(within(dialog).getByText("164 GiB")).toBeInTheDocument();

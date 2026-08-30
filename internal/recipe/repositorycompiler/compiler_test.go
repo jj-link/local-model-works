@@ -105,7 +105,6 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 	}
 	if dgxManifest.Metadata.Name != "MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark" ||
 		dgxManifest.Metadata.Version != "1.0.0" ||
-		dgxManifest.Metadata.DisplayName != "MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark" ||
 		dgxManifest.Metadata.Model != "qwen3.8-27b-sglang" ||
 		dgxManifest.Metadata.Engine != "sglang" ||
 		dgxManifest.Metadata.License != "MIT" ||

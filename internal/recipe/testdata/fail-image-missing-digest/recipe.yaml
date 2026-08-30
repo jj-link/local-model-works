@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-nodigest
   version: 1.0.0
-  displayName: lmw-fail-nodigest
   description: Image without digest fixture.
   license: MIT
   source:

@@ -367,7 +367,6 @@ type Recipe struct {
 	Compatibility *Compatibility      `json:"compatibility,omitempty"`
 	Description   *string             `json:"description,omitempty"`
 	Digest        string              `json:"digest"`
-	DisplayName   *string             `json:"display_name,omitempty"`
 	Engine        *string             `json:"engine,omitempty"`
 	HighRisk      *[]string           `json:"high_risk,omitempty"`
 	InstalledAt   time.Time           `json:"installed_at"`
@@ -391,7 +390,6 @@ type RecipeDetail struct {
 	Compatibility *Compatibility `json:"compatibility,omitempty"`
 	Description   *string        `json:"description,omitempty"`
 	Digest        string         `json:"digest"`
-	DisplayName   *string        `json:"display_name,omitempty"`
 	Engine        *string        `json:"engine,omitempty"`
 	HighRisk      *[]string      `json:"high_risk,omitempty"`
 	InstalledAt   time.Time      `json:"installed_at"`

@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-git
   version: 1.0.0
-  displayName: lmw-demo-git
   description: Pinned Git install fixture (file://<repo>@<40-hex commit>, installed in-test).
   license: MIT
   source:

@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-egress
   version: 1.0.0
-  displayName: lmw-demo-egress
   description: Validation fixture pass-helper-egress.
   license: MIT
   source:

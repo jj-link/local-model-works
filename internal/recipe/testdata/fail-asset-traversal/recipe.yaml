@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-traversal
   version: 1.0.0
-  displayName: lmw-fail-traversal
   description: Asset path traversal fixture.
   license: MIT
   source:

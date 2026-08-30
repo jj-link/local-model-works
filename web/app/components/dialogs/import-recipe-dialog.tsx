@@ -275,7 +275,7 @@ export function ImportRecipeDialog({
                 <div>
                   <p className="lmw-label">Launch contract ready</p>
                   <h3 className="mt-1 font-display text-lg font-semibold">
-                    {installed?.display_name || installed?.name}
+                    {installed?.name}
                   </h3>
                   <p className="mt-1 text-sm text-muted">{installed?.description}</p>
                 </div>

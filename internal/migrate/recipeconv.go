@@ -418,7 +418,6 @@ func buildDocument(engine string, pkgs []SinglePackage, resolver *imageResolver,
 		"metadata": map[string]any{
 			"name":        recipeName(pkgs[0].Name),
 			"version":     "1.0.0",
-			"displayName": pkgs[0].Meta.Served,
 			"model":       pkgs[0].Meta.Served,
 			"engine":      engine,
 			"description": "Migrated from DGX-Dashboard " + engine + " package(s) " + strings.Join(pkgNames(pkgs), ", ") + ".",

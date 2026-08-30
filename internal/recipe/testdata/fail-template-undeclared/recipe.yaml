@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-template
   version: 1.0.0
-  displayName: lmw-fail-template
   description: Undeclared template fixture.
   license: MIT
   source:

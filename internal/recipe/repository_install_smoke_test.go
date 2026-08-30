@@ -154,7 +154,6 @@ kind: Recipe
 metadata:
   name: native-smoke
   version: %s
-  displayName: Native smoke
   description: Native repository update smoke fixture.
   license: MIT
   source:

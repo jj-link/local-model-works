@@ -23,7 +23,6 @@ kind: Recipe
 metadata:
   name: package-assets
   version: 1.0.0
-  displayName: Package assets
   description: Package delivery integration fixture.
   license: Apache-2.0
   source:

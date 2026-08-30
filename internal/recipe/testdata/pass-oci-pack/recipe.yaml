@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-demo-pack
   version: 1.0.0
-  displayName: lmw-demo-pack
   model: Fixture Model
   engine: vllm
   description: Catalog-style OCI pack layout fixture (packed in-test, installed from a catalog root).

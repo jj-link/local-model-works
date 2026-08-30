@@ -15,12 +15,9 @@ const SOURCE_SEAL: Record<string, string> = {
   local: "▣",
 };
 
-function recipeDisplayName(recipe: Recipe): string {
-  return recipe.display_name || recipe.name;
-}
 
 function repositoryDisplayName(repository: RecipeRepository): string {
-  return repository.current_recipe ? recipeDisplayName(repository.current_recipe) : repository.source_url;
+  return repository.current_recipe?.name || repository.source_url;
 }
 
 export default function RecipesRoute() {
@@ -42,7 +39,6 @@ export default function RecipesRoute() {
         const recipe = repository.current_recipe;
         return [
           recipe?.name,
-          recipe?.display_name,
           repository.source_url,
           repository.source_path,
           recipe?.digest,
@@ -170,7 +166,7 @@ export default function RecipesRoute() {
                     <button
                       type="button"
                       className="sample-a-card"
-                      aria-label={`Plan launch for ${recipeDisplayName(recipe)}`}
+                      aria-label={`Plan launch for ${recipe.name}`}
                       onClick={() => {
                         setSelectedRecipeDigest(recipe.digest);
                         setPlanOpen(true);
@@ -198,7 +194,7 @@ export default function RecipesRoute() {
                           )}
                         </span>
                       </span>
-                      <span className="sample-a-cardname">{recipeDisplayName(recipe)}</span>
+                      <span className="sample-a-cardname">{recipe.name}</span>
                       <span className="sample-a-carddesc">
                         {recipe.description || "No description provided for this installed recipe."}
                       </span>

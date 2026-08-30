@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-cpuset
   version: 1.0.0
-  displayName: lmw-fail-cpuset
   description: Malformed cpusetCpus fixture.
   license: MIT
   source:

@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: glm53-flash-nvfp4-dflash2-spark-tp2
   version: 1.0.4
-  displayName: GLM-5.3 Flash NVFP4 + DFlash2 · 2× DGX Spark
   model: glm-5.3-flash
   engine: vllm
   description: >-

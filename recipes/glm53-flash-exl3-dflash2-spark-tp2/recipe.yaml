@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: glm53-flash-exl3-dflash2-spark-tp2
   version: 1.0.0
-  displayName: GLM-5.3 Flash EXL3 · 2× DGX Spark
   model: GLM-5.3-Flash-EXL3
   engine: vllm
   description: >-

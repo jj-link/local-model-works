@@ -54,7 +54,6 @@ type Recipe struct {
 	Digest        string          `json:"digest"`
 	Name          string          `json:"name"`
 	Version       string          `json:"version"`
-	DisplayName   string          `json:"display_name,omitempty"`
 	Model         string          `json:"model,omitempty"`
 	Engine        string          `json:"engine,omitempty"`
 	Description   string          `json:"description,omitempty"`
@@ -283,8 +282,8 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	}
 	if err := qtx.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: manifest.Metadata.Name, Version: manifest.Metadata.Version,
-		DisplayName: nullStr(manifest.Metadata.DisplayName), Description: nullStr(manifest.Metadata.Description),
-		License: nullStr(manifest.Metadata.License), Source: string(srcJSON), Manifest: string(mj),
+		Description: nullStr(manifest.Metadata.Description), License: nullStr(manifest.Metadata.License),
+		Source: string(srcJSON), Manifest: string(mj),
 	}); err != nil {
 		return Recipe{}, err
 	}
@@ -680,9 +679,8 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 	}
 	v := Recipe{
 		Digest:        row.Digest,
-		Name:          row.Name,
+		Name:          visibleRecipeName(row.Source, row.Name),
 		Version:       row.Version,
-		DisplayName:   nullStrValue(row.DisplayName),
 		Model:         m.Metadata.Model,
 		Engine:        m.Metadata.Engine,
 		Description:   nullStrValue(row.Description),
@@ -707,6 +705,23 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 	}
 	v.VariantCount = len(m.Workloads)
 	return v, nil
+}
+
+func visibleRecipeName(sourceJSON, fallback string) string {
+	var source RecipeSource
+	if json.Unmarshal([]byte(sourceJSON), &source) != nil || source.Type != "git" {
+		return fallback
+	}
+	remote := strings.TrimSuffix(strings.TrimSuffix(source.Remote, "/"), ".git")
+	remote = strings.TrimPrefix(remote, "git@github.com:")
+	remote = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	remote = strings.TrimPrefix(remote, "https://github.com/")
+	remote = strings.TrimPrefix(remote, "http://github.com/")
+	parts := strings.Split(remote, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fallback
+	}
+	return parts[0] + "/" + parts[1]
 }
 
 func runGit(ctx context.Context, dir string, args ...string) error {

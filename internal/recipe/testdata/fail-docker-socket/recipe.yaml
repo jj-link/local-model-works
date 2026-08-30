@@ -3,7 +3,6 @@ kind: Recipe
 metadata:
   name: lmw-fail-dsock
   version: 1.0.0
-  displayName: lmw-fail-dsock
   description: Validation fixture fail-docker-socket.
   license: MIT
   source:

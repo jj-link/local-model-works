@@ -2867,8 +2867,6 @@ components:
           type: string
         digest:
           type: string
-        display_name:
-          type: string
         engine:
           type: string
         high_risk:
