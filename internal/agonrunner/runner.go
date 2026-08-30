@@ -178,8 +178,8 @@ func providerCandidates(config projectConfig, role string) ([]providerConfig, er
 		return nil, err
 	}
 	candidates := []providerConfig{primary}
-	fallbacks := config.Fallbacks[role]
-	if len(fallbacks) == 0 {
+	fallbacks, configured := config.Fallbacks[role]
+	if !configured {
 		fallbacks = config.Fallbacks["default"]
 	}
 	for _, fallback := range fallbacks {

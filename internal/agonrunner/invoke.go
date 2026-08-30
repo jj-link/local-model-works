@@ -17,17 +17,33 @@ import (
 
 var credentialFilename = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-func credentialValue(name string) (string, error) {
+func credentialPath(name string) (string, error) {
 	if name == "" {
-		return "", nil
+		return "", errors.New("autoresearch.provider_credential_missing")
 	}
 	directory := os.Getenv("LMW_CREDENTIAL_DIR")
 	filename := credentialFilename.ReplaceAllString(name, "_")
 	if directory == "" || filename == "" {
 		return "", errors.New("autoresearch.provider_credential_missing")
 	}
-	value, err := os.ReadFile(filepath.Join(directory, filename))
-	if err != nil || len(value) == 0 {
+	path := filepath.Join(directory, filename)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return "", errors.New("autoresearch.provider_credential_missing")
+	}
+	return path, nil
+}
+
+func credentialValue(name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	path, err := credentialPath(name)
+	if err != nil {
+		return "", err
+	}
+	value, err := os.ReadFile(path)
+	if err != nil {
 		return "", errors.New("autoresearch.provider_credential_missing")
 	}
 	return string(value), nil
