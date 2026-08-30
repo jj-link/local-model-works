@@ -245,7 +245,7 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 		deploymentPlan, planErr := s.planWithRecipe(ctx, PlanRequest{
 			RecipeDigest: targetDigest, Profile: row.Profile,
 			Placements: overrides, Variants: placementSet.Variants,
-		}, map[string]bool{row.ID: true}, true, candidate)
+		}, map[string]bool{row.ID: true}, candidate)
 		if planErr != nil {
 			return nil, planErr
 		}
@@ -756,7 +756,7 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 		fresh, err := s.plan(ctx, PlanRequest{
 			RecipeDigest: targetDigest, Profile: deployment.Profile,
 			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.Variants,
-		}, nil, true)
+		}, nil)
 		if err != nil {
 			return "", err
 		}

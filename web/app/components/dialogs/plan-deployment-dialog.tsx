@@ -226,7 +226,7 @@ export function PlanDeploymentDialog({
                 <option value="">Select recipe</option>
                 {distinctRecipes.map((recipe) => (
                   <option key={recipe.digest} value={recipe.digest}>
-                    {recipe.display_name || recipe.name}@{recipe.version} ({recipe.trust_state})
+                    {recipe.display_name || recipe.name}@{recipe.version}
                   </option>
                 ))}
               </select>

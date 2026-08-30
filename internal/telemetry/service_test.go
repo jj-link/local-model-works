@@ -171,7 +171,7 @@ func TestIngestServingHistoryAndAggregation(t *testing.T) {
 	ctx := context.Background()
 	svc := openTestService(t)
 	// serving_telemetry_* reference deployments(id); provision a recipe + row.
-	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, trust_state, manifest) VALUES (?,?,?,?,?)`, "r1", "r", "1", "verified", "{}"); err != nil {
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, manifest) VALUES (?,?,?,?)`, "r1", "r", "1", "{}"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, profile, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-1", "r1", "p", "{}", "stopped", "stopped"); err != nil {
@@ -223,7 +223,7 @@ func TestIngestServingHistoryAndAggregation(t *testing.T) {
 func TestHistoryLimitBounds(t *testing.T) {
 	ctx := context.Background()
 	svc := openTestService(t, "node-l")
-	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, trust_state, manifest) VALUES (?,?,?,?,?)`, "r-limit", "r", "1", "verified", "{}"); err != nil {
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, manifest) VALUES (?,?,?,?)`, "r-limit", "r", "1", "{}"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, profile, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-limit", "r-limit", "p", "{}", "stopped", "stopped"); err != nil {

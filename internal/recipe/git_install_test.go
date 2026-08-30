@@ -115,7 +115,7 @@ func TestGitInstallImmutability(t *testing.T) {
 	bus := events.NewEventBus(q)
 	packageRoot := filepath.Join(t.TempDir(), "recipes")
 	t.Cleanup(func() { _ = recipe.RemovePackage(packageRoot) })
-	svc, err := recipe.New(dbh, q, bus, v, "", t.TempDir(), packageRoot)
+	svc, err := recipe.New(dbh, q, bus, v, t.TempDir(), packageRoot)
 	if err != nil {
 		t.Fatalf("recipe service: %v", err)
 	}
@@ -187,9 +187,6 @@ func TestGitInstallImmutability(t *testing.T) {
 	if d != res.ManifestDigest {
 		t.Fatalf("stored digest %q != packer manifest digest %q", d, res.ManifestDigest)
 	}
-	if rec.TrustState != recipe.TrustUntrusted {
-		t.Fatalf("git import must be untrusted, got %q", rec.TrustState)
-	}
 	// Omitting the revision is the UI's normal path. The service resolves
 	// default-branch HEAD once and stores the exact same immutable commit.
 	autoPinned, err := svc.Import(ctx, recipe.RecipeSource{Type: "git", Remote: "file://" + repo, Path: "pkg"})
@@ -253,11 +250,8 @@ func TestGitInstallImmutability(t *testing.T) {
 	if !bytes.Equal(detail.Manifest, storedManifest) {
 		t.Fatalf("installed manifest bytes drifted after source deletion")
 	}
-	// Approve, then drive the real launch path (plan + create) by digest:
-	// no source fetch is possible — the repo no longer exists.
-	if _, err := svc.SetTrust(ctx, d, recipe.TrustLocal, true); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
+	// Drive the real launch path (plan + create) by digest. No source fetch
+	// is possible because the repository no longer exists.
 	if err := q.CreateNode(ctx, db.CreateNodeParams{ID: "node1", DisplayName: "node1", Labels: "{}"}); err != nil {
 		t.Fatalf("create node: %v", err)
 	}

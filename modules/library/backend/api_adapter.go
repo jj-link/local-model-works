@@ -44,10 +44,7 @@ func (m *Module) ImportRecipe(w http.ResponseWriter, r *http.Request) { m.import
 func (m *Module) DeleteRecipe(w http.ResponseWriter, r *http.Request, _ string, _ DeleteRecipeParams) {
 	m.deleteRecipe(w, r)
 }
-func (m *Module) GetRecipe(w http.ResponseWriter, r *http.Request, _ string) { m.getRecipe(w, r) }
-func (m *Module) SetRecipeTrust(w http.ResponseWriter, r *http.Request, _ string) {
-	m.setRecipeTrust(w, r)
-}
+func (m *Module) GetRecipe(w http.ResponseWriter, r *http.Request, _ string)  { m.getRecipe(w, r) }
 func (m *Module) ListTransfers(w http.ResponseWriter, r *http.Request)        { m.listTransfers(w, r) }
 func (m *Module) CreateTransfer(w http.ResponseWriter, r *http.Request)       { m.createTransfer(w, r) }
 func (m *Module) CancelTransfer(w http.ResponseWriter, r *http.Request, _ ID) { m.cancelTransfer(w, r) }

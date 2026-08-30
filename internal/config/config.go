@@ -22,7 +22,6 @@ const (
 	EnvStateRoot       = "LMW_STATE_ROOT"
 	EnvConfigDir       = "LMW_CONFIG_DIR"
 	EnvSessionTTL      = "LMW_SESSION_TTL"
-	EnvTrustKey        = "LMW_TRUST_KEY_PEM"
 	EnvPublicOrigin    = "LMW_PUBLIC_ORIGIN"
 	EnvPublicAgentURL  = "LMW_PUBLIC_AGENT_URL"
 	EnvAgentServer     = "LMW_AGENT_SERVER"
@@ -46,7 +45,6 @@ type Server struct {
 	ServerName     string        // TLS name for the server leaf cert, default localhost
 	PublicOrigin   string        // required HTTPS browser origin, e.g. https://lmw.tailnet.ts.net
 	PublicAgentURL string        // required HTTPS mTLS agent URL, e.g. https://lmw.tailnet.ts.net:9443
-	TrustKeyPEM    string        // PEM public key for recipe/catalog signature verification
 
 }
 
@@ -83,7 +81,6 @@ func LoadServer() Server {
 		ServerName:     envStr(EnvServerName, "localhost"),
 		PublicOrigin:   strings.TrimSpace(os.Getenv(EnvPublicOrigin)),
 		PublicAgentURL: strings.TrimSpace(os.Getenv(EnvPublicAgentURL)),
-		TrustKeyPEM:    envStr(EnvTrustKey, ""),
 	}
 }
 
@@ -187,10 +184,6 @@ func (s Server) CACertPath() string    { return s.StateRoot + "/ca/ca.cert.pem" 
 func (s Server) SecretKeyPath() string { return s.StateRoot + "/secrets.key" }
 func (s Server) RecipeRoot() string    { return s.StateRoot + "/recipes" }
 func (s Server) RunRoot() string       { return s.StateRoot + "/runs" }
-
-// TrustKeyPath is where the recipe/catalog verification public key (PEM
-// PKIX, Ed25519) lives; missing file disables signature verification.
-func (s Server) TrustKeyPath() string { return s.StateRoot + "/trust.key.pem" }
 
 // CatalogRoot is the on-disk first-party catalog.
 func (s Server) CatalogRoot() string { return s.StateRoot + "/catalog" }

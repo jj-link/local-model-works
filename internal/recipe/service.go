@@ -1,11 +1,5 @@
 // Service: the installed-recipe store with import from catalog, OCI
-// reference, pinned Git, and local directories, plus operator trust
-// transitions. Trust states:
-//
-//	local     — imported from a local path or the first-party catalog
-//	untrusted — imported from a remote source without a verified signature
-//	verified  — a remote import whose package signature validated against
-//	            the configured trust key (import-set only, never operator-set)
+// reference, pinned Git, and local directories.
 package recipe
 
 import (
@@ -34,23 +28,12 @@ import (
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/events"
-	"github.com/jj-link/local-model-works/internal/sign"
-)
-
-// Trust states.
-const (
-	TrustVerified  = "verified"
-	TrustLocal     = "local"
-	TrustUntrusted = "untrusted"
 )
 
 var (
-	ErrUnknown     = errors.New("unknown recipe")
-	ErrReference   = errors.New("recipe referenced")
-	ErrTrustState  = errors.New("invalid trust state")
-	ErrDiffPending = errors.New("permission diff not accepted")
+	ErrUnknown   = errors.New("unknown recipe")
+	ErrReference = errors.New("recipe referenced")
 	// ErrUnpinnedRevision — a non-empty git source revision is not a full
-	// 40-hex commit. An omitted revision is resolved once to the remote's
 	// current default-branch HEAD before cloning and is persisted immutably.
 	// Stable API code: recipe.unpinned_revision (422).
 	ErrUnpinnedRevision = errors.New("unpinned git revision")
@@ -77,7 +60,6 @@ type Recipe struct {
 	Description   string          `json:"description,omitempty"`
 	License       string          `json:"license,omitempty"`
 	Source        json.RawMessage `json:"source"`
-	TrustState    string          `json:"trust_state"`
 	Permissions   []string        `json:"permissions,omitempty"`
 	Compatibility json.RawMessage `json:"compatibility,omitempty"`
 	ArtifactCount int             `json:"artifact_count"`
@@ -101,7 +83,6 @@ type Service struct {
 	bus                 *events.EventBus
 	validator           *Validator
 	catalogSchema       *jsonschema.Schema
-	trustKey            []byte // PEM, empty when unconfigured
 	catalogRoot         string
 	packageRoot         string
 	onInstalled         func()
@@ -111,15 +92,7 @@ type Service struct {
 }
 
 // New builds the store. packageRoot holds complete immutable OCI packages.
-func New(sqlDB *sql.DB, q *db.Queries, bus *events.EventBus, v *Validator, trustKeyPEMPath, catalogRoot, packageRoot string) (*Service, error) {
-	var keyPEM []byte
-	if trustKeyPEMPath != "" {
-		b, err := os.ReadFile(trustKeyPEMPath)
-		if err != nil {
-			return nil, fmt.Errorf("recipe trust key: %w", err)
-		}
-		keyPEM = b
-	}
+func New(sqlDB *sql.DB, q *db.Queries, bus *events.EventBus, v *Validator, catalogRoot, packageRoot string) (*Service, error) {
 	if packageRoot == "" {
 		return nil, fmt.Errorf("recipe package root is required")
 	}
@@ -129,8 +102,7 @@ func New(sqlDB *sql.DB, q *db.Queries, bus *events.EventBus, v *Validator, trust
 	}
 	service := &Service{
 		db: sqlDB, q: q, bus: bus, validator: v, catalogSchema: catalogSchema,
-		trustKey: keyPEM, catalogRoot: catalogRoot, packageRoot: packageRoot,
-		resolveGitHead: resolveGitHEAD,
+		catalogRoot: catalogRoot, packageRoot: packageRoot, resolveGitHead: resolveGitHEAD,
 	}
 	if err := service.recoverPackageDeletes(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover recipe package deletion: %w", err)
@@ -184,22 +156,19 @@ func (s *Service) SetInstallHook(hook func()) { s.onInstalled = hook }
 
 // Store packages a manifest with an empty deterministic asset layer and
 // persists it through the same immutable path as every import source.
-func (s *Service) Store(ctx context.Context, doc []byte, source RecipeSource, trustState string) (Recipe, error) {
+func (s *Service) Store(ctx context.Context, doc []byte, source RecipeSource) (Recipe, error) {
 	res, err := PackManifest(doc, map[string][]byte{}, nil)
 	if err != nil {
 		return Recipe{}, err
 	}
-	return s.storePack(ctx, res, source, trustState)
+	return s.storePack(ctx, res, source)
 }
 
-func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeSource, trustState string) (Recipe, error) {
-	return s.storePackWithCurrent(ctx, res, source, trustState, true)
+func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeSource) (Recipe, error) {
+	return s.storePackWithCurrent(ctx, res, source, true)
 }
 
-func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, source RecipeSource, trustState string, setCurrent bool) (Recipe, error) {
-	if trustState != TrustVerified && trustState != TrustLocal && trustState != TrustUntrusted {
-		return Recipe{}, fmt.Errorf("%w: %s", ErrTrustState, trustState)
-	}
+func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, source RecipeSource, setCurrent bool) (Recipe, error) {
 	manifest, vds, err := s.validator.ValidateStrict(res.ConfigJSON)
 	if err != nil {
 		return Recipe{}, err
@@ -315,8 +284,7 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	if err := qtx.CreateRecipe(ctx, db.CreateRecipeParams{
 		Digest: digest, Name: manifest.Metadata.Name, Version: manifest.Metadata.Version,
 		DisplayName: nullStr(manifest.Metadata.DisplayName), Description: nullStr(manifest.Metadata.Description),
-		License: nullStr(manifest.Metadata.License), Source: string(srcJSON),
-		TrustState: trustState, Manifest: string(mj),
+		License: nullStr(manifest.Metadata.License), Source: string(srcJSON), Manifest: string(mj),
 	}); err != nil {
 		return Recipe{}, err
 	}
@@ -332,7 +300,7 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	}
 	keepPackage = true
 	s.bus.Publish(ctx, "recipe.installed", "", mustJSON(map[string]any{
-		"digest": digest, "name": manifest.Metadata.Name, "version": manifest.Metadata.Version, "trust_state": trustState,
+		"digest": digest, "name": manifest.Metadata.Name, "version": manifest.Metadata.Version,
 	}))
 	detail, err := s.Get(ctx, digest)
 	if err != nil {
@@ -348,7 +316,7 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 func (s *Service) Import(ctx context.Context, src RecipeSource) (Recipe, error) {
 	switch src.Type {
 	case "local":
-		return s.importDir(ctx, src.Path, src, TrustLocal)
+		return s.importDir(ctx, src.Path, src)
 	case "catalog":
 		entry, err := s.resolveCatalog(src.Reference)
 		if err != nil {
@@ -364,7 +332,7 @@ func (s *Service) Import(ctx context.Context, src RecipeSource) (Recipe, error) 
 			kept := src
 			kept.Reference = immutable
 			kept.Path = ""
-			return s.importDir(ctx, dir, kept, TrustVerified)
+			return s.importDir(ctx, dir, kept)
 		}
 		if strings.Contains(entry.OCI.Reference, "@") {
 			return Recipe{}, fmt.Errorf("catalog OCI reference must not contain a digest")
@@ -375,7 +343,7 @@ func (s *Service) Import(ctx context.Context, src RecipeSource) (Recipe, error) 
 	case "git":
 		return s.importGit(ctx, src)
 	default:
-		return Recipe{}, fmt.Errorf("%w: unknown source type %q", ErrTrustState, src.Type)
+		return Recipe{}, fmt.Errorf("unknown recipe source type %q", src.Type)
 	}
 }
 
@@ -428,38 +396,6 @@ func (s *Service) List(ctx context.Context) ([]Recipe, error) {
 		out = append(out, rendered)
 	}
 	return out, nil
-}
-
-// SetTrust applies an operator trust transition. Only local|untrusted are
-// operator-settable; verified is import-set. Moving to local requires
-// permission_diff_accepted.
-func (s *Service) SetTrust(ctx context.Context, digest, state string, diffAccepted bool) (Recipe, error) {
-	if state != TrustLocal && state != TrustUntrusted {
-		return Recipe{}, fmt.Errorf("%w: only %s and %s are operator-settable", ErrTrustState, TrustLocal, TrustUntrusted)
-	}
-	row, err := s.q.GetRecipe(ctx, digest)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Recipe{}, ErrUnknown
-		}
-		return Recipe{}, err
-	}
-	if row.TrustState == TrustVerified && state == TrustLocal {
-		return Recipe{}, fmt.Errorf("%w: a verified recipe cannot be downgraded to local", ErrTrustState)
-	}
-	if state == TrustLocal && row.TrustState != TrustLocal && !diffAccepted {
-		return Recipe{}, fmt.Errorf("%w: review the permission diff first", ErrDiffPending)
-	}
-	if err := s.q.UpdateRecipeTrust(ctx, db.UpdateRecipeTrustParams{TrustState: state, Digest: digest}); err != nil {
-		return Recipe{}, err
-	}
-	s.bus.Publish(ctx, "recipe.trust", "", mustJSON(map[string]any{"digest": digest, "trust_state": state}))
-	var m *Manifest
-	if err := json.Unmarshal([]byte(row.Manifest), &m); err != nil {
-		return Recipe{}, err
-	}
-	row.TrustState = state
-	return s.render(ctx, row, m)
 }
 
 // Delete uninstalls one recipe; blocked while any deployment or run
@@ -530,7 +466,7 @@ func (s *Service) Delete(ctx context.Context, digest, ifMatch string) error {
 
 // importDir loads a recipe from a directory (plain recipe directory or
 // on-disk OCI layout) and persists its complete package.
-func (s *Service) importDir(ctx context.Context, dir string, src RecipeSource, trust string) (Recipe, error) {
+func (s *Service) importDir(ctx context.Context, dir string, src RecipeSource) (Recipe, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
 		return Recipe{}, fmt.Errorf("source directory: %w", err)
@@ -543,17 +479,16 @@ func (s *Service) importDir(ctx context.Context, dir string, src RecipeSource, t
 		if err != nil {
 			return Recipe{}, fmt.Errorf("OCI layout: %w", err)
 		}
-		return s.storePack(ctx, res, src, trust)
+		return s.storePack(ctx, res, src)
 	}
 	_, res, err := PackFromDir(dir, s.validator)
 	if err != nil {
 		return Recipe{}, err
 	}
-	return s.storePack(ctx, res, src, trust)
+	return s.storePack(ctx, res, src)
 }
 
-// importOCI pulls one immutable package and verifies any key-signed Sigstore
-// referrer without contacting Fulcio or Rekor.
+// importOCI pulls one immutable package.
 func (s *Service) importOCI(ctx context.Context, src RecipeSource) (Recipe, error) {
 	if src.Reference == "" {
 		return Recipe{}, fmt.Errorf("oci source: reference is required")
@@ -600,10 +535,6 @@ func (s *Service) importOCI(ctx context.Context, src RecipeSource) (Recipe, erro
 	if err != nil {
 		return Recipe{}, fmt.Errorf("fetch asset layer: %w", err)
 	}
-	trust, err := s.verifyOCIReferrers(ctx, repo, manifestDesc, manifestBytes)
-	if err != nil {
-		return Recipe{}, err
-	}
 	res := &PackResult{
 		ManifestDigest: manifestDesc.Digest.String(),
 		ManifestJSON:   manifestBytes,
@@ -616,67 +547,11 @@ func (s *Service) importOCI(ctx context.Context, src RecipeSource) (Recipe, erro
 	}
 	kept := src
 	kept.Reference = ref.String()
-	return s.storePack(ctx, res, kept, trust)
-}
-
-func (s *Service) verifyOCIReferrers(ctx context.Context, repo *remote.Repository, subject ocispec.Descriptor, artifact []byte) (string, error) {
-	var referrers []ocispec.Descriptor
-	if err := repo.Referrers(ctx, subject, SigstoreBundleArtifactType, func(page []ocispec.Descriptor) error {
-		if len(referrers)+len(page) > 8 {
-			return fmt.Errorf("too many signature referrers")
-		}
-		referrers = append(referrers, page...)
-		return nil
-	}); err != nil {
-		return "", fmt.Errorf("list signature referrers: %w", err)
-	}
-	if len(referrers) == 0 {
-		return TrustUntrusted, nil
-	}
-	if len(s.trustKey) == 0 {
-		return "", fmt.Errorf("package is signed but no trust key is configured")
-	}
-	var verificationErr error
-	for _, descriptor := range referrers {
-		raw, err := fetchDesc(ctx, repo, descriptor)
-		if err != nil {
-			verificationErr = err
-			continue
-		}
-		var referrer ociManifest
-		if err := json.Unmarshal(raw, &referrer); err != nil {
-			verificationErr = err
-			continue
-		}
-		if referrer.ArtifactType != SigstoreBundleArtifactType || referrer.Subject == nil ||
-			referrer.Subject.Digest != subject.Digest.String() ||
-			referrer.Config.MediaType != SigstoreBundleArtifactType || len(referrer.Layers) != 0 {
-			verificationErr = fmt.Errorf("invalid Sigstore referrer manifest")
-			continue
-		}
-		if !sha256DigestRE.MatchString(referrer.Config.Digest) {
-			verificationErr = fmt.Errorf("invalid Sigstore bundle digest")
-			continue
-		}
-		bundleJSON, err := fetchDesc(ctx, repo, toSpecDesc(referrer.Config))
-		if err != nil {
-			verificationErr = err
-			continue
-		}
-		if err := sign.VerifyBundle(bundleJSON, artifact, s.trustKey); err != nil {
-			verificationErr = err
-			continue
-		}
-		return TrustVerified, nil
-	}
-	if verificationErr == nil {
-		verificationErr = fmt.Errorf("no valid Sigstore bundle found")
-	}
-	return "", fmt.Errorf("signature: %w", verificationErr)
+	return s.storePack(ctx, res, kept)
 }
 
 // importGit clones one exact commit into an ephemeral checkout. Only the
-// validated package survives; Git imports remain untrusted until review.
+// validated package survives.
 func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, error) {
 	if src.Remote == "" {
 		return Recipe{}, fmt.Errorf("git source: remote is required")
@@ -744,7 +619,7 @@ func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, erro
 		kept.Path = normalizedPath
 		kept.Revision = commit
 		kept.Tree = tree
-		return s.storePack(ctx, packed, kept, TrustUntrusted)
+		return s.storePack(ctx, packed, kept)
 	}
 	target := tmp
 	if src.Path != "" {
@@ -757,7 +632,7 @@ func (s *Service) importGit(ctx context.Context, src RecipeSource) (Recipe, erro
 	kept := src
 	kept.Revision = commit
 	kept.Tree = tree
-	return s.importDir(ctx, target, kept, TrustUntrusted)
+	return s.importDir(ctx, target, kept)
 }
 
 // fetchDesc fetches one descriptor with a media-type-specific hard bound.
@@ -813,7 +688,6 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 		Description:   nullStrValue(row.Description),
 		License:       nullStrValue(row.License),
 		Source:        json.RawMessage(row.Source),
-		TrustState:    row.TrustState,
 		ArtifactCount: len(m.Artifacts),
 		HighRisk:      m.HighRiskPermissions(),
 		InstalledAt:   row.InstalledAt,

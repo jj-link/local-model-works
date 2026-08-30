@@ -22,14 +22,13 @@ import {
 import {
   useImportRecipe,
   useRecipe,
-  useSetRecipeTrust,
 } from "~/lib/queries";
 import type { Recipe, RecipeSource } from "~/lib/api";
 import { bytes, shortDigest } from "~/lib/format";
 
 const SOURCE_TYPES = [
   { value: "git", label: "GitHub repository", hint: "recommended" },
-  { value: "catalog", label: "Signed catalog", hint: "catalog entry" },
+  { value: "catalog", label: "Catalog", hint: "catalog entry" },
   { value: "oci", label: "OCI package", hint: "immutable digest" },
   { value: "local", label: "Local directory", hint: "controller path" },
 ] as const;
@@ -67,7 +66,7 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
 
-/** Repository-first import with immutable pin review and an explicit trust gate. */
+/** Repository-first import with immutable contract review. */
 export function ImportRecipeDialog({
   open,
   onOpenChange,
@@ -79,13 +78,11 @@ export function ImportRecipeDialog({
 }) {
   const navigate = useNavigate();
   const importRecipe = useImportRecipe();
-  const setTrust = useSetRecipeTrust();
   const [stage, setStage] = useState<Stage>("source");
   const [type, setType] = useState<RecipeSource["type"]>("git");
   const [reference, setReference] = useState("");
   const [revision, setRevision] = useState("");
   const [localPath, setLocalPath] = useState("");
-  const [accepted, setAccepted] = useState(false);
   const [installed, setInstalled] = useState<Recipe>();
   const detail = useRecipe(installed?.digest);
 
@@ -96,10 +93,8 @@ export function ImportRecipeDialog({
     setReference("");
     setRevision("");
     setLocalPath("");
-    setAccepted(false);
     setInstalled(undefined);
     importRecipe.reset();
-    setTrust.reset();
   }, [open]);
 
   const manifest = objectRecord(detail.data?.manifest);
@@ -165,7 +160,7 @@ export function ImportRecipeDialog({
     try {
       const recipe = await importRecipe.mutateAsync({ source });
       setInstalled(recipe);
-      setStage(recipe.trust_state === "untrusted" ? "review" : "ready");
+      setStage("ready");
       toast.success("Repository compiled and pinned", {
         description: `${recipe.name}@${recipe.version}`,
       });
@@ -174,21 +169,6 @@ export function ImportRecipeDialog({
     }
   };
 
-  const trustAndContinue = async () => {
-    if (!installed || !accepted) return;
-    try {
-      const recipe = await setTrust.mutateAsync({
-        digest: installed.digest,
-        trust_state: "local",
-        permission_diff_accepted: true,
-      });
-      setInstalled(recipe);
-      setStage("ready");
-      toast.success("Recipe trusted for local launch");
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Trust update failed");
-    }
-  };
 
   const plan = () => {
     if (!installed) return;
@@ -293,16 +273,14 @@ export function ImportRecipeDialog({
             <section className="rounded border border-hairline bg-raised p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="lmw-label">{stage === "ready" ? "Launch contract ready" : "Review immutable contract"}</p>
+                  <p className="lmw-label">Launch contract ready</p>
                   <h3 className="mt-1 font-display text-lg font-semibold">
                     {installed?.display_name || installed?.name}
                   </h3>
                   <p className="mt-1 text-sm text-muted">{installed?.description}</p>
                 </div>
-                <span className={`rounded border px-2 py-1 font-mono text-[11px] ${
-                  stage === "ready" ? "border-ok/40 text-ok" : "border-warn/40 text-warn"
-                }`}>
-                  {stage === "ready" ? "trusted · launchable" : "review required"}
+                <span className="rounded border border-ok/40 px-2 py-1 font-mono text-[11px] text-ok">
+                  compiled · launchable
                 </span>
               </div>
               <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
@@ -343,28 +321,15 @@ export function ImportRecipeDialog({
               </div>
             </section>
 
-            {stage === "review" ? (
-              <label className="flex cursor-pointer gap-3 rounded border border-warn/35 bg-warn/5 p-3">
-                <input
-                  type="checkbox"
-                  checked={accepted}
-                  onChange={(event) => setAccepted(event.target.checked)}
-                  className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
-                />
-                <span>
-                  <span className="block font-display text-sm font-semibold">Trust this exact contract for local execution</span>
-                  <span className="mt-1 block text-xs text-muted">
-                    Permissions: {installed?.permissions?.join(", ") || "standard container access"}
-                    {installed?.high_risk?.length ? ` · elevated: ${installed.high_risk.join(", ")}` : ""}.
-                    Future commits require a new review.
-                  </span>
-                </span>
-              </label>
-            ) : (
-              <div className="rounded border border-ok/35 bg-ok/5 px-3 py-2 text-sm">
+            <div className="rounded border border-hairline bg-raised px-3 py-2 text-sm">
+              <p>
+                Permissions: {installed?.permissions?.join(", ") || "standard container access"}
+                {installed?.high_risk?.length ? ` · elevated: ${installed.high_risk.join(", ")}` : ""}.
+              </p>
+              <p className="mt-1 text-xs text-muted">
                 Next, LMW will match {String(compatibility?.nodeCount ?? "the required")} compatible nodes, validate fabric and host readiness, show cache/download work, and ask once before launch.
-              </div>
-            )}
+              </p>
+            </div>
           </div>
         )}
 
@@ -395,13 +360,6 @@ export function ImportRecipeDialog({
                 }
               >
                 {importRecipe.isPending ? "Resolving & compiling…" : "Resolve & review"}
-              </Button>
-            ) : stage === "review" ? (
-              <Button
-                onClick={() => void trustAndContinue()}
-                disabled={!accepted || setTrust.isPending}
-              >
-                {setTrust.isPending ? "Trusting…" : "Trust exact contract"}
               </Button>
             ) : (
               <Button onClick={plan}>Plan launch</Button>

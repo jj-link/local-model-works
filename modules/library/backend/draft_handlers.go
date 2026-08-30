@@ -83,14 +83,7 @@ func (m *Module) packageDraft(response http.ResponseWriter, request *http.Reques
 }
 
 func (m *Module) installDraft(response http.ResponseWriter, request *http.Request) {
-	var input struct {
-		PermissionDiffAccepted bool `json:"permission_diff_accepted"`
-	}
-	if err := httpx.DecodeBody(request, &input); err != nil {
-		httpx.WriteErr(response, http.StatusUnprocessableEntity, "recipe.draft_invalid", err.Error())
-		return
-	}
-	installed, err := m.env.RecipeBuilder.Install(request.Context(), chi.URLParam(request, "id"), input.PermissionDiffAccepted)
+	installed, err := m.env.RecipeBuilder.Install(request.Context(), chi.URLParam(request, "id"))
 	if err != nil {
 		httpx.HandleErr(response, err)
 		return

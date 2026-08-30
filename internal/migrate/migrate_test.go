@@ -341,7 +341,7 @@ func TestRecipeConversion(t *testing.T) {
 	}
 }
 
-// (4) Import into a fresh state root: recipes land as trust_local, run
+// (4) Import into a fresh state root: recipes and mapped terminal runs land,
 // states are mapped with legacy markers, logs are readable through the
 // runs service with the recorded end offset, benchmark counts are
 // reproduced, placements are registered, and every source file is
@@ -422,8 +422,8 @@ func TestImport(t *testing.T) {
 		t.Errorf("ghost run: %+v err %v (want succeeded)", ghost, err)
 	}
 	for _, r := range rep.Plan.Recipes {
-		if rec, err := q.GetRecipe(ctx, r.Digest); err != nil || rec.TrustState != string(recipe.TrustLocal) {
-			t.Errorf("recipe %s: trust %q err %v (want local)", r.Name, rec.TrustState, err)
+		if _, err := q.GetRecipe(ctx, r.Digest); err != nil {
+			t.Errorf("recipe %s: %v", r.Name, err)
 		}
 	}
 

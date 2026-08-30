@@ -111,8 +111,6 @@ func (m *Module) deployErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", err.Error())
 	case errors.Is(err, deploy.ErrRecipe):
 		httpx.WriteErr(w, http.StatusNotFound, "recipe.not_found", err.Error())
-	case errors.Is(err, deploy.ErrUntrusted):
-		httpx.WriteErr(w, http.StatusConflict, "recipe.untrusted", err.Error())
 	case errors.Is(err, deploy.ErrProfile), errors.Is(err, deploy.ErrNoTarget):
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 	case errors.Is(err, deploy.ErrPlanStale):

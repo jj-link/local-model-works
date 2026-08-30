@@ -41,7 +41,7 @@ func TestInstallRepositoryCommitKeepsOldVersionAndRejectsMovedHead(t *testing.T)
 	}
 	packageRoot := filepath.Join(t.TempDir(), "packages")
 	t.Cleanup(func() { _ = recipe.RemovePackage(packageRoot) })
-	service, err := recipe.New(database, queries, events.NewEventBus(queries), validator, "", t.TempDir(), packageRoot)
+	service, err := recipe.New(database, queries, events.NewEventBus(queries), validator, t.TempDir(), packageRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,18 +95,9 @@ func TestInstallRepositoryCommitKeepsOldVersionAndRejectsMovedHead(t *testing.T)
 	if _, err := os.Stat(filepath.Join(packageRoot, strings.TrimPrefix(candidate.Digest, "sha256:"))); !os.IsNotExist(err) {
 		t.Fatalf("preview persisted candidate package: %v", err)
 	}
-	if _, err := service.StageApprovedRepositoryCommit(ctx, repositoryID, c2, false); !errors.Is(err, recipe.ErrDiffPending) {
-		t.Fatalf("stage without permission approval = %v", err)
-	}
-	if _, err := service.Get(ctx, candidate.Digest); !errors.Is(err, recipe.ErrUnknown) {
-		t.Fatalf("rejected approval persisted candidate recipe: %v", err)
-	}
-	second, err := service.StageApprovedRepositoryCommit(ctx, repositoryID, c2, true)
+	second, err := service.StageRepositoryCommit(ctx, repositoryID, c2)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if second.TrustState != recipe.TrustLocal {
-		t.Fatalf("approved candidate trust = %q", second.TrustState)
 	}
 	afterStage, err := service.GetRepository(ctx, repositoryID)
 	if err != nil {

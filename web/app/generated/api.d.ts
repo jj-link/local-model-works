@@ -721,23 +721,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/recipes/{digest}/trust": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve trust (local) after reviewing the permission diff */
-        post: operations["setRecipeTrust"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/recipes/check-updates": {
         parameters: {
             query?: never;
@@ -1520,8 +1503,6 @@ export interface components {
             permissions?: string[];
             profile_count?: number;
             source?: components["schemas"]["RecipeSource"];
-            /** @enum {string} */
-            trust_state: "verified" | "local" | "untrusted";
             update?: components["schemas"]["RecipeUpdateStatus"];
             variant_count?: number;
             version: string;
@@ -1592,7 +1573,6 @@ export interface components {
         };
         RecipeRepositoryUpdateRequest: {
             expected_head_commit: string;
-            permission_diff_accepted: boolean;
             plan_digest: string;
         };
         RecipeRepositoryVersion: {
@@ -1611,11 +1591,6 @@ export interface components {
             tree?: string;
             /** @enum {string} */
             type: "catalog" | "oci" | "git" | "local";
-        };
-        RecipeTrustRequest: {
-            permission_diff_accepted: boolean;
-            /** @enum {string} */
-            trust_state: "local" | "untrusted";
         };
         RecipeUpdateAccepted: {
             /** Format: uuid */
@@ -3103,13 +3078,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": {
-                    permission_diff_accepted: boolean;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Installed recipe */
             201: {
@@ -3316,35 +3285,6 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
-    setRecipeTrust: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                digest: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecipeTrustRequest"];
-            };
-        };
-        responses: {
-            /** @description Recipe with updated trust state */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Recipe"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-        };
-    };
     checkRecipeUpdates: {
         parameters: {
             query?: never;
@@ -3379,7 +3319,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Installed recipe (trust untrusted unless verified) */
+            /** @description Installed recipe */
             201: {
                 headers: {
                     [name: string]: unknown;

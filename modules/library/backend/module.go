@@ -1,8 +1,8 @@
-// Package backend implements the library first-party module: the
-// operator's installed-recipe store (list, import, detail with side-by-side
-// versions, trust transitions, uninstall), artifact placements, and peer
-// transfers between nodes. Recipe import and transfer dispatch run in the
-// core recipe and deploy services; this module renders and commands them.
+// Package backend implements the Library module: the controller/operator's
+// installed-recipe store (list, import, version detail, uninstall), artifact
+// placements, and peer transfers between nodes. Recipe import and transfer
+// dispatch run in the core recipe and deploy services; this module renders
+// and commands them.
 
 package backend
 
@@ -47,8 +47,7 @@ type importRequest struct {
 }
 
 // importInputSchema is the recipe-import job input: the fragment's
-// RecipeImport request shape (the source; the service derives trust per
-// source type).
+// RecipeImport request shape.
 var importInputSchema = json.RawMessage(`{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -71,16 +70,15 @@ var importInputSchema = json.RawMessage(`{
   }
 }`)
 
-// importOutputSchema is the import's confirmation: the stored recipe view.
+// importOutputSchema is the stored recipe view.
 var importOutputSchema = json.RawMessage(`{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["digest", "name", "version", "trust_state"],
+  "required": ["digest", "name", "version"],
   "properties": {
-    "digest":      { "type": "string" },
-    "name":        { "type": "string" },
-    "version":     { "type": "string" },
-    "trust_state": { "type": "string", "enum": ["verified", "local", "untrusted"] }
+    "digest":  { "type": "string" },
+    "name":    { "type": "string" },
+    "version": { "type": "string" }
   }
 }`)
 
@@ -133,7 +131,7 @@ func (m *Module) importJob(ctx context.Context, c *jobs.Context) (map[string]any
 	if err != nil {
 		return nil, err
 	}
-	c.Logf("imported recipe %s@%s (trust %s, digest %s)", rec.Name, rec.Version, rec.TrustState, rec.Digest)
+	c.Logf("imported recipe %s@%s (digest %s)", rec.Name, rec.Version, rec.Digest)
 	out := map[string]any{}
 	if err := json.Unmarshal(httpx.MustJSON(rec), &out); err != nil {
 		return nil, err
@@ -158,9 +156,8 @@ func (m *Module) draftJob(ctx context.Context, job *jobs.Context) (map[string]an
 	return output, nil
 }
 
-// RegisterSettings declares the operator settings (catalog URLs, local
-// auto-trust) from the manifest's frozen schema; a compile failure is a
-// wiring bug.
+// RegisterSettings declares the operator settings from the manifest's frozen
+// schema; a compile failure is a wiring bug.
 func (m *Module) RegisterSettings(reg *settings.Registry) {
 	if err := reg.Register("library", descriptor.SettingsSchema); err != nil {
 		panic(fmt.Sprintf("library settings: %v", err))
@@ -174,30 +171,9 @@ func (m *Module) RegisterHTTP(r chi.Router) {
 
 // importRecipe installs one recipe from its source. It is shared by the
 // synchronous POST handler and the recipe-import job executor so both
-// paths store under identical rules. Trust is service-set per source type
-// (catalog and local default to local; OCI is verified when the package
-// signature validates; git is untrusted); the operator setting
-// auto_trust_local=false stores local:// imports untrusted instead.
+// paths store under identical rules.
 func importRecipe(ctx context.Context, env *moduleapi.Env, input importRequest) (recipe.Recipe, error) {
-	rec, err := env.Recipes.Import(ctx, input.Source)
-	if err != nil {
-		return recipe.Recipe{}, err
-	}
-	if input.Source.Type == "local" && !autoTrustLocal(ctx, env) && rec.TrustState == recipe.TrustLocal {
-		return env.Recipes.SetTrust(ctx, rec.Digest, recipe.TrustUntrusted, false)
-	}
-	return rec, nil
-}
-
-// autoTrustLocal reports whether local:// imports auto-trust as local.
-// The service default is trust; only an explicit false opts out.
-func autoTrustLocal(ctx context.Context, env *moduleapi.Env) bool {
-	vs, _, err := env.Settings.Get(ctx, "library")
-	if err != nil {
-		return true
-	}
-	b, ok := vs["auto_trust_local"].(bool)
-	return !ok || b
+	return env.Recipes.Import(ctx, input.Source)
 }
 
 // mapRecipeError converts the recipe service's domain errors to the
@@ -206,13 +182,9 @@ func autoTrustLocal(ctx context.Context, env *moduleapi.Env) bool {
 func mapRecipeError(err error) error {
 	msg := err.Error()
 	switch {
-	case errors.Is(err, recipe.ErrDiffPending), errors.Is(err, recipe.ErrReference):
-		return fmt.Errorf("%w: %s", httpx.ErrConflict, msg)
-	case strings.Contains(msg, "If-Match"):
+	case errors.Is(err, recipe.ErrReference), strings.Contains(msg, "If-Match"):
 		return fmt.Errorf("%w: %s", httpx.ErrConflict, msg)
 	case errors.Is(err, recipe.ErrUnpinnedRevision):
-		return fmt.Errorf("%w: %s", httpx.ErrUnprocessable, msg)
-	case errors.Is(err, recipe.ErrTrustState):
 		return fmt.Errorf("%w: %s", httpx.ErrUnprocessable, msg)
 	case errors.Is(err, recipe.ErrUnknown) && strings.Contains(msg, "catalog is not configured"):
 		return fmt.Errorf("%w: %s", httpx.ErrUnavailable, msg)
@@ -239,9 +211,8 @@ type repositoryUpdatePlanRequest struct {
 }
 
 type repositoryUpdateRequest struct {
-	ExpectedHeadCommit     string `json:"expected_head_commit"`
-	PlanDigest             string `json:"plan_digest"`
-	PermissionDiffAccepted bool   `json:"permission_diff_accepted"`
+	ExpectedHeadCommit string `json:"expected_head_commit"`
+	PlanDigest         string `json:"plan_digest"`
 }
 
 type repositoryUpdatePlanView struct {
@@ -345,10 +316,6 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "expected_head_commit and plan_digest are required")
 		return
 	}
-	if !request.PermissionDiffAccepted {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.permission_diff_pending", "review and accept the candidate permission contract")
-		return
-	}
 	repositoryID := chi.URLParam(r, "id")
 	repository, err := m.env.Recipes.GetRepository(r.Context(), repositoryID)
 	if err != nil {
@@ -367,8 +334,8 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
 		return
 	}
-	installed, err := m.env.Recipes.StageApprovedRepositoryCommit(
-		r.Context(), repositoryID, request.ExpectedHeadCommit, request.PermissionDiffAccepted,
+	installed, err := m.env.Recipes.StageRepositoryCommit(
+		r.Context(), repositoryID, request.ExpectedHeadCommit,
 	)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
@@ -385,8 +352,6 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 func writeRecipeUpdateError(w http.ResponseWriter, err error) {
 	var packError *recipe.PackError
 	switch {
-	case errors.Is(err, recipe.ErrDiffPending):
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.permission_diff_pending", "review and accept the candidate permission contract")
 	case errors.As(err, &packError) && packError.Code == "recipe.update_stale":
 		httpx.WriteErr(w, http.StatusConflict, packError.Code, packError.Message)
 	case errors.As(err, &packError) && packError.Code == recipe.RepositoryUnsupportedCode:
@@ -460,32 +425,6 @@ func (m *Module) deleteRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// trustRequest is the fragment's RecipeTrustRequest body.
-type trustRequest struct {
-	TrustState             string `json:"trust_state"`
-	PermissionDiffAccepted bool   `json:"permission_diff_accepted"`
-}
-
-// setRecipeTrust — POST /recipes/{digest}/trust: operator trust
-// transition (local requires an accepted permission diff).
-func (m *Module) setRecipeTrust(w http.ResponseWriter, r *http.Request) {
-	var req trustRequest
-	if err := httpx.DecodeBody(r, &req); err != nil {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
-		return
-	}
-	if req.TrustState == "" {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "trust_state is required")
-		return
-	}
-	rec, err := m.env.Recipes.SetTrust(r.Context(), chi.URLParam(r, "digest"), req.TrustState, req.PermissionDiffAccepted)
-	if err != nil {
-		httpx.HandleErr(w, mapRecipeError(err))
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, rec)
 }
 
 // artifactView is the fragment's Artifact (metadata and placements

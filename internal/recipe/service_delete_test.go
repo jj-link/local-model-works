@@ -30,7 +30,7 @@ func TestNewRecoversInterruptedPackageDeletion(t *testing.T) {
 	}
 
 	restoredHex := strings.Repeat("a", 64)
-	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{Digest: "sha256:" + restoredHex, Name: "restore", Version: "1", Source: "{}", TrustState: TrustLocal, Manifest: "{}"}); err != nil {
+	if err := queries.CreateRecipe(ctx, db.CreateRecipeParams{Digest: "sha256:" + restoredHex, Name: "restore", Version: "1", Source: "{}", Manifest: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	restoredTombstone := filepath.Join(packages, restoredHex+".deleting-1")
@@ -47,7 +47,7 @@ func TestNewRecoversInterruptedPackageDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := New(database, queries, events.NewEventBus(queries), validator, "", filepath.Join(root, "catalog"), packages); err != nil {
+	if _, err := New(database, queries, events.NewEventBus(queries), validator, filepath.Join(root, "catalog"), packages); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(packages, restoredHex)); err != nil {

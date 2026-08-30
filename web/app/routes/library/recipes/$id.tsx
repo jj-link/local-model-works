@@ -4,7 +4,7 @@ import { Rocket } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { useTailPathParam } from "~/lib/path-param";
-import { useDeleteRecipe, useRecipe, useSetRecipeTrust } from "~/lib/queries";
+import { useDeleteRecipe, useRecipe } from "~/lib/queries";
 import { EmptyState } from "~/components/empty-state";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
 import { HighlightedPre } from "~/components/json-viewer";
@@ -22,11 +22,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-/** Recipe detail: metadata panel, trust actions, and the manifest document. */
+/** Recipe detail: metadata, launch action, and the manifest document. */
 export default function RecipeDetailRoute() {
   const id = useTailPathParam();
   const { data: recipe, isPending, isError, error, refetch } = useRecipe(id);
-  const setTrust = useSetRecipeTrust();
   const remove = useDeleteRecipe();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -34,10 +33,6 @@ export default function RecipeDetailRoute() {
   useEffect(() => {
     if (!recipe || searchParams.get("launch") !== "1") return;
     setSearchParams({}, { replace: true });
-    if (recipe.trust_state === "untrusted") {
-      toast.error("Review and trust this recipe before launch");
-      return;
-    }
     setLaunchOpen(true);
   }, [recipe, searchParams, setSearchParams]);
 
@@ -57,12 +52,6 @@ export default function RecipeDetailRoute() {
 
   const manifestText = recipe.manifest ? toYaml(recipe.manifest) : null;
 
-  const trust = (trust_state: "local" | "untrusted") =>
-    setTrust
-      .mutateAsync({ digest: recipe.digest, trust_state, permission_diff_accepted: true })
-      .then((r) => toast.success(`Trust set to ${r.trust_state}`))
-      .catch((e) => toast.error(e instanceof Error ? e.message : "trust update failed"));
-
 
   return (
     <div className="grid gap-4">
@@ -76,32 +65,10 @@ export default function RecipeDetailRoute() {
           <div className="ml-auto flex items-center gap-2">
             <Button
               size="sm"
-              disabled={recipe.trust_state === "untrusted"}
               onClick={() => setLaunchOpen(true)}
-              title={recipe.trust_state === "untrusted" ? "Trust this exact recipe before launch" : "Plan a deployment"}
             >
               <Rocket aria-hidden /> Plan launch
             </Button>
-            {recipe.trust_state !== "local" ? (
-              <ConfirmDialog
-                title="Mark recipe local"
-                description={`Accept the permission diff for ${recipe.name} and mark it operator-trusted (local)? Untrusted recipes cannot be launched.`}
-                confirmLabel="accept diff"
-                onConfirm={() => void trust("local")}
-              >
-                mark local
-              </ConfirmDialog>
-            ) : null}
-            {recipe.trust_state !== "untrusted" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={setTrust.isPending}
-                onClick={() => void trust("untrusted")}
-              >
-                mark untrusted
-              </Button>
-            ) : null}
             <ConfirmDialog
               title="Delete recipe"
               description={`Remove ${recipe.name}@${recipe.version}? Running deployments are not affected until restarted.`}
@@ -156,12 +123,6 @@ export default function RecipeDetailRoute() {
 
           <div className="grid gap-1 font-mono text-xs">
             <p className="lmw-label mb-1">permissions &amp; compatibility</p>
-            <p>
-              <span className="text-muted">trust</span>{" "}
-              <span className={recipe.trust_state === "untrusted" ? "text-fault" : recipe.trust_state === "local" ? "text-warn" : "text-ok"}>
-                {recipe.trust_state}
-              </span>
-            </p>
             <p>
               <span className="text-muted">profiles</span>{" "}
               <span>{recipe.profile_count ?? 0}</span> ·{" "}

@@ -112,7 +112,7 @@ func New(d Deps) *Server {
 	if err != nil {
 		panic(fmt.Sprintf("recipe validator: %v", err))
 	}
-	recipes, err := recipe.New(d.DB, d.Q, bus, v, d.Cfg.TrustKeyPath(), d.Cfg.CatalogRoot(), d.Cfg.RecipeRoot())
+	recipes, err := recipe.New(d.DB, d.Q, bus, v, d.Cfg.CatalogRoot(), d.Cfg.RecipeRoot())
 	if err != nil {
 		panic(fmt.Sprintf("recipe store: %v", err))
 	}

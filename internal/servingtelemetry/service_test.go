@@ -38,7 +38,7 @@ func openServingStore(t *testing.T) (*telemetry.Service, *sql.DB, *db.Queries) {
 func createDeploymentRow(t *testing.T, database *sql.DB, id string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := database.ExecContext(ctx, `INSERT OR IGNORE INTO recipes (digest, name, version, trust_state, manifest) VALUES (?,?,?,?,?)`, "r1", "r", "1", "verified", "{}"); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT OR IGNORE INTO recipes (digest, name, version, manifest) VALUES (?,?,?,?)`, "r1", "r", "1", "{}"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, profile, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, id, "r1", "p", id, "running", "healthy"); err != nil {

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jj-link/local-model-works/internal/sign"
 	"github.com/jj-link/local-model-works/schemas"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -66,23 +65,6 @@ func (s *Service) resolveCatalog(reference string) (catalogRecipe, error) {
 	}
 	if err := s.catalogSchema.Validate(raw); err != nil {
 		return catalogRecipe{}, fmt.Errorf("catalog schema: %w", err)
-	}
-	canonical, err := Canonical(indexRaw)
-	if err != nil {
-		return catalogRecipe{}, err
-	}
-	if len(s.trustKey) == 0 {
-		return catalogRecipe{}, fmt.Errorf("catalog trust key is not configured")
-	}
-	bundleJSON, err := os.ReadFile(filepath.Join(s.catalogRoot, "catalog.sigstore.json"))
-	if err != nil {
-		return catalogRecipe{}, fmt.Errorf("catalog signature: %w", err)
-	}
-	if len(bundleJSON) > MaxConfigBytes {
-		return catalogRecipe{}, fmt.Errorf("catalog signature exceeds 1 MiB")
-	}
-	if err := sign.VerifyBundle(bundleJSON, canonical, s.trustKey); err != nil {
-		return catalogRecipe{}, fmt.Errorf("catalog signature: %w", err)
 	}
 	var catalog recipeCatalog
 	if err := json.Unmarshal(indexRaw, &catalog); err != nil {

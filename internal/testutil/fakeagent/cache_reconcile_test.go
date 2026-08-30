@@ -93,7 +93,7 @@ func TestRecipeInstallRequestsConnectedAgentCacheRescan(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := server.Srv.Env().Recipes.Store(
-		server.Ctx, document, recipe.RecipeSource{Type: "local", Path: cache}, recipe.TrustLocal,
+		server.Ctx, document, recipe.RecipeSource{Type: "local", Path: cache},
 	); err != nil {
 		t.Fatalf("install recipe: %v", err)
 	}

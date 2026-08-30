@@ -171,21 +171,21 @@ FROM artifact_placements WHERE artifact_id = ? AND node_id = ? AND path = ?;
 
 -- name: CreateRecipe :exec
 INSERT OR IGNORE INTO recipes (digest, name, version, display_name, description,
-                               license, source, trust_state, manifest)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                               license, source, manifest)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetRecipe :one
 SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
+       manifest, installed_at
 FROM recipes WHERE digest = ?;
 
 -- name: ListRecipes :many
 SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
+       manifest, installed_at
 FROM recipes ORDER BY installed_at DESC;
 -- name: ListUnlinkedRecipes :many
 SELECT r.digest, r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.trust_state, r.manifest, r.installed_at
+       r.source, r.manifest, r.installed_at
 FROM recipes r
 WHERE NOT EXISTS (
     SELECT 1 FROM recipe_repository_versions v WHERE v.recipe_digest = r.digest
@@ -211,7 +211,7 @@ WHERE id = ?;
 SELECT v.repository_id, v.recipe_digest, v.commit_sha, v.tree_sha,
        v.canonical, v.installed_at,
        r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.trust_state, r.manifest
+       r.source, r.manifest
 FROM recipe_repository_versions v
 JOIN recipes r ON r.digest = v.recipe_digest
 WHERE v.repository_id = ?
@@ -256,8 +256,6 @@ SET tracking_ref = ?, observed_head_commit = ?, observed_head_tree = ?,
     head_checked_at = ?, updated_at = ?
 WHERE id = ?;
 
--- name: UpdateRecipeTrust :exec
-UPDATE recipes SET trust_state = ? WHERE digest = ?;
 
 -- name: DeleteRecipe :exec
 DELETE FROM recipes WHERE digest = ?;

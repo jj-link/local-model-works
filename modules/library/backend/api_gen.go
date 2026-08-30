@@ -113,48 +113,6 @@ func (e PlacementState) Valid() bool {
 	}
 }
 
-// Defines values for RecipeTrustState.
-const (
-	RecipeTrustStateLocal     RecipeTrustState = "local"
-	RecipeTrustStateUntrusted RecipeTrustState = "untrusted"
-	RecipeTrustStateVerified  RecipeTrustState = "verified"
-)
-
-// Valid indicates whether the value is a known member of the RecipeTrustState enum.
-func (e RecipeTrustState) Valid() bool {
-	switch e {
-	case RecipeTrustStateLocal:
-		return true
-	case RecipeTrustStateUntrusted:
-		return true
-	case RecipeTrustStateVerified:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RecipeDetailTrustState.
-const (
-	RecipeDetailTrustStateLocal     RecipeDetailTrustState = "local"
-	RecipeDetailTrustStateUntrusted RecipeDetailTrustState = "untrusted"
-	RecipeDetailTrustStateVerified  RecipeDetailTrustState = "verified"
-)
-
-// Valid indicates whether the value is a known member of the RecipeDetailTrustState enum.
-func (e RecipeDetailTrustState) Valid() bool {
-	switch e {
-	case RecipeDetailTrustStateLocal:
-		return true
-	case RecipeDetailTrustStateUntrusted:
-		return true
-	case RecipeDetailTrustStateVerified:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for RecipeDraftState.
 const (
 	RecipeDraftStateAnalyzing  RecipeDraftState = "analyzing"
@@ -187,40 +145,22 @@ func (e RecipeDraftState) Valid() bool {
 
 // Defines values for RecipeSourceType.
 const (
-	RecipeSourceTypeCatalog RecipeSourceType = "catalog"
-	RecipeSourceTypeGit     RecipeSourceType = "git"
-	RecipeSourceTypeLocal   RecipeSourceType = "local"
-	RecipeSourceTypeOci     RecipeSourceType = "oci"
+	Catalog RecipeSourceType = "catalog"
+	Git     RecipeSourceType = "git"
+	Local   RecipeSourceType = "local"
+	Oci     RecipeSourceType = "oci"
 )
 
 // Valid indicates whether the value is a known member of the RecipeSourceType enum.
 func (e RecipeSourceType) Valid() bool {
 	switch e {
-	case RecipeSourceTypeCatalog:
+	case Catalog:
 		return true
-	case RecipeSourceTypeGit:
+	case Git:
 		return true
-	case RecipeSourceTypeLocal:
+	case Local:
 		return true
-	case RecipeSourceTypeOci:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RecipeTrustRequestTrustState.
-const (
-	RecipeTrustRequestTrustStateLocal     RecipeTrustRequestTrustState = "local"
-	RecipeTrustRequestTrustStateUntrusted RecipeTrustRequestTrustState = "untrusted"
-)
-
-// Valid indicates whether the value is a known member of the RecipeTrustRequestTrustState enum.
-func (e RecipeTrustRequestTrustState) Valid() bool {
-	switch e {
-	case RecipeTrustRequestTrustStateLocal:
-		return true
-	case RecipeTrustRequestTrustStateUntrusted:
+	case Oci:
 		return true
 	default:
 		return false
@@ -437,7 +377,6 @@ type Recipe struct {
 	Permissions   *[]string           `json:"permissions,omitempty"`
 	ProfileCount  *int                `json:"profile_count,omitempty"`
 	Source        *RecipeSource       `json:"source,omitempty"`
-	TrustState    RecipeTrustState    `json:"trust_state"`
 	Update        *RecipeUpdateStatus `json:"update,omitempty"`
 	VariantCount  *int                `json:"variant_count,omitempty"`
 	Version       string              `json:"version"`
@@ -445,9 +384,6 @@ type Recipe struct {
 	// VersionCount Other installed versions of the same recipe name
 	VersionCount *int `json:"version_count,omitempty"`
 }
-
-// RecipeTrustState defines model for Recipe.TrustState.
-type RecipeTrustState string
 
 // RecipeDetail defines model for RecipeDetail.
 type RecipeDetail struct {
@@ -468,7 +404,6 @@ type RecipeDetail struct {
 	Permissions  *[]string               `json:"permissions,omitempty"`
 	ProfileCount *int                    `json:"profile_count,omitempty"`
 	Source       *RecipeSource           `json:"source,omitempty"`
-	TrustState   RecipeDetailTrustState  `json:"trust_state"`
 	Update       *RecipeUpdateStatus     `json:"update,omitempty"`
 	VariantCount *int                    `json:"variant_count,omitempty"`
 	Version      string                  `json:"version"`
@@ -476,9 +411,6 @@ type RecipeDetail struct {
 	// VersionCount Other installed versions of the same recipe name
 	VersionCount *int `json:"version_count,omitempty"`
 }
-
-// RecipeDetailTrustState defines model for RecipeDetail.TrustState.
-type RecipeDetailTrustState string
 
 // RecipeDraft defines model for RecipeDraft.
 type RecipeDraft struct {
@@ -551,9 +483,8 @@ type RecipeRepositoryUpdatePlanRequest struct {
 
 // RecipeRepositoryUpdateRequest defines model for RecipeRepositoryUpdateRequest.
 type RecipeRepositoryUpdateRequest struct {
-	ExpectedHeadCommit     string `json:"expected_head_commit"`
-	PermissionDiffAccepted bool   `json:"permission_diff_accepted"`
-	PlanDigest             string `json:"plan_digest"`
+	ExpectedHeadCommit string `json:"expected_head_commit"`
+	PlanDigest         string `json:"plan_digest"`
 }
 
 // RecipeRepositoryVersion defines model for RecipeRepositoryVersion.
@@ -577,15 +508,6 @@ type RecipeSource struct {
 
 // RecipeSourceType defines model for RecipeSource.Type.
 type RecipeSourceType string
-
-// RecipeTrustRequest defines model for RecipeTrustRequest.
-type RecipeTrustRequest struct {
-	PermissionDiffAccepted bool                         `json:"permission_diff_accepted"`
-	TrustState             RecipeTrustRequestTrustState `json:"trust_state"`
-}
-
-// RecipeTrustRequestTrustState defines model for RecipeTrustRequest.TrustState.
-type RecipeTrustRequestTrustState string
 
 // RecipeUpdateAccepted defines model for RecipeUpdateAccepted.
 type RecipeUpdateAccepted struct {
@@ -712,11 +634,6 @@ type UpdateRecipeDraftParams struct {
 	IfMatch string `json:"If-Match"`
 }
 
-// InstallRecipeDraftJSONBody defines parameters for InstallRecipeDraft.
-type InstallRecipeDraftJSONBody struct {
-	PermissionDiffAccepted bool `json:"permission_diff_accepted"`
-}
-
 // DeleteRecipeParams defines parameters for DeleteRecipe.
 type DeleteRecipeParams struct {
 	IfMatch string `json:"If-Match"`
@@ -728,9 +645,6 @@ type CreateRecipeDraftJSONRequestBody = RecipeDraftSource
 // UpdateRecipeDraftJSONRequestBody defines body for UpdateRecipeDraft for application/json ContentType.
 type UpdateRecipeDraftJSONRequestBody UpdateRecipeDraftJSONBody
 
-// InstallRecipeDraftJSONRequestBody defines body for InstallRecipeDraft for application/json ContentType.
-type InstallRecipeDraftJSONRequestBody InstallRecipeDraftJSONBody
-
 // StartRecipeRepositoryUpdateJSONRequestBody defines body for StartRecipeRepositoryUpdate for application/json ContentType.
 type StartRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdateRequest
 
@@ -739,9 +653,6 @@ type PlanRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdatePlanReque
 
 // ImportRecipeJSONRequestBody defines body for ImportRecipe for application/json ContentType.
 type ImportRecipeJSONRequestBody = RecipeImport
-
-// SetRecipeTrustJSONRequestBody defines body for SetRecipeTrust for application/json ContentType.
-type SetRecipeTrustJSONRequestBody = RecipeTrustRequest
 
 // CreateTransferJSONRequestBody defines body for CreateTransfer for application/json ContentType.
 type CreateTransferJSONRequestBody = TransferRequest
@@ -802,9 +713,6 @@ type ServerInterface interface {
 
 	// (GET /recipes/{digest})
 	GetRecipe(w http.ResponseWriter, r *http.Request, digest string)
-	// SetRecipeTrust Approve trust (local) after reviewing the permission diff
-	// (POST /recipes/{digest}/trust)
-	SetRecipeTrust(w http.ResponseWriter, r *http.Request, digest string)
 
 	// (GET /transfers)
 	ListTransfers(w http.ResponseWriter, r *http.Request)
@@ -913,12 +821,6 @@ func (_ Unimplemented) DeleteRecipe(w http.ResponseWriter, r *http.Request, dige
 
 // (GET /recipes/{digest})
 func (_ Unimplemented) GetRecipe(w http.ResponseWriter, r *http.Request, digest string) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// SetRecipeTrust Approve trust (local) after reviewing the permission diff
-// (POST /recipes/{digest}/trust)
-func (_ Unimplemented) SetRecipeTrust(w http.ResponseWriter, r *http.Request, digest string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1424,32 +1326,6 @@ func (siw *ServerInterfaceWrapper) GetRecipe(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// SetRecipeTrust operation middleware
-func (siw *ServerInterfaceWrapper) SetRecipeTrust(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "digest" -------------
-	var digest string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetRecipeTrust(w, r, digest)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListTransfers operation middleware
 func (siw *ServerInterfaceWrapper) ListTransfers(w http.ResponseWriter, r *http.Request) {
 
@@ -1690,9 +1566,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipes/{digest}", wrapper.GetRecipe)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/recipes/{digest}/trust", wrapper.SetRecipeTrust)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipes/check-updates", wrapper.CheckRecipeUpdates)

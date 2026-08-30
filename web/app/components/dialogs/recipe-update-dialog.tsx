@@ -54,7 +54,6 @@ export function RecipeUpdateDialog({
   const planMutation = usePlanRecipeRepositoryUpdate();
   const startMutation = useStartRecipeRepositoryUpdate();
   const [runId, setRunId] = useState<string>();
-  const [permissionDiffAccepted, setPermissionDiffAccepted] = useState(false);
   const runQuery = useRun(runId);
   const plannedKey = useRef("");
   const resetPlan = planMutation.reset;
@@ -64,7 +63,6 @@ export function RecipeUpdateDialog({
     if (!open) {
       plannedKey.current = "";
       setRunId(undefined);
-      setPermissionDiffAccepted(false);
       resetPlan();
       resetStart();
     }
@@ -111,13 +109,12 @@ export function RecipeUpdateDialog({
   const startUpdate = async () => {
     const repository = repositoryQuery.data;
     const plan = planMutation.data;
-    if (!repositoryId || !repository?.observed_head_commit || !plan || !permissionDiffAccepted) return;
+    if (!repositoryId || !repository?.observed_head_commit || !plan) return;
     try {
       const accepted = await startMutation.mutateAsync({
         id: repositoryId,
         expected_head_commit: repository.observed_head_commit,
         plan_digest: plan.plan_digest,
-        permission_diff_accepted: true,
       });
       setRunId(accepted.run_id);
     } catch (error) {
@@ -175,9 +172,9 @@ export function RecipeUpdateDialog({
             {planMutation.data ? (
               <section className="grid gap-2" aria-labelledby="recipe-update-permissions-title">
                 <div>
-                  <h3 id="recipe-update-permissions-title" className="text-sm font-semibold">Permission contract</h3>
+                  <h3 id="recipe-update-permissions-title" className="text-sm font-semibold">Permission changes</h3>
                   <p className="text-xs text-muted-foreground">
-                    Approval applies only to this compiled commit. Future commits require another review.
+                    Permissions reported by the compiled candidate commit.
                   </p>
                 </div>
                 <div className="rounded-md border border-border bg-card p-3">
@@ -200,22 +197,6 @@ export function RecipeUpdateDialog({
                     <p className="mt-3 text-xs text-muted-foreground">No permission changes from the current recipe.</p>
                   )}
                 </div>
-                {!runId ? (
-                  <label className="flex cursor-pointer gap-3 rounded border border-warn/35 bg-warn/5 p-3">
-                    <input
-                      type="checkbox"
-                      checked={permissionDiffAccepted}
-                      onChange={(event) => setPermissionDiffAccepted(event.target.checked)}
-                      className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
-                    />
-                    <span>
-                      <span className="block text-sm font-semibold">Trust this exact update for local execution</span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        I reviewed the candidate permission contract and accept it for this digest.
-                      </span>
-                    </span>
-                  </label>
-                ) : null}
               </section>
             ) : null}
 
@@ -311,7 +292,7 @@ export function RecipeUpdateDialog({
           {!runId ? (
             <Button
               onClick={() => void startUpdate()}
-              disabled={!planMutation.data?.ready || !permissionDiffAccepted || startMutation.isPending || planMutation.isPending}
+              disabled={!planMutation.data?.ready || startMutation.isPending || planMutation.isPending}
             >
               {startMutation.isPending ? "Starting update…" : "Update recipe"}
             </Button>

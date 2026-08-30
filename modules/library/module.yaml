@@ -17,8 +17,6 @@ settingsSchema:
       items:
         type: string
         format: uri
-    auto_trust_local:
-      type: boolean
 jobKinds:
   - recipe-import
   - recipe-draft

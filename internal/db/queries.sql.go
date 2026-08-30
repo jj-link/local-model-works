@@ -408,8 +408,8 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) error {
 
 const createRecipe = `-- name: CreateRecipe :exec
 INSERT OR IGNORE INTO recipes (digest, name, version, display_name, description,
-                               license, source, trust_state, manifest)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               license, source, manifest)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRecipeParams struct {
@@ -420,7 +420,6 @@ type CreateRecipeParams struct {
 	Description sql.NullString `json:"description"`
 	License     sql.NullString `json:"license"`
 	Source      string         `json:"source"`
-	TrustState  string         `json:"trust_state"`
 	Manifest    string         `json:"manifest"`
 }
 
@@ -433,7 +432,6 @@ func (q *Queries) CreateRecipe(ctx context.Context, arg CreateRecipeParams) erro
 		arg.Description,
 		arg.License,
 		arg.Source,
-		arg.TrustState,
 		arg.Manifest,
 	)
 	return err
@@ -1073,7 +1071,7 @@ func (q *Queries) GetPlacement(ctx context.Context, arg GetPlacementParams) (Art
 
 const getRecipe = `-- name: GetRecipe :one
 SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
+       manifest, installed_at
 FROM recipes WHERE digest = ?
 `
 
@@ -1088,7 +1086,6 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 		&i.Description,
 		&i.License,
 		&i.Source,
-		&i.TrustState,
 		&i.Manifest,
 		&i.InstalledAt,
 	)
@@ -2227,7 +2224,7 @@ const listRecipeRepositoryVersions = `-- name: ListRecipeRepositoryVersions :man
 SELECT v.repository_id, v.recipe_digest, v.commit_sha, v.tree_sha,
        v.canonical, v.installed_at,
        r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.trust_state, r.manifest
+       r.source, r.manifest
 FROM recipe_repository_versions v
 JOIN recipes r ON r.digest = v.recipe_digest
 WHERE v.repository_id = ?
@@ -2247,7 +2244,6 @@ type ListRecipeRepositoryVersionsRow struct {
 	Description  sql.NullString `json:"description"`
 	License      sql.NullString `json:"license"`
 	Source       string         `json:"source"`
-	TrustState   string         `json:"trust_state"`
 	Manifest     string         `json:"manifest"`
 }
 
@@ -2273,7 +2269,6 @@ func (q *Queries) ListRecipeRepositoryVersions(ctx context.Context, repositoryID
 			&i.Description,
 			&i.License,
 			&i.Source,
-			&i.TrustState,
 			&i.Manifest,
 		); err != nil {
 			return nil, err
@@ -2340,7 +2335,7 @@ func (q *Queries) ListRecipeUpdateRuns(ctx context.Context) ([]Run, error) {
 
 const listRecipes = `-- name: ListRecipes :many
 SELECT digest, name, version, display_name, description, license, source,
-       trust_state, manifest, installed_at
+       manifest, installed_at
 FROM recipes ORDER BY installed_at DESC
 `
 
@@ -2361,7 +2356,6 @@ func (q *Queries) ListRecipes(ctx context.Context) ([]Recipe, error) {
 			&i.Description,
 			&i.License,
 			&i.Source,
-			&i.TrustState,
 			&i.Manifest,
 			&i.InstalledAt,
 		); err != nil {
@@ -2596,7 +2590,7 @@ func (q *Queries) ListTransfers(ctx context.Context) ([]Transfer, error) {
 
 const listUnlinkedRecipes = `-- name: ListUnlinkedRecipes :many
 SELECT r.digest, r.name, r.version, r.display_name, r.description, r.license,
-       r.source, r.trust_state, r.manifest, r.installed_at
+       r.source, r.manifest, r.installed_at
 FROM recipes r
 WHERE NOT EXISTS (
     SELECT 1 FROM recipe_repository_versions v WHERE v.recipe_digest = r.digest
@@ -2621,7 +2615,6 @@ func (q *Queries) ListUnlinkedRecipes(ctx context.Context) ([]Recipe, error) {
 			&i.Description,
 			&i.License,
 			&i.Source,
-			&i.TrustState,
 			&i.Manifest,
 			&i.InstalledAt,
 		); err != nil {
@@ -3134,20 +3127,6 @@ type UpdateNodeMetaParams struct {
 
 func (q *Queries) UpdateNodeMeta(ctx context.Context, arg UpdateNodeMetaParams) error {
 	_, err := q.db.ExecContext(ctx, updateNodeMeta, arg.DisplayName, arg.Labels, arg.ID)
-	return err
-}
-
-const updateRecipeTrust = `-- name: UpdateRecipeTrust :exec
-UPDATE recipes SET trust_state = ? WHERE digest = ?
-`
-
-type UpdateRecipeTrustParams struct {
-	TrustState string `json:"trust_state"`
-	Digest     string `json:"digest"`
-}
-
-func (q *Queries) UpdateRecipeTrust(ctx context.Context, arg UpdateRecipeTrustParams) error {
-	_, err := q.db.ExecContext(ctx, updateRecipeTrust, arg.TrustState, arg.Digest)
 	return err
 }
 

@@ -123,7 +123,6 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 			Description: versionRow.Description,
 			License:     versionRow.License,
 			Source:      versionRow.Source,
-			TrustState:  versionRow.TrustState,
 			Manifest:    versionRow.Manifest,
 			InstalledAt: versionRow.InstalledAt,
 		}

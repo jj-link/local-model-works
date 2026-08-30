@@ -30,10 +30,6 @@ var (
 	ErrPlanStale = errors.New("plan digest mismatch")
 	ErrNotReady  = errors.New("plan not ready")
 	ErrState     = errors.New("invalid state for operation")
-	// ErrUntrusted — the recipe is untrusted and cannot launch. It is
-	// inspectable but not launchable until the operator approves it (local)
-	// or a signature verifies it. Stable API code: recipe.untrusted (409).
-	ErrUntrusted = errors.New("recipe untrusted")
 )
 
 // Placement is one rank assignment (openapi placements item).
