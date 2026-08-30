@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +20,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/moduleapi"
+	runsvc "github.com/jj-link/local-model-works/internal/runs"
 )
 
 func TestSelectedSecretScopes(t *testing.T) {
@@ -240,13 +244,17 @@ func TestPaperStatePhaseAndChangedDigests(t *testing.T) {
 	}
 }
 
-func TestImportGeneratedCandidatesReplacesUnselectedModelIdeas(t *testing.T) {
+func TestImportGeneratedCandidatesPreservesHumanAndSelectedIdeas(t *testing.T) {
 	module, projectID, _ := newTestModule(t)
 	ctx := context.Background()
-	if err := module.env.Q.CreateAutoResearchIdea(ctx, db.CreateAutoResearchIdeaParams{
-		ID: uuid.NewString(), ProjectID: projectID, Ordinal: 1, Source: "generated", Title: "Old", Body: "Old", Selected: 0,
-	}); err != nil {
-		t.Fatal(err)
+	for _, idea := range []db.CreateAutoResearchIdeaParams{
+		{ID: uuid.NewString(), ProjectID: projectID, Ordinal: 0, Source: "human", Title: "Human", Body: "Human", Selected: 0},
+		{ID: uuid.NewString(), ProjectID: projectID, Ordinal: 1, Source: "generated", Title: "Old", Body: "Old", Selected: 0},
+		{ID: uuid.NewString(), ProjectID: projectID, Ordinal: 2, Source: "generated", Title: "Chosen", Body: "Chosen", Selected: 1},
+	} {
+		if err := module.env.Q.CreateAutoResearchIdea(ctx, idea); err != nil {
+			t.Fatal(err)
+		}
 	}
 	intake := filepath.Join(module.projectRoot(projectID), "artifacts", ".lmw", "intake")
 	if err := os.MkdirAll(intake, 0o700); err != nil {
@@ -274,8 +282,18 @@ func TestImportGeneratedCandidatesReplacesUnselectedModelIdeas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ideas) != 1 || ideas[0].Title != "New candidate" || ideas[0].Source != "generated" {
+	if len(ideas) != 3 || ideas[0].Title != "Human" || ideas[1].Title != "Chosen" || ideas[2].Title != "New candidate" {
 		t.Fatalf("ideas = %#v", ideas)
+	}
+	if ideas[0].Ordinal != 0 || ideas[2].Ordinal != 3 {
+		t.Fatalf("ordinals = %d, %d, want 0, 3", ideas[0].Ordinal, ideas[2].Ordinal)
+	}
+	selected := 0
+	for _, idea := range ideas {
+		selected += int(idea.Selected)
+	}
+	if selected != 1 || ideas[1].Selected != 1 {
+		t.Fatalf("selection state = %#v", ideas)
 	}
 	updated, err := module.env.Q.GetAutoResearchProject(ctx, projectID)
 	if err != nil {
@@ -286,6 +304,258 @@ func TestImportGeneratedCandidatesReplacesUnselectedModelIdeas(t *testing.T) {
 	}
 	if status, err := runGit(filepath.Join(module.projectRoot(projectID), "artifacts"), "status", "--porcelain"); err != nil || strings.TrimSpace(string(status)) != "" {
 		t.Fatalf("artifact status = %q, %v", status, err)
+	}
+}
+
+func TestCreateProjectThenImportTenGeneratedAlternatives(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"idea_prompt":"Can ten alternatives coexist with the human idea?"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	module.CreateAutoResearchProject(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create response = %d %s", response.Code, response.Body.String())
+	}
+	projects, err := module.env.Q.ListAutoResearchProjects(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var project db.AutoresearchProject
+	for _, candidate := range projects {
+		if candidate.IdeaPrompt == "Can ten alternatives coexist with the human idea?" {
+			project = candidate
+			break
+		}
+	}
+	if project.ID == "" {
+		t.Fatal("created project not found")
+	}
+	intake := filepath.Join(module.projectRoot(project.ID), "artifacts", ".lmw", "intake")
+	if err := os.MkdirAll(intake, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 10; index++ {
+		candidate := fmt.Sprintf("# Candidate %d\n\n## Research question\nQuestion\n## Motivation\nMotivation\n## Proposed mechanism\nMechanism\n## Supporting sources\nSource\n## Falsifiable claims\nClaim\n## Risks and disconfirming evidence\nRisk\n", index)
+		path := filepath.Join(intake, fmt.Sprintf("candidate-%03d.md", index))
+		if err := os.WriteFile(path, []byte(candidate), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := module.importGeneratedCandidates(context.Background(), project, 10); err != nil {
+		t.Fatal(err)
+	}
+	ideas, err := module.env.Q.ListAutoResearchIdeas(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ideas) != 11 || ideas[0].Source != "human" || ideas[0].Ordinal != 0 {
+		t.Fatalf("ideas = %#v", ideas)
+	}
+	selected := 0
+	for _, idea := range ideas {
+		selected += int(idea.Selected)
+	}
+	if selected != 1 {
+		t.Fatalf("selected count = %d, want 1", selected)
+	}
+	if status, err := runGit(filepath.Join(module.projectRoot(project.ID), "artifacts"), "status", "--porcelain"); err != nil || strings.TrimSpace(string(status)) != "" {
+		t.Fatalf("artifact status = %q, %v", status, err)
+	}
+}
+
+func TestSelectedIdeaSynchronizesCanonicalArtifactsOnSelectAndEdit(t *testing.T) {
+	module, projectID, _ := newTestModule(t)
+	ctx := context.Background()
+	humanID := uuid.NewString()
+	generatedID := uuid.NewString()
+	for _, idea := range []db.CreateAutoResearchIdeaParams{
+		{ID: humanID, ProjectID: projectID, Ordinal: 0, Source: "human", Title: "Human idea", Body: "Human body", Selected: 1},
+		{ID: generatedID, ProjectID: projectID, Ordinal: 1, Source: "generated", Title: "Generated idea", Body: "Generated body", Selected: 0},
+	} {
+		if err := module.env.Q.CreateAutoResearchIdea(ctx, idea); err != nil {
+			t.Fatal(err)
+		}
+	}
+	human, err := module.env.Q.GetAutoResearchIdea(ctx, db.GetAutoResearchIdeaParams{ID: humanID, ProjectID: projectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncSelectedIdeaArtifacts(module.projectRoot(projectID), human); err != nil {
+		t.Fatal(err)
+	}
+
+	selectRequest := httptest.NewRequest(http.MethodPost, "/", nil)
+	selectResponse := httptest.NewRecorder()
+	module.SelectAutoResearchIdea(selectResponse, selectRequest, uuid.MustParse(projectID), uuid.MustParse(generatedID))
+	if selectResponse.Code != http.StatusOK {
+		t.Fatalf("select response = %d %s", selectResponse.Code, selectResponse.Body.String())
+	}
+	indexPath := filepath.Join(module.projectRoot(projectID), "artifacts", "ideas", "ideas.xml")
+	index, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generatedSlug := artifactSlug("Generated idea", generatedID)
+	if !strings.Contains(string(index), generatedSlug) || strings.Contains(string(index), artifactSlug("Human idea", humanID)) {
+		t.Fatalf("canonical index = %s", index)
+	}
+	ideas, err := module.env.Q.ListAutoResearchIdeas(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := 0
+	var generated db.AutoresearchIdea
+	for _, idea := range ideas {
+		selected += int(idea.Selected)
+		if idea.ID == generatedID {
+			generated = idea
+		}
+	}
+	if selected != 1 || generated.Selected != 1 {
+		t.Fatalf("selection state = %#v", ideas)
+	}
+
+	updateRequest := httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"title":"Edited generated idea","body":"Edited canonical body"}`))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateResponse := httptest.NewRecorder()
+	module.UpdateAutoResearchIdea(updateResponse, updateRequest, uuid.MustParse(projectID), uuid.MustParse(generatedID), UpdateAutoResearchIdeaParams{
+		IfMatch: strconv.FormatInt(generated.Version, 10),
+	})
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update response = %d %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	editedSlug := artifactSlug("Edited generated idea", generatedID)
+	markdown, err := os.ReadFile(filepath.Join(module.projectRoot(projectID), "artifacts", "ideas", editedSlug+".v1.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(markdown), "Edited canonical body") {
+		t.Fatalf("canonical markdown = %s", markdown)
+	}
+	if _, err := os.Stat(filepath.Join(module.projectRoot(projectID), "artifacts", "ideas", generatedSlug+".v1.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old selected artifact still exists: %v", err)
+	}
+	if status, err := runGit(filepath.Join(module.projectRoot(projectID), "artifacts"), "status", "--porcelain"); err != nil || strings.TrimSpace(string(status)) != "" {
+		t.Fatalf("artifact status = %q, %v", status, err)
+	}
+}
+
+func TestProjectStatusTransitionIgnoresInterveningConfigVersion(t *testing.T) {
+	module, projectID, _ := newTestModule(t)
+	ctx := context.Background()
+	project, err := module.env.Q.GetAutoResearchProject(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := module.env.Q.UpdateAutoResearchProject(ctx, db.UpdateAutoResearchProjectParams{
+		Name: project.Name, Status: project.Status, IdeaPrompt: project.IdeaPrompt,
+		ConfigJson: `{"paper_max_rounds":7}`, ID: project.ID, Version: project.Version,
+	})
+	if err != nil || rows != 1 {
+		t.Fatalf("config update = %d, %v", rows, err)
+	}
+	if err := module.setProjectStatus(ctx, projectID, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := module.env.Q.GetAutoResearchProject(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "completed" || updated.Version != project.Version+2 {
+		t.Fatalf("project after lifecycle transition = %#v", updated)
+	}
+}
+
+func TestEffectiveProviderSnapshotAppliesRoleOverrides(t *testing.T) {
+	config, err := effectiveProviderSnapshot(
+		`{"roles":{"idea-creator":{"source":"external","backend":"codex","model":"old","secret_name":"old"}}}`,
+		workerSettings{DefaultRoles: map[string]any{"default": map[string]any{"source": "external", "backend": "codex", "model": "default", "secret_name": "default"}}},
+		map[string]any{"idea-creator": map[string]any{"source": "external", "backend": "claude", "model": "new", "secret_name": "new"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := config["roles"].(map[string]any)
+	if roles["idea-creator"].(map[string]any)["model"] != "new" || roles["default"].(map[string]any)["model"] != "default" {
+		t.Fatalf("effective roles = %#v", roles)
+	}
+}
+
+func TestCredentialCleanupAndSanitizedNameCollision(t *testing.T) {
+	autoRoot := t.TempDir()
+	projectID := uuid.NewString()
+	runID := uuid.NewString()
+	runScratch := filepath.Join(autoRoot, projectID, "scratch", runID)
+	if err := os.MkdirAll(filepath.Join(runScratch, "credentials"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runScratch, "ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runScratch, "credentials", "provider"), []byte("provider-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runScratch, "ssh", "id_key"), []byte("private-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(runScratch, "transcript.ndjson"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := scrubStartupCredentials(autoRoot); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(runScratch, "credentials"), filepath.Join(runScratch, "ssh", "id_key")} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("credential path remains: %s: %v", path, err)
+		}
+	}
+	if contents, err := os.ReadFile(filepath.Join(runScratch, "transcript.ndjson")); err != nil || string(contents) != "keep" {
+		t.Fatalf("non-secret scratch changed: %q, %v", contents, err)
+	}
+
+	collisionRoot := filepath.Join(autoRoot, projectID, "scratch", uuid.NewString())
+	if _, err := writeCredentialFiles(collisionRoot, map[string]string{"provider/a": "one", "provider?a": "two"}); err == nil || !strings.HasPrefix(err.Error(), "autoresearch.secret_name_collision") {
+		t.Fatalf("collision error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(collisionRoot, "credentials")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("collision wrote credential directory: %v", err)
+	}
+}
+func TestDirectPaperMutationRejectedWhileProjectLeaseIsActive(t *testing.T) {
+	module, projectID, path := newTestModule(t)
+	ctx := context.Background()
+	runRoot := filepath.Join(filepath.Dir(module.env.AutoResearchRoot), "runs")
+	module.env.Runs = runsvc.New(module.env.DB, module.env.Q, events.NewEventBus(module.env.Q), runRoot)
+	runID, err := module.env.Runs.Create(ctx, "autoresearch", "autoresearch-factory", map[string]any{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := module.env.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.env.Runs.AcquireLeases(ctx, module.env.Q.WithTx(tx), "run", runID, []string{projectLeaseResource(projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString("after"))
+	response := httptest.NewRecorder()
+	module.UpdateAutoResearchPaperFile(response, request, uuid.MustParse(projectID), "sections/intro.tex", UpdateAutoResearchPaperFileParams{
+		IfMatch: digestBytes(before),
+	})
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoresearch.project_busy") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("paper changed while leased: %q, %v", after, err)
 	}
 }
 

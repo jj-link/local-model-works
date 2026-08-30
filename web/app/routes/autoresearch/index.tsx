@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Plus, Settings2, Sparkles } from "lucide-react";
 import {
+  qk,
   useAutoResearchIdeas,
   useAutoResearchPaperFiles,
   useAutoResearchProject,
@@ -11,7 +13,6 @@ import {
   useCreateAutoResearchRun,
   useDeployments,
   useModuleSettings,
-  useNodes,
   useSecrets,
   useUpdateAutoResearchIdea,
   useUpdateAutoResearchProject,
@@ -83,7 +84,7 @@ function projectLabel(project: { id: string; name: string }): string {
 
 export default function AutoResearchRoute() {
   const projects = useAutoResearchProjects();
-  const nodes = useNodes();
+  const queryClient = useQueryClient();
   const deployments = useDeployments();
   const moduleSettings = useModuleSettings("autoresearch");
   const secrets = useSecrets();
@@ -128,10 +129,21 @@ export default function AutoResearchRoute() {
     else if (project.data?.status === "paper_editing" || project.data?.status === "completed") setTab("paper");
   }, [project.data?.status]);
 
+  useEffect(() => {
+    if (!projectId || !latestRun || !TERMINAL.has(latestRun.state)) return;
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.autoResearchProjects }),
+      queryClient.invalidateQueries({ queryKey: qk.autoResearchProject(projectId) }),
+      queryClient.invalidateQueries({ queryKey: qk.autoResearchIdeas(projectId) }),
+      queryClient.invalidateQueries({ queryKey: qk.autoResearchPaperFiles(projectId) }),
+    ]);
+  }, [latestRun?.finished_at, latestRun?.id, latestRun?.state, projectId, queryClient]);
+
   const runIsTerminal = !latestRun || TERMINAL.has(latestRun.state);
   const topicReadOnly = Boolean(latestRun && !TERMINAL.has(latestRun.state));
   const topicError = errorMessage(updateIdea.error ?? updateProject.error);
-  const runError = errorMessage(createRun.error ?? control.error);
+  const startError = errorMessage(createRun.error);
+  const runError = errorMessage(control.error);
   const routingError = errorMessage(updateProject.error ?? deployments.error ?? moduleSettings.error ?? secrets.error);
 
   const saveProjectConfig = (config: NonNullable<typeof project.data>["config"]) => {
@@ -265,6 +277,7 @@ export default function AutoResearchRoute() {
             {primaryLabel}
           </button>
         </div>
+          {startError ? <p className="arf-inline-error" role="alert">{startError}</p> : null}
       </section>
 
       {!projectId || !project.data ? (
@@ -339,7 +352,6 @@ export default function AutoResearchRoute() {
       <NewAutoResearchProjectDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        nodes={nodes.data ?? []}
         onCreated={(created) => {
           setProjectId(created.id);
           setTab("factory");

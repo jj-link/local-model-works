@@ -10,6 +10,23 @@ import (
 	"database/sql"
 )
 
+const clearAutoResearchIdeaSelections = `-- name: ClearAutoResearchIdeaSelections :exec
+UPDATE autoresearch_ideas
+SET selected = 0, version = version + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE project_id = ? AND selected = 1 AND id <> ?
+`
+
+type ClearAutoResearchIdeaSelectionsParams struct {
+	ProjectID string `json:"project_id"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) ClearAutoResearchIdeaSelections(ctx context.Context, arg ClearAutoResearchIdeaSelectionsParams) error {
+	_, err := q.db.ExecContext(ctx, clearAutoResearchIdeaSelections, arg.ProjectID, arg.ID)
+	return err
+}
+
 const countSelectedAutoResearchIdeas = `-- name: CountSelectedAutoResearchIdeas :one
 SELECT COUNT(*) FROM autoresearch_ideas WHERE project_id = ? AND selected = 1
 `
@@ -109,17 +126,16 @@ func (q *Queries) CreateAutoResearchMessage(ctx context.Context, arg CreateAutoR
 }
 
 const createAutoResearchProject = `-- name: CreateAutoResearchProject :exec
-INSERT INTO autoresearch_projects (id, name, status, runner_node_id, idea_prompt, config_json)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO autoresearch_projects (id, name, status, idea_prompt, config_json)
+VALUES (?, ?, ?, ?, ?)
 `
 
 type CreateAutoResearchProjectParams struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Status       string         `json:"status"`
-	RunnerNodeID sql.NullString `json:"runner_node_id"`
-	IdeaPrompt   string         `json:"idea_prompt"`
-	ConfigJson   string         `json:"config_json"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	IdeaPrompt string `json:"idea_prompt"`
+	ConfigJson string `json:"config_json"`
 }
 
 func (q *Queries) CreateAutoResearchProject(ctx context.Context, arg CreateAutoResearchProjectParams) error {
@@ -127,7 +143,6 @@ func (q *Queries) CreateAutoResearchProject(ctx context.Context, arg CreateAutoR
 		arg.ID,
 		arg.Name,
 		arg.Status,
-		arg.RunnerNodeID,
 		arg.IdeaPrompt,
 		arg.ConfigJson,
 	)
@@ -195,6 +210,16 @@ func (q *Queries) CreateAutoResearchSource(ctx context.Context, arg CreateAutoRe
 		arg.Status,
 		arg.Error,
 	)
+	return err
+}
+
+const deleteUnselectedGeneratedAutoResearchIdeas = `-- name: DeleteUnselectedGeneratedAutoResearchIdeas :exec
+DELETE FROM autoresearch_ideas
+WHERE project_id = ? AND source = 'generated' AND selected = 0
+`
+
+func (q *Queries) DeleteUnselectedGeneratedAutoResearchIdeas(ctx context.Context, projectID string) error {
+	_, err := q.db.ExecContext(ctx, deleteUnselectedGeneratedAutoResearchIdeas, projectID)
 	return err
 }
 
@@ -285,7 +310,7 @@ func (q *Queries) GetAutoResearchInvocation(ctx context.Context, id string) (Aut
 }
 
 const getAutoResearchProject = `-- name: GetAutoResearchProject :one
-SELECT id, name, status, runner_node_id, idea_prompt, config_json, version, created_at, updated_at FROM autoresearch_projects WHERE id = ?
+SELECT id, name, status, idea_prompt, config_json, version, created_at, updated_at FROM autoresearch_projects WHERE id = ?
 `
 
 func (q *Queries) GetAutoResearchProject(ctx context.Context, id string) (AutoresearchProject, error) {
@@ -295,7 +320,6 @@ func (q *Queries) GetAutoResearchProject(ctx context.Context, id string) (Autore
 		&i.ID,
 		&i.Name,
 		&i.Status,
-		&i.RunnerNodeID,
 		&i.IdeaPrompt,
 		&i.ConfigJson,
 		&i.Version,
@@ -348,6 +372,42 @@ func (q *Queries) GetAutoResearchSource(ctx context.Context, arg GetAutoResearch
 		&i.Status,
 		&i.Error,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMaxAutoResearchIdeaOrdinal = `-- name: GetMaxAutoResearchIdeaOrdinal :one
+SELECT CAST(COALESCE(MAX(ordinal), 0) AS INTEGER) FROM autoresearch_ideas WHERE project_id = ?
+`
+
+func (q *Queries) GetMaxAutoResearchIdeaOrdinal(ctx context.Context, projectID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getMaxAutoResearchIdeaOrdinal, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getSelectedAutoResearchIdea = `-- name: GetSelectedAutoResearchIdea :one
+SELECT id, project_id, ordinal, source, title, body, selected, version, created_at, updated_at FROM autoresearch_ideas
+WHERE project_id = ? AND selected = 1
+ORDER BY updated_at DESC, id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetSelectedAutoResearchIdea(ctx context.Context, projectID string) (AutoresearchIdea, error) {
+	row := q.db.QueryRowContext(ctx, getSelectedAutoResearchIdea, projectID)
+	var i AutoresearchIdea
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Ordinal,
+		&i.Source,
+		&i.Title,
+		&i.Body,
+		&i.Selected,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -469,7 +529,7 @@ func (q *Queries) ListAutoResearchMessages(ctx context.Context, projectID string
 }
 
 const listAutoResearchProjects = `-- name: ListAutoResearchProjects :many
-SELECT id, name, status, runner_node_id, idea_prompt, config_json, version, created_at, updated_at FROM autoresearch_projects ORDER BY updated_at DESC, id
+SELECT id, name, status, idea_prompt, config_json, version, created_at, updated_at FROM autoresearch_projects ORDER BY updated_at DESC, id
 `
 
 func (q *Queries) ListAutoResearchProjects(ctx context.Context) ([]AutoresearchProject, error) {
@@ -485,7 +545,6 @@ func (q *Queries) ListAutoResearchProjects(ctx context.Context) ([]AutoresearchP
 			&i.ID,
 			&i.Name,
 			&i.Status,
-			&i.RunnerNodeID,
 			&i.IdeaPrompt,
 			&i.ConfigJson,
 			&i.Version,
@@ -639,6 +698,26 @@ func (q *Queries) SelectAutoResearchIdea(ctx context.Context, arg SelectAutoRese
 	return result.RowsAffected()
 }
 
+const setAutoResearchProjectStatus = `-- name: SetAutoResearchProjectStatus :execrows
+UPDATE autoresearch_projects
+SET status = ?, version = version + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type SetAutoResearchProjectStatusParams struct {
+	Status string `json:"status"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) SetAutoResearchProjectStatus(ctx context.Context, arg SetAutoResearchProjectStatusParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setAutoResearchProjectStatus, arg.Status, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const startAutoResearchInvocation = `-- name: StartAutoResearchInvocation :execrows
 UPDATE autoresearch_invocations
 SET state = 'running', session_id = ?, started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -712,53 +791,30 @@ func (q *Queries) UpdateAutoResearchInvocationUsage(ctx context.Context, arg Upd
 
 const updateAutoResearchProject = `-- name: UpdateAutoResearchProject :execrows
 UPDATE autoresearch_projects
-SET name = ?, status = ?, runner_node_id = ?, idea_prompt = ?, config_json = ?,
+SET name = ?, status = ?, idea_prompt = ?, config_json = ?,
     version = version + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ? AND version = ?
 `
 
 type UpdateAutoResearchProjectParams struct {
-	Name         string         `json:"name"`
-	Status       string         `json:"status"`
-	RunnerNodeID sql.NullString `json:"runner_node_id"`
-	IdeaPrompt   string         `json:"idea_prompt"`
-	ConfigJson   string         `json:"config_json"`
-	ID           string         `json:"id"`
-	Version      int64          `json:"version"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	IdeaPrompt string `json:"idea_prompt"`
+	ConfigJson string `json:"config_json"`
+	ID         string `json:"id"`
+	Version    int64  `json:"version"`
 }
 
 func (q *Queries) UpdateAutoResearchProject(ctx context.Context, arg UpdateAutoResearchProjectParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateAutoResearchProject,
 		arg.Name,
 		arg.Status,
-		arg.RunnerNodeID,
 		arg.IdeaPrompt,
 		arg.ConfigJson,
 		arg.ID,
 		arg.Version,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const updateAutoResearchProjectStatus = `-- name: UpdateAutoResearchProjectStatus :execrows
-UPDATE autoresearch_projects
-SET status = ?, version = version + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE id = ? AND version = ?
-`
-
-type UpdateAutoResearchProjectStatusParams struct {
-	Status  string `json:"status"`
-	ID      string `json:"id"`
-	Version int64  `json:"version"`
-}
-
-func (q *Queries) UpdateAutoResearchProjectStatus(ctx context.Context, arg UpdateAutoResearchProjectStatusParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateAutoResearchProjectStatus, arg.Status, arg.ID, arg.Version)
 	if err != nil {
 		return 0, err
 	}

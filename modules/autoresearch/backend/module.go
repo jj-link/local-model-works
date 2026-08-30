@@ -2,8 +2,11 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -12,13 +15,65 @@ import (
 	"github.com/jj-link/local-model-works/internal/settings"
 )
 
-// Module owns AutoResearch persistence, HTTP APIs, and job orchestration.
 type Module struct {
-	env *moduleapi.Env
+	env                  *moduleapi.Env
+	projectLocks         sync.Map
+	credentialCleanupMu  sync.Mutex
+	credentialCleanupErr error
 }
 
 // New builds the module from the core service surface.
-func New(env *moduleapi.Env) moduleapi.Module { return &Module{env: env} }
+func New(env *moduleapi.Env) moduleapi.Module {
+	return &Module{env: env, credentialCleanupErr: scrubStartupCredentials(env.AutoResearchRoot)}
+}
+
+func (m *Module) ensureCredentialCleanup() error {
+	m.credentialCleanupMu.Lock()
+	defer m.credentialCleanupMu.Unlock()
+	if m.credentialCleanupErr != nil {
+		m.credentialCleanupErr = scrubStartupCredentials(m.env.AutoResearchRoot)
+	}
+	if m.credentialCleanupErr != nil {
+		return fmt.Errorf("autoresearch.credential_cleanup_failed: %w", m.credentialCleanupErr)
+	}
+	return nil
+}
+
+func (m *Module) recordCredentialCleanupFailure(err error) {
+	m.credentialCleanupMu.Lock()
+	m.credentialCleanupErr = err
+	m.credentialCleanupMu.Unlock()
+}
+
+func projectLeaseResource(projectID string) string {
+	return "autoresearch-project:" + projectID
+}
+
+func projectLeaseResources(input map[string]any) []string {
+	projectID, _ := input["project_id"].(string)
+	if projectID == "" {
+		return nil
+	}
+	return []string{projectLeaseResource(projectID)}
+}
+
+func (m *Module) lockProject(projectID string) func() {
+	value, _ := m.projectLocks.LoadOrStore(projectID, &sync.Mutex{})
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	return mutex.Unlock
+}
+
+func (m *Module) activeProjectOperation(ctx context.Context, projectID string) string {
+	if m.env.Runs == nil {
+		return ""
+	}
+	owners := m.env.Runs.ActiveOwners(ctx, projectLeaseResource(projectID))
+	if len(owners) == 0 {
+		return ""
+	}
+	return owners[0].OwnerKind + "/" + owners[0].OwnerID
+}
 
 func (m *Module) Descriptor() moduleapi.Descriptor { return descriptor }
 
@@ -36,6 +91,7 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 			Kind: "autoresearch-factory", Title: "AutoResearch factory",
 			InputSchema: factoryInputSchema, OutputSchema: runOutputSchema,
 			SecretScopesFor: selectedSecretScopes,
+			LeaseResources:  projectLeaseResources,
 			ArtifactKinds:   []string{"research-workspace", "research-paper"},
 			Executor:        m.runFactory,
 		},
@@ -43,6 +99,7 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 			Kind: "autoresearch-paper-edit", Title: "AutoResearch paper edit",
 			InputSchema: paperEditInputSchema, OutputSchema: runOutputSchema,
 			SecretScopesFor: selectedSecretScopes,
+			LeaseResources:  projectLeaseResources,
 			ArtifactKinds:   []string{"research-workspace", "research-paper"},
 			Executor:        m.runPaperEdit,
 		},
@@ -50,6 +107,7 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 			Kind: "autoresearch-paper-compile", Title: "AutoResearch paper compile",
 			InputSchema: paperCompileInputSchema, OutputSchema: runOutputSchema,
 			SecretScopesFor: selectedSecretScopes,
+			LeaseResources:  projectLeaseResources,
 			ArtifactKinds:   []string{"research-paper"},
 			Executor:        m.runPaperCompile,
 		},

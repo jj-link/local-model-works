@@ -156,7 +156,12 @@ func (m *Module) importGeneratedCandidates(ctx context.Context, project db.Autor
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM autoresearch_ideas WHERE project_id=? AND source='generated' AND selected=0`, project.ID); err != nil {
+	qtx := db.New(tx)
+	if err := qtx.DeleteUnselectedGeneratedAutoResearchIdeas(ctx, project.ID); err != nil {
+		return nil, err
+	}
+	maxOrdinal, err := qtx.GetMaxAutoResearchIdeaOrdinal(ctx, project.ID)
+	if err != nil {
 		return nil, err
 	}
 	for index, candidate := range candidates {
@@ -164,15 +169,19 @@ func (m *Module) importGeneratedCandidates(ctx context.Context, project db.Autor
 		if err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO autoresearch_ideas
-			(id, project_id, ordinal, source, title, body, selected) VALUES (?, ?, ?, 'generated', ?, ?, 0)`,
-			ideaID, project.ID, index+1, candidate.Title, candidate.Body); err != nil {
+		if err := qtx.CreateAutoResearchIdea(ctx, db.CreateAutoResearchIdeaParams{
+			ID: ideaID, ProjectID: project.ID, Ordinal: maxOrdinal + int64(index) + 1,
+			Source: "generated", Title: candidate.Title, Body: candidate.Body, Selected: 0,
+		}); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE autoresearch_projects SET status='awaiting_idea_selection',
-		version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, project.ID); err != nil {
+	if rows, err := qtx.SetAutoResearchProjectStatus(ctx, db.SetAutoResearchProjectStatusParams{
+		Status: "awaiting_idea_selection", ID: project.ID,
+	}); err != nil {
 		return nil, err
+	} else if rows != 1 {
+		return nil, sql.ErrNoRows
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -233,7 +242,7 @@ func (m *Module) publishLifecycleDecision(runID, projectID, gate, message string
 
 func automaticChildInput(input map[string]any) map[string]any {
 	child := map[string]any{}
-	for _, key := range []string{"provider_overrides", "ssh_secret_name", "release"} {
+	for _, key := range []string{"provider_config", "provider_overrides", "ssh_secret_name", "release"} {
 		if value, ok := input[key]; ok {
 			child[key] = value
 		}
@@ -242,7 +251,7 @@ func automaticChildInput(input map[string]any) map[string]any {
 }
 
 func (m *Module) submitLifecycleFactory(ctx context.Context, project db.AutoresearchProject, parent *jobs.Context, factory string, input map[string]any) error {
-	_, err := m.submitFactoryRunContext(ctx, project, factory, input, parent.RunID)
+	_, err := m.submitFactoryRunContextMode(ctx, project, factory, input, parent.RunID, true)
 	return err
 }
 
@@ -300,7 +309,7 @@ func latestExperimentRequest(paperRoot string) (string, string, error) {
 }
 
 func (m *Module) setProjectStatus(ctx context.Context, projectID, status string) error {
-	rows, err := m.env.Q.UpdateAutoResearchProjectStatus(ctx, db.UpdateAutoResearchProjectStatusParams{Status: status, ID: projectID})
+	rows, err := m.env.Q.SetAutoResearchProjectStatus(ctx, db.SetAutoResearchProjectStatusParams{Status: status, ID: projectID})
 	if err != nil {
 		return err
 	}
@@ -308,6 +317,12 @@ func (m *Module) setProjectStatus(ctx context.Context, projectID, status string)
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (m *Module) setProjectFailedBackground(projectID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = m.setProjectStatus(ctx, projectID, "failed")
 }
 
 func (m *Module) continueFactoryLifecycle(ctx context.Context, job *jobs.Context, project db.AutoresearchProject, factory string) error {
@@ -366,12 +381,26 @@ func (m *Module) continueFactoryLifecycle(ctx context.Context, job *jobs.Context
 }
 
 func (m *Module) runFactoryLifecycle(ctx context.Context, job *jobs.Context, factory string) (map[string]any, error) {
-	output, err := m.executeWorker(ctx, job, factory)
+	projectID, _ := job.Input["project_id"].(string)
+	project, err := m.env.Q.GetAutoResearchProject(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	projectID, _ := job.Input["project_id"].(string)
-	project, err := m.env.Q.GetAutoResearchProject(ctx, projectID)
+	selectedCount, err := m.env.Q.CountSelectedAutoResearchIdeas(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	if selectedCount != 1 {
+		return nil, errors.New("autoresearch.idea_selection_required")
+	}
+	selected, err := m.env.Q.GetSelectedAutoResearchIdea(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := syncSelectedIdeaArtifacts(m.projectRoot(project.ID), selected); err != nil {
+		return nil, err
+	}
+	output, err := m.executeWorker(ctx, job, factory)
 	if err != nil {
 		return nil, err
 	}
@@ -383,13 +412,6 @@ func (m *Module) runFactoryLifecycle(ctx context.Context, job *jobs.Context, fac
 			}
 			output["changed_paths"] = changed
 			return output, nil
-		}
-		selected, err := m.env.Q.CountSelectedAutoResearchIdeas(ctx, project.ID)
-		if err != nil {
-			return nil, err
-		}
-		if selected == 0 {
-			return nil, errors.New("autoresearch.idea_selection_required")
 		}
 	}
 	if err := m.continueFactoryLifecycle(ctx, job, project, factory); err != nil {

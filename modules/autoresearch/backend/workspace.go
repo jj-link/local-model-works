@@ -127,25 +127,63 @@ func commitArtifacts(artifacts, message string, paths ...string) error {
 	return err
 }
 
-func adoptIdea(root string, idea db.AutoresearchIdea) error {
+func artifactBaseline(artifacts string) (string, error) {
+	if err := requireCleanArtifacts(artifacts); err != nil {
+		return "", err
+	}
+	output, err := runGit(artifacts, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func restoreArtifactBaseline(artifacts, baseline string, cleanPaths ...string) error {
+	if _, err := runGit(artifacts, "reset", "--hard", baseline); err != nil {
+		return err
+	}
+	if len(cleanPaths) > 0 {
+		if _, err := runGit(artifacts, append([]string{"clean", "-fd", "--"}, cleanPaths...)...); err != nil {
+			return err
+		}
+	}
+	_, err := runGit(artifacts, "push", "--force", "origin", baseline+":main")
+	return err
+}
+
+func syncSelectedIdeaArtifacts(root string, idea db.AutoresearchIdea) error {
 	artifacts := filepath.Join(root, "artifacts")
 	if err := requireCleanArtifacts(artifacts); err != nil {
 		return err
 	}
+	ideasRoot := filepath.Join(artifacts, "ideas")
+	entries, err := os.ReadDir(ideasRoot)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".v1.md") {
+			if err := os.Remove(filepath.Join(ideasRoot, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
 	slug := artifactSlug(idea.Title, idea.ID)
-	ideaPath := filepath.Join(artifacts, "ideas", slug+".v1.md")
+	ideaPath := filepath.Join(ideasRoot, slug+".v1.md")
 	contents := fmt.Sprintf("# %s\n\n%s\n", idea.Title, strings.TrimSpace(idea.Body))
 	if err := os.WriteFile(ideaPath, []byte(contents), 0o600); err != nil {
 		return err
 	}
-	indexPath := filepath.Join(artifacts, "ideas", "ideas.xml")
-	index := "<ideas>\n"
-	if existing, err := os.ReadFile(indexPath); err == nil {
-		index = strings.TrimSuffix(string(existing), "</ideas>\n")
-	}
-	index += fmt.Sprintf("  <idea slug=%q topic=%q current_version=\"1\" score=\"none\" />\n</ideas>\n", slug, "project")
-	if err := os.WriteFile(indexPath, []byte(index), 0o600); err != nil {
+	index := fmt.Sprintf("<ideas>\n  <idea slug=%q topic=%q current_version=\"1\" score=\"none\" />\n</ideas>\n", slug, "project")
+	if err := os.WriteFile(filepath.Join(ideasRoot, "ideas.xml"), []byte(index), 0o600); err != nil {
 		return err
 	}
-	return commitArtifacts(artifacts, "idea: adopt "+slug, filepath.ToSlash(filepath.Join("ideas", slug+".v1.md")), "ideas/ideas.xml")
+	status, err := runGit(artifacts, "status", "--porcelain", "--", "ideas")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(status)) == "" {
+		return nil
+	}
+	return commitArtifacts(artifacts, "idea: select "+slug, "ideas")
 }

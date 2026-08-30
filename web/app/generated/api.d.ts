@@ -1245,16 +1245,6 @@ export interface components {
             };
             message: string;
         };
-        AutoResearchPaperChatResponse: {
-            after_digests: {
-                [key: string]: string;
-            };
-            before_digests: {
-                [key: string]: string;
-            };
-            changed_paths: string[];
-            run: components["schemas"]["Run"];
-        };
         AutoResearchPaperFile: {
             path: string;
             sha256: string;
@@ -1268,8 +1258,6 @@ export interface components {
             id: string;
             idea_prompt: string;
             name: string;
-            /** Format: uuid */
-            runner_node_id?: string | null;
             status: components["schemas"]["AutoResearchProjectStatus"];
             /** Format: date-time */
             updated_at: string;
@@ -1300,15 +1288,11 @@ export interface components {
             config?: components["schemas"]["AutoResearchProjectConfig"];
             idea_prompt: string;
             name?: string;
-            /** Format: uuid */
-            runner_node_id?: string;
         };
         AutoResearchProjectPatch: {
             config?: components["schemas"]["AutoResearchProjectConfig"];
             idea_prompt?: string;
             name?: string;
-            /** Format: uuid */
-            runner_node_id?: string;
         };
         /** @enum {string} */
         AutoResearchProjectStatus: "idea_intake" | "awaiting_idea_selection" | "running" | "paper_editing" | "completed" | "failed";
@@ -2409,13 +2393,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Completed writer edit and changed-file digest set */
-            200: {
+            /** @description Queued writer edit run */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AutoResearchPaperChatResponse"];
+                    "application/json": components["schemas"]["Run"];
                 };
             };
             409: components["responses"]["Conflict"];

@@ -296,7 +296,7 @@ test("AutoResearch Factory preserves topology and stream in the empty state", as
   await page.getByLabel("Research question").fill("Can sparse latent world models improve long-horizon planning?");
   await expect(page.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
   await expect(page.getByLabel("Project name")).toHaveValue("");
-  await expect(page.getByLabel("Runner node")).toBeVisible();
+  await expect(page.getByLabel("Runner node")).toHaveCount(0);
 });
 
 test("AutoResearch Factory renders real desktop fidelity and run controls", async ({ page }) => {

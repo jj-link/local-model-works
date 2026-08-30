@@ -54,6 +54,8 @@ function fileLanguage(path: string) {
   return [];
 }
 
+const TERMINAL_RUN_STATES = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
+
 export function PaperStudio({ projectId, files, runs }: { projectId: string; files: AutoResearchPaperFile[]; runs: Run[] }) {
   const [activePath, setActivePath] = useState("");
   const [draft, setDraft] = useState("");
@@ -84,7 +86,8 @@ export function PaperStudio({ projectId, files, runs }: { projectId: string; fil
   const history = useMemo(() => extractSection(stateText, "Revision history"), [stateText]);
   const latestPaperRun = runs.find((run) => run.kind === "autoresearch-paper-compile" || run.kind === "autoresearch-factory");
   const pdfKey = `${latestPaperRun?.id ?? "none"}-${latestPaperRun?.finished_at ?? "pending"}`;
-  const pending = save.isPending || compile.isPending || writer.isPending || release.isPending || continueRounds.isPending;
+  const runActive = runs.some((run) => !TERMINAL_RUN_STATES.has(run.state));
+  const pending = runActive || save.isPending || compile.isPending || writer.isPending || release.isPending || continueRounds.isPending;
   const conflict = save.error instanceof ApiError && save.error.code === "paper.edit_conflict";
   const grouped = findings.reduce<Record<string, Finding[]>>((result, finding) => {
     (result[finding.severity] ??= []).push(finding);
@@ -110,7 +113,7 @@ export function PaperStudio({ projectId, files, runs }: { projectId: string; fil
             </nav>
             <div className="min-w-0 bg-panel">
               {current.isPending ? <p className="p-4 font-mono text-xs text-muted">loading source…</p> : current.isError ? <p className="p-4 font-mono text-xs text-fault">{current.error.message}</p> : (
-                <CodeMirror value={draft} height="620px" theme="light" extensions={fileLanguage(activePath)} onChange={setDraft} basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true }} aria-label={`Editor for ${activePath}`} />
+                <CodeMirror value={draft} height="620px" theme="light" extensions={fileLanguage(activePath)} editable={!pending} onChange={setDraft} basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true }} aria-label={`Editor for ${activePath}`} />
               )}
             </div>
           </div>
@@ -148,9 +151,9 @@ export function PaperStudio({ projectId, files, runs }: { projectId: string; fil
         <div className="lmw-panel overflow-hidden">
           <header className="lmw-panel-head"><h2 className="lmw-label inline-flex items-center gap-1"><Bot className="h-3.5 w-3.5" aria-hidden /> writer chat</h2></header>
           <div className="p-3">
-            <textarea value={chat} onChange={(event) => setChat(event.target.value)} className="min-h-28 w-full resize-y rounded border border-hairline bg-background px-3 py-2 font-mono text-xs" placeholder="Ask the paper writer for a scoped edit to the open source…" />
+            <textarea value={chat} disabled={pending} onChange={(event) => setChat(event.target.value)} className="min-h-28 w-full resize-y rounded border border-hairline bg-background px-3 py-2 font-mono text-xs" placeholder="Ask the paper writer for a scoped edit to the open source…" />
             <Button size="sm" className="mt-2 w-full" disabled={pending || chat.trim() === "" || !current.data} onClick={() => current.data && writer.mutate({ message: chat, base_etags: { [activePath]: current.data.etag } }, { onSuccess: () => setChat("") })}><Send aria-hidden /> apply writer edit</Button>
-            {writer.data ? <p className="mt-2 font-mono text-[10px] text-ok">changed {writer.data.changed_paths.length} file{writer.data.changed_paths.length === 1 ? "" : "s"}</p> : null}
+            {writer.data ? <p className="mt-2 font-mono text-[10px] text-ok">Writer edit queued</p> : null}
             {(writer.error || compile.error || release.error || continueRounds.error) ? <p className="mt-2 font-mono text-[10px] text-fault">{(writer.error ?? compile.error ?? release.error ?? continueRounds.error)?.message}</p> : null}
           </div>
         </div>

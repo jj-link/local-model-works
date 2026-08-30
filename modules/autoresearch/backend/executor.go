@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/runtime"
 	"github.com/jj-link/local-model-works/internal/workload"
@@ -69,7 +71,18 @@ func (m *Module) loadWorkerSettings(ctx context.Context) (workerSettings, error)
 		return workerSettings{}, errors.New("autoresearch.runner_not_configured")
 	}
 	if !strings.Contains(settings.WorkerImage, "@sha256:") {
-		return workerSettings{}, errors.New("autoresearch.worker_image_unpinned")
+		return workerSettings{}, errors.New("autoresearch.runner_not_configured: worker image must be pinned by digest")
+	}
+	return settings, nil
+}
+
+func (m *Module) requireWorkerSettings(ctx context.Context) (workerSettings, error) {
+	settings, err := m.loadWorkerSettings(ctx)
+	if err != nil {
+		return workerSettings{}, err
+	}
+	if m.env.Nodes == nil || !m.env.Nodes.Online(settings.RunnerNodeID) {
+		return workerSettings{}, errors.New("autoresearch.runner_offline")
 	}
 	return settings, nil
 }
@@ -109,17 +122,49 @@ func mergeProjectDefaults(config map[string]any, settings workerSettings) {
 	}
 }
 
-func (m *Module) projectConfigWithDefaults(ctx context.Context, raw string) map[string]any {
-	config := configSnapshot(raw)
-	values, _, err := m.env.Settings.Get(ctx, descriptor.ID)
+func mapFromJSONValue(value any) (map[string]any, error) {
+	encoded, err := json.Marshal(value)
 	if err != nil {
-		return config
+		return nil, err
 	}
-	settings := workerSettings{}
-	settings.DefaultRoles, _ = values["default_role_assignments"].(map[string]any)
-	settings.DefaultAdvisors, _ = values["default_advisor_assignments"].(map[string]any)
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		decoded = map[string]any{}
+	}
+	return decoded, nil
+}
+
+func effectiveProviderSnapshot(raw string, settings workerSettings, overrides any) (map[string]any, error) {
+	config := configSnapshot(raw)
 	mergeProjectDefaults(config, settings)
-	return config
+	if overrides == nil {
+		return config, nil
+	}
+	overrideMap, err := mapFromJSONValue(overrides)
+	if err != nil {
+		return nil, err
+	}
+	roles, _ := config["roles"].(map[string]any)
+	if roles == nil {
+		roles = map[string]any{}
+		config["roles"] = roles
+	}
+	for role, provider := range overrideMap {
+		roles[role] = provider
+	}
+	return config, nil
+}
+
+func providerSnapshotFromInput(input map[string]any) (map[string]any, bool, error) {
+	raw, ok := input["provider_config"]
+	if !ok {
+		return nil, false, nil
+	}
+	config, err := mapFromJSONValue(raw)
+	return config, true, err
 }
 
 func imageParts(reference string) (string, string, error) {
@@ -179,20 +224,83 @@ func projectWorkerUser(root string) (string, error) {
 	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
+func scrubRunCredentials(projectRoot, runID string) error {
+	if _, err := uuid.Parse(runID); err != nil {
+		return fmt.Errorf("autoresearch.credential_cleanup_failed: invalid run id: %w", err)
+	}
+	scratch := filepath.Join(projectRoot, "scratch", runID)
+	if err := os.RemoveAll(filepath.Join(scratch, "credentials")); err != nil {
+		return err
+	}
+	legacyKey := filepath.Join(scratch, "ssh", "id_key")
+	if err := os.Remove(legacyKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func scrubStartupCredentials(root string) error {
+	if root == "" {
+		return nil
+	}
+	projects, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, project := range projects {
+		if !project.IsDir() {
+			continue
+		}
+		if _, err := uuid.Parse(project.Name()); err != nil {
+			continue
+		}
+		projectRoot := filepath.Join(root, project.Name())
+		runs, err := os.ReadDir(filepath.Join(projectRoot, "scratch"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			if !run.IsDir() {
+				continue
+			}
+			if _, err := uuid.Parse(run.Name()); err != nil {
+				continue
+			}
+			if err := scrubRunCredentials(projectRoot, run.Name()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func writeCredentialFiles(root string, secrets map[string]string) (string, error) {
 	if len(secrets) == 0 {
 		return "", nil
+	}
+	filenames := make(map[string]string, len(secrets))
+	for name := range secrets {
+		filename := secretFilename.ReplaceAllString(name, "_")
+		if filename == "" {
+			return "", errors.New("autoresearch.secret_name_invalid")
+		}
+		if previous, exists := filenames[filename]; exists && previous != name {
+			return "", fmt.Errorf("autoresearch.secret_name_collision: %q and %q", previous, name)
+		}
+		filenames[filename] = name
 	}
 	credentials := filepath.Join(root, "credentials")
 	if err := os.MkdirAll(credentials, 0o700); err != nil {
 		return "", err
 	}
-	for name, value := range secrets {
-		filename := secretFilename.ReplaceAllString(name, "_")
-		if filename == "" {
-			return "", errors.New("autoresearch.secret_name_invalid")
-		}
-		if err := os.WriteFile(filepath.Join(credentials, filename), []byte(value), 0o600); err != nil {
+	for filename, name := range filenames {
+		if err := os.WriteFile(filepath.Join(credentials, filename), []byte(secrets[name]), 0o600); err != nil {
 			return "", err
 		}
 	}
@@ -277,18 +385,11 @@ func factoryCommand(job *jobs.Context, factory string) []string {
 	}
 }
 
-func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory string) (map[string]any, error) {
+func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory string) (output map[string]any, runErr error) {
 	projectID, _ := job.Input["project_id"].(string)
-	project, err := m.env.Q.GetAutoResearchProject(ctx, projectID)
+	settings, err := m.requireWorkerSettings(ctx)
 	if err != nil {
 		return nil, err
-	}
-	settings, err := m.loadWorkerSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !project.RunnerNodeID.Valid || project.RunnerNodeID.String != settings.RunnerNodeID || !m.env.Nodes.Online(settings.RunnerNodeID) {
-		return nil, errors.New("autoresearch.runner_not_colocated")
 	}
 	projectRoot := m.projectRoot(projectID)
 	if err := initializeProjectRoot(projectRoot); err != nil {
@@ -299,6 +400,17 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 		return nil, err
 	}
 	scratch := filepath.Join(projectRoot, "scratch", job.RunID)
+	if err := scrubRunCredentials(projectRoot, job.RunID); err != nil {
+		m.recordCredentialCleanupFailure(err)
+		return nil, fmt.Errorf("autoresearch.credential_cleanup_failed: %w", err)
+	}
+	defer func() {
+		if err := scrubRunCredentials(projectRoot, job.RunID); err != nil {
+			m.recordCredentialCleanupFailure(err)
+			output = nil
+			runErr = fmt.Errorf("autoresearch.credential_cleanup_failed: %w", err)
+		}
+	}()
 	for _, directory := range []string{"tmp", "home/.claude", "home/.codex"} {
 		if err := os.MkdirAll(filepath.Join(scratch, filepath.FromSlash(directory)), 0o700); err != nil {
 			return nil, err
@@ -308,11 +420,14 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	if err != nil {
 		return nil, err
 	}
-	if credentials != "" {
-		defer os.RemoveAll(credentials)
+
+	projectConfig, configured, err := providerSnapshotFromInput(job.Input)
+	if err != nil {
+		return nil, err
 	}
-	projectConfig := configSnapshot(project.ConfigJson)
-	mergeProjectDefaults(projectConfig, settings)
+	if !configured {
+		return nil, errors.New("autoresearch.provider_config_missing")
+	}
 	if err := m.resolveProjectProviders(ctx, projectConfig); err != nil {
 		return nil, err
 	}
@@ -386,7 +501,7 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 		return nil, err
 	}
 	removed = true
-	output := map[string]any{"project_id": projectID, "changed_paths": []string{}}
+	output = map[string]any{"project_id": projectID, "changed_paths": []string{}}
 	paper := filepath.Join(m.paperRoot(projectID), "build", "manuscript.pdf")
 	if _, err := os.Stat(paper); err == nil {
 		output["paper_path"] = "workspace/project/paper/build/manuscript.pdf"
@@ -394,7 +509,12 @@ func (m *Module) executeWorker(ctx context.Context, job *jobs.Context, factory s
 	return output, nil
 }
 
-func (m *Module) runFactory(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+func (m *Module) runFactory(ctx context.Context, job *jobs.Context) (output map[string]any, err error) {
 	factory, _ := job.Input["factory"].(string)
-	return m.runFactoryLifecycle(ctx, job, factory)
+	output, err = m.runFactoryLifecycle(ctx, job, factory)
+	if err != nil {
+		projectID, _ := job.Input["project_id"].(string)
+		m.setProjectFailedBackground(projectID)
+	}
+	return output, err
 }

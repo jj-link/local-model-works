@@ -675,12 +675,7 @@ export function useChatEditAutoResearchPaper(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: api.AutoResearchPaperChatRequest) => api.chatEditAutoResearchPaper(projectId, body),
-    onSuccess: (response) => {
-      for (const path of response.changed_paths) {
-        void qc.invalidateQueries({ queryKey: qk.autoResearchPaperFile(projectId, path) });
-      }
-      invalidates(qk.autoResearchPaperFiles(projectId), qk.autoResearchRuns(projectId))(qc);
-    },
+    onSuccess: () => invalidates(qk.autoResearchRuns(projectId))(qc),
   });
 }
 

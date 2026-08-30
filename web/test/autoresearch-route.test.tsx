@@ -1,11 +1,12 @@
 /// <reference types="@testing-library/jest-dom" />
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
 import AutoResearchRoute from "~/routes/autoresearch";
+import { qk } from "~/lib/queries";
 import { server } from "../msw/server";
 
 const projectId = "00000000-0000-4000-8000-000000000099";
@@ -58,11 +59,12 @@ const idea = {
 
 function renderRoute() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/autoresearch"]}><AutoResearchRoute /></MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...rendered, client };
 }
 
 function installProject(state: "running" | "paused" | "succeeded" = "running") {
@@ -143,6 +145,7 @@ describe("AutoResearchRoute", () => {
     expect(screen.getByLabelText("Research question")).toBeEnabled();
     expect(screen.getByLabelText("Project name")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    expect(screen.queryByLabelText("Runner node")).not.toBeInTheDocument();
   });
 
   it("creates an unnamed project from a required research question", async () => {
@@ -178,6 +181,7 @@ describe("AutoResearchRoute", () => {
   });
 
   it("shows real active-run summary, topic, model, usage, and pause control", async () => {
+    const user = userEvent.setup();
     installProject("running");
     renderRoute();
     expect(await screen.findByDisplayValue(idea.title)).toBeVisible();
@@ -186,6 +190,8 @@ describe("AutoResearchRoute", () => {
     expect(screen.getByText("1,250")).toBeVisible();
     expect(screen.getByRole("button", { name: "Pause run" })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Experiment coder — real-coder-model — generating/i })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Paper studio" }));
+    expect(screen.getByRole("button", { name: /compile/i })).toBeDisabled();
   });
 
   it("shows resume for paused runs", async () => {
@@ -311,5 +317,67 @@ describe("AutoResearchRoute", () => {
     expect(await screen.findByText("REV-001")).toBeVisible();
     expect(screen.getByText("Tighten the limitation.")).toBeVisible();
     expect(screen.getByRole("button", { name: /release/i })).toBeEnabled();
+  });
+
+  it("queues writer chat immediately and reports the queued state", async () => {
+    let requestBody: unknown;
+    server.use(http.post("*/api/v1/autoresearch/projects/:projectId/paper/chat", async ({ request }) => {
+      requestBody = await request.json();
+      return HttpResponse.json({
+        id: "writer-run",
+        module: "autoresearch",
+        kind: "autoresearch-paper-edit",
+        state: "queued",
+        resources: { nodes: [], accelerators: [], fabrics: [] },
+        input: {},
+        created_at: now,
+      }, { status: 202 });
+    }));
+    const user = userEvent.setup();
+    renderRoute();
+    await user.selectOptions(await screen.findByLabelText("Active project"), "00000000-0000-4000-8000-000000000005");
+    await user.click(await screen.findByRole("button", { name: "Paper studio" }));
+    const message = "Tighten the limitation paragraph.";
+    await user.type(await screen.findByPlaceholderText(/Ask the paper writer/i), message);
+    await user.click(screen.getByRole("button", { name: /apply writer edit/i }));
+    await waitFor(() => expect(requestBody).toMatchObject({ message }));
+    expect(await screen.findByText("Writer edit queued")).toBeVisible();
+    expect(screen.getByPlaceholderText(/Ask the paper writer/i)).toHaveValue("");
+  });
+
+  it("refreshes project, ideas, and paper queries when the latest run becomes terminal", async () => {
+    const activeRun = installProject("running");
+    const calls = { projects: 0, project: 0, ideas: 0, paper: 0 };
+    server.use(
+      http.get("*/api/v1/autoresearch/projects", () => {
+        calls.projects += 1;
+        return HttpResponse.json([project]);
+      }),
+      http.get("*/api/v1/autoresearch/projects/:projectId", () => {
+        calls.project += 1;
+        return HttpResponse.json(project);
+      }),
+      http.get("*/api/v1/autoresearch/projects/:projectId/ideas", () => {
+        calls.ideas += 1;
+        return HttpResponse.json([idea]);
+      }),
+      http.get("*/api/v1/autoresearch/projects/:projectId/paper/files", () => {
+        calls.paper += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+    const { client } = renderRoute();
+    await screen.findByRole("button", { name: "Pause run" });
+    await waitFor(() => expect(Object.values(calls).every((count) => count > 0)).toBe(true));
+    const before = { ...calls };
+    act(() => {
+      client.setQueryData(qk.autoResearchRuns(projectId), [{ ...activeRun, state: "succeeded", finished_at: now }]);
+    });
+    await waitFor(() => {
+      expect(calls.projects).toBeGreaterThan(before.projects);
+      expect(calls.project).toBeGreaterThan(before.project);
+      expect(calls.ideas).toBeGreaterThan(before.ideas);
+      expect(calls.paper).toBeGreaterThan(before.paper);
+    });
   });
 });

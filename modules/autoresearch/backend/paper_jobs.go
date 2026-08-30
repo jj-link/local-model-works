@@ -141,8 +141,13 @@ func (m *Module) validatePaperBaseETags(projectID string, expected map[string]st
 	return nil
 }
 
-func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (output map[string]any, runErr error) {
 	projectID, _ := job.Input["project_id"].(string)
+	defer func() {
+		if runErr != nil {
+			m.setProjectFailedBackground(projectID)
+		}
+	}()
 	baseETags, ok := stringMap(job.Input["base_etags"])
 	if !ok {
 		return nil, errors.New("paper.edit_conflict: base_etags invalid")
@@ -164,7 +169,7 @@ func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (map[strin
 		return nil, err
 	}
 
-	output, err := m.executeWorker(ctx, job, "paper-edit")
+	output, err = m.executeWorker(ctx, job, "paper-edit")
 	if err != nil {
 		restorePaperArtifacts(artifacts, baseline)
 		return nil, err
@@ -228,8 +233,13 @@ func (m *Module) runPaperEdit(ctx context.Context, job *jobs.Context) (map[strin
 	return output, nil
 }
 
-func (m *Module) runPaperCompile(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+func (m *Module) runPaperCompile(ctx context.Context, job *jobs.Context) (output map[string]any, runErr error) {
 	projectID, _ := job.Input["project_id"].(string)
+	defer func() {
+		if runErr != nil {
+			m.setProjectFailedBackground(projectID)
+		}
+	}()
 	artifacts := filepath.Join(m.projectRoot(projectID), "artifacts")
 	if err := requireCleanArtifacts(artifacts); err != nil {
 		return nil, err
@@ -239,7 +249,7 @@ func (m *Module) runPaperCompile(ctx context.Context, job *jobs.Context) (map[st
 		return nil, err
 	}
 	baseline := strings.TrimSpace(string(baselineRaw))
-	output, err := m.executeWorker(ctx, job, "paper-compile")
+	output, err = m.executeWorker(ctx, job, "paper-compile")
 	if err != nil {
 		restorePaperArtifacts(artifacts, baseline)
 		return nil, err

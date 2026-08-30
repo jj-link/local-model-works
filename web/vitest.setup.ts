@@ -24,3 +24,13 @@ if (typeof window !== "undefined" && !window.matchMedia) {
       dispatchEvent: () => false,
     }) as MediaQueryList;
 }
+
+// jsdom omits Range geometry used by CodeMirror's viewport measurement.
+if (typeof Range !== "undefined") {
+  Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+  Range.prototype.getClientRects = () => ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: function* () {},
+  }) as DOMRectList;
+}
