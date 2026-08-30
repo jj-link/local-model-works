@@ -29,6 +29,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/runtime"
+	telemetrystore "github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -538,6 +539,55 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 	for i := range candidates {
 		nodeByID[candidates[i].nodeID] = &candidates[i]
 	}
+	payloads := map[string]*telemetrystore.NodePayload{}
+	payloadKnown := map[string]bool{}
+	loadPayload := func(nodeID string) (*telemetrystore.NodePayload, bool) {
+		if payload, seen := payloads[nodeID]; seen || payloadKnown[nodeID] {
+			return payload, payloadKnown[nodeID]
+		}
+		payload, known := s.latestNodePayload(ctx, nodeID)
+		payloads[nodeID] = payload
+		payloadKnown[nodeID] = known
+		return payload, known
+	}
+	previewedNodes := map[string]bool{}
+	for _, placement := range placements {
+		if previewedNodes[placement.NodeID] {
+			continue
+		}
+		previewedNodes[placement.NodeID] = true
+		plan.Images = append(plan.Images, ImagePreview{
+			NodeID: placement.NodeID, NodeName: placement.NodeName,
+			Reference: w.Image.Reference, Digest: w.Image.Digest, Action: "verify-or-pull",
+		})
+		if w.HostPreparation == nil {
+			continue
+		}
+		host := HostPreparationPreview{
+			NodeID: placement.NodeID, NodeName: placement.NodeName,
+			RequireSwap:      w.HostPreparation.RequireSwap,
+			SwappinessTarget: w.HostPreparation.Swappiness,
+			DropPageCache:    w.HostPreparation.DropPageCache,
+			HelperImage:      runtime.HostPreparationImage,
+		}
+		payload, known := loadPayload(placement.NodeID)
+		if !known || payload.Memory == nil {
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+				"host.telemetry_unavailable",
+				fmt.Sprintf("node %s has no fresh memory telemetry; wait for its agent before launching", placement.NodeName),
+			).Res("node:"+placement.NodeID))
+		} else {
+			host.SwapTotalBytes = int64(payload.Memory.SwapTotalBytes)
+			host.SwappinessCurrent = payload.Memory.Swappiness
+			if host.RequireSwap && host.SwapTotalBytes == 0 {
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+					"host.swap_disabled",
+					fmt.Sprintf("node %s has swap disabled; this recipe requires enabled swap with vm.swappiness=0", placement.NodeName),
+				).Res("node:"+placement.NodeID))
+			}
+		}
+		plan.HostPreparation = append(plan.HostPreparation, host)
+	}
 	if len(w.Ports) > 0 {
 		type portKey struct {
 			addr string
@@ -655,6 +705,7 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 	}
 
 	// Artifacts.
+	requiredByNode := map[string]int64{}
 	for _, a := range m.Artifacts {
 		src, srcErr := a.EffectiveSource(req.Variants[a.Name])
 		if srcErr != nil {
@@ -672,37 +723,41 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		}
 		art, aerr := s.q.GetArtifactByIdentity(ctx, identity)
 		if aerr != nil {
-			// Unknown artifact: nothing in the fleet holds it; the library
-			// must install it first. Blocking.
+			for _, placement := range placements {
+				requiredByNode[placement.NodeID] += a.SizeBytes
+			}
 			plan.Transfers = append(plan.Transfers, TransferPreview{
-				ArtifactID: identity,
-				Identity:   identity,
-				SourceNode: "origin",
-				DestNode:   "all",
-				DestPath:   dest,
+				ArtifactID: identity, Identity: identity, SourceNode: "origin",
+				DestNode: "all", DestPath: dest, Bytes: a.SizeBytes,
 			})
 			plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
 			plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
 				"no node holds "+identity+"; install it via the library first"))
 			continue
 		}
-		var missing []string
-		for _, pl := range placements {
-			placed, perr := s.artifactPlaced(ctx, art.ID, pl.NodeID)
+		size := artifactSize(art.Metadata)
+		if size == 0 {
+			size = a.SizeBytes
+		}
+		var missing []Placement
+		for _, placement := range placements {
+			placed, perr := s.artifactPlaced(ctx, art.ID, placement.NodeID)
 			if perr != nil {
 				return nil, perr
 			}
 			if !placed {
-				missing = append(missing, pl.NodeName)
+				missing = append(missing, placement)
+				requiredByNode[placement.NodeID] += size
 			}
 		}
 		if len(missing) == 0 {
 			continue
 		}
 		srcName := s.transferSourceName(ctx, art.ID)
+		parsed, parseErr := artifactidentity.Parse(art.Identity)
+		modelArtifact := parseErr == nil && parsed.Kind == "model"
 		if srcName == "" {
-			parsed, parseErr := artifactidentity.Parse(art.Identity)
-			if parseErr == nil && parsed.Kind == "model" {
+			if modelArtifact {
 				srcName = "origin"
 				plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
 			} else {
@@ -710,11 +765,53 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 					"no node holds a valid copy of "+art.Identity))
 			}
 		}
-		for _, name := range missing {
+		resumeRiskAdded := srcName == "origin"
+		for _, placement := range missing {
+			placementSource := srcName
+			if modelArtifact && s.hasPlacementRecord(ctx, art.ID, placement.NodeID) {
+				placementSource = "origin"
+				if !resumeRiskAdded {
+					plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
+					resumeRiskAdded = true
+				}
+			}
 			plan.Transfers = append(plan.Transfers, TransferPreview{
-				ArtifactID: art.ID, Identity: art.Identity, SourceNode: srcName,
-				DestNode: name, DestPath: dest, Bytes: artifactSize(art.Metadata),
+				ArtifactID: art.ID, Identity: art.Identity, SourceNode: placementSource,
+				DestNode: placement.NodeID, DestPath: dest, Bytes: size,
 			})
+		}
+	}
+
+	const storageReserveBytes int64 = 5 << 30
+	storageNodes := map[string]bool{}
+	for _, placement := range placements {
+		if storageNodes[placement.NodeID] {
+			continue
+		}
+		storageNodes[placement.NodeID] = true
+		required := requiredByNode[placement.NodeID]
+		cacheRoot := ""
+		if candidate := nodeByID[placement.NodeID]; candidate != nil && candidate.inv != nil && len(candidate.inv.CacheRoots) > 0 {
+			cacheRoot = candidate.inv.CacheRoots[0].Path
+		}
+		payload, _ := loadPayload(placement.NodeID)
+		available, total, known := filesystemCapacity(payload, cacheRoot)
+		sufficient := required == 0 || known && available >= required+storageReserveBytes
+		plan.Storage = append(plan.Storage, StoragePreview{
+			NodeID: placement.NodeID, NodeName: placement.NodeName, CacheRoot: cacheRoot,
+			RequiredBytes: required, AvailableBytes: available, TotalBytes: total,
+			Known: known, Sufficient: sufficient,
+		})
+		if required > 0 && !known {
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+				"storage.telemetry_unavailable",
+				fmt.Sprintf("node %s has no fresh filesystem telemetry for cache root %s", placement.NodeName, cacheRoot),
+			).Res("node:"+placement.NodeID))
+		} else if !sufficient {
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+				"storage.insufficient",
+				fmt.Sprintf("node %s needs %d artifact bytes plus %d reserve bytes but has %d available", placement.NodeName, required, storageReserveBytes, available),
+			).Res("node:"+placement.NodeID))
 		}
 	}
 
@@ -879,6 +976,38 @@ func artifactSize(metadata string) int64 {
 	return 0
 }
 
+func (s *Service) latestNodePayload(ctx context.Context, nodeID string) (*telemetrystore.NodePayload, bool) {
+	row, err := s.q.LatestTelemetry5s(ctx, nodeID)
+	if err != nil || time.Now().Unix()-row.Ts > 30 {
+		return nil, false
+	}
+	var payload telemetrystore.NodePayload
+	if err := json.Unmarshal([]byte(row.Payload), &payload); err != nil {
+		return nil, false
+	}
+	return &payload, true
+}
+
+func filesystemCapacity(payload *telemetrystore.NodePayload, cacheRoot string) (available, total int64, ok bool) {
+	if payload == nil || cacheRoot == "" {
+		return 0, 0, false
+	}
+	root := path.Clean(cacheRoot)
+	bestLength := -1
+	for _, filesystem := range payload.Filesystems {
+		mount := path.Clean(filesystem.MountPath)
+		contains := mount == "/" || root == mount || strings.HasPrefix(root, mount+"/")
+		if !contains || len(mount) <= bestLength || filesystem.TotalBytes < filesystem.UsedBytes {
+			continue
+		}
+		bestLength = len(mount)
+		total = int64(filesystem.TotalBytes)
+		available = int64(filesystem.TotalBytes - filesystem.UsedBytes)
+		ok = true
+	}
+	return available, total, ok
+}
+
 // transferSourceName returns the name of any node holding a valid copy of
 // the artifact ("" when none does).
 func (s *Service) transferSourceName(ctx context.Context, artifactID string) string {
@@ -888,6 +1017,9 @@ func (s *Service) transferSourceName(ctx context.Context, artifactID string) str
 	}
 	for _, r := range rows {
 		if r.State != "valid" {
+			continue
+		}
+		if !s.nodes.Online(r.NodeID) {
 			continue
 		}
 		if n, nerr := s.q.GetNode(ctx, r.NodeID); nerr == nil {
@@ -1185,6 +1317,42 @@ func (s *Service) OnArtifactProgress(ctx context.Context, progress *agentv1.Arti
 	})
 }
 
+// OnTransferProgress projects a peer cache copy onto the destination rank's
+// durable serve progress instead of leaving the launch UI at "queued".
+func (s *Service) OnTransferProgress(ctx context.Context, progress *agentv1.TransferProgress) {
+	var transferKey string
+	s.mu.Lock()
+	for key, transferID := range s.transferInflight {
+		if transferID == progress.GetTransferId() {
+			transferKey = key
+			break
+		}
+	}
+	s.mu.Unlock()
+	if transferKey == "" {
+		return
+	}
+	deploymentID, nodeID, artifactIdentity, ok := parseTransferKey(transferKey)
+	if !ok {
+		return
+	}
+	deployment, err := s.q.GetDeployment(ctx, deploymentID)
+	if err != nil || !deployment.RunID.Valid {
+		return
+	}
+	for _, placement := range ParsePlacementSet(deployment.Placement).Entries {
+		if placement.NodeID != nodeID {
+			continue
+		}
+		s.setServeRankProgress(ctx, deployment.RunID.String, placement.Rank, map[string]any{
+			"phase": "downloading", "artifact": artifactIdentity,
+			"bytes_done": progress.GetBytesDone(), "bytes_total": progress.GetBytesTotal(),
+			"message": "copying verified cache from another fleet node",
+		})
+		return
+	}
+}
+
 func (s *Service) initializeServeProgress(ctx context.Context, runID string, placements []Placement) {
 	ranks := make([]any, 0, len(placements))
 	for _, placement := range placements {
@@ -1455,10 +1623,11 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 // "exists"/"already running", STOP is idempotent.
 //
 //	desired=running:
-//	  none    -> artifact gate, then PULL
-//	  pulled  -> CREATE
-//	  created -> START
-//	  started -> INSPECT (running confirmation)
+//	  none          -> artifact gate, then PULL
+//	  pulled        -> CREATE
+//	  created       -> optional HOST_PREPARE
+//	  host_prepared -> START (rank 0 waits for workers when requested)
+//	  started       -> INSPECT (running confirmation)
 //	desired=stopped:
 //	  started  -> phase stopping, then STOP
 //	  stopping -> STOP re-drive
@@ -1530,10 +1699,41 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "create")
 			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_CREATE, depID, runID, rank, spec)
-		case PhaseCreated:
-			// START resolves the container by name; the agent keeps the
-			// CREATE spec in memory, so no re-render is needed (and a
-			// placement failure must not block a stop).
+		case PhaseCreated, PhaseHostPreparing:
+			if s.inflightHas(depID, rank, "host-prepare") {
+				return
+			}
+			spec, err := s.renderSpec(ctx, depID, rank, runID, &pl)
+			if err != nil {
+				s.failDispatch(ctx, depID, rank, runID, "host.prepare_spec", err.Error())
+				return
+			}
+			if spec.HostPreparation == nil {
+				s.setPhase(ctx, depID, rank, PhaseHostPrepared)
+				s.dispatchNext(ctx, depID, rank, runID, pl)
+				return
+			}
+			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "preparing_host"})
+			s.setPhase(ctx, depID, rank, PhaseHostPreparing)
+			cmdID, _ := id.New()
+			s.inflightMark(cmdID, depID, rank, "host-prepare")
+			if !s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_HOST_PREPARE, depID, runID, rank, spec) {
+				s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "waiting_for_node"})
+				s.noteDispatch(ctx, depID, diag.Error("workload.node_offline",
+					fmt.Sprintf("node %s offline; host preparation paused until reconnect", nodeID)))
+			}
+		case PhaseHostPrepared:
+			ready, readyErr := s.workerStartReady(ctx, row, rank)
+			if readyErr != nil {
+				s.failDispatch(ctx, depID, rank, runID, "workload.start_order", readyErr.Error())
+				return
+			}
+			if !ready {
+				s.setServeRankProgress(ctx, runID, rank, map[string]any{
+					"phase": "waiting_for_workers", "message": "worker containers start before the API head",
+				})
+				return
+			}
 			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "starting_container"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "start")
@@ -1569,7 +1769,12 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 			s.cancelArtifactFetches(depID, rank, nodeID)
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
-		case PhasePulled, PhaseCreated, PhaseStarted, PhaseStopping:
+		case PhaseHostPreparing:
+			if s.inflightHas(depID, rank, "host-prepare") {
+				return
+			}
+			fallthrough
+		case PhasePulled, PhaseCreated, PhaseHostPrepared, PhaseStarted, PhaseStopping:
 			if phase == PhaseStarted {
 				s.setPhase(ctx, depID, rank, PhaseStopping)
 			}
@@ -1578,6 +1783,30 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_STOP, depID, runID, rank, nil)
 		}
 	}
+}
+
+func (s *Service) workerStartReady(ctx context.Context, row db.GetDeploymentRow, rank int32) (bool, error) {
+	if rank != 0 {
+		return true, nil
+	}
+	manifest, err := s.manifestFor(ctx, row.RecipeDigest)
+	if err != nil {
+		return false, err
+	}
+	_, workload, err := s.selectWorkload(ctx, row, manifest)
+	if err != nil {
+		return false, err
+	}
+	if workload.StartOrder != "workers-first" {
+		return true, nil
+	}
+	phases := ParseDispatch(row.Dispatch)
+	for _, placement := range ParsePlacementSet(row.Placement).Entries {
+		if placement.Rank > 0 && phases.Get(placement.Rank) != PhaseStarted {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *Service) setPhase(ctx context.Context, depID string, rank int32, to string) {
@@ -1670,6 +1899,7 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 			_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
 		}
 		s.dispatchNext(ctx, depID, rank, runID, pl)
+		s.wakeWorkerFirstHead(ctx, depID, runID)
 	case "artifact-fetch":
 		if cr.Ok {
 			return // placement report precedes the success result on the agent stream
@@ -1715,6 +1945,23 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 		}
 		s.setPhase(ctx, depID, rank, PhaseCreated)
 		s.dispatchNext(ctx, depID, rank, runID, pl)
+	case "host-prepare":
+		if !cr.Ok {
+			if desired == "stopped" {
+				s.setPhase(ctx, depID, rank, PhaseStopping)
+				s.dispatchNext(ctx, depID, rank, runID, pl)
+				return
+			}
+			s.failDispatch(ctx, depID, rank, runID, "host.prepare_failed", cr.Error)
+			return
+		}
+		if desired == "stopped" {
+			s.setPhase(ctx, depID, rank, PhaseStopping)
+			s.dispatchNext(ctx, depID, rank, runID, pl)
+			return
+		}
+		s.setPhase(ctx, depID, rank, PhaseHostPrepared)
+		s.dispatchNext(ctx, depID, rank, runID, pl)
 	case "start":
 		if !cr.Ok && !isContainerExists(cr.Error) && !isAlreadyRunning(cr.Error) {
 			if desired == "stopped" {
@@ -1747,6 +1994,7 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 			_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
 		}
 		s.dispatchNext(ctx, depID, rank, runID, pl)
+		s.wakeWorkerFirstHead(ctx, depID, runID)
 	case "inspect":
 		if cr.Ok {
 			s.OnStateUpdate(ctx, pl.NodeID, &agentv1.StateUpdate{
@@ -1773,6 +2021,16 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
 		}
+	}
+}
+
+func (s *Service) wakeWorkerFirstHead(ctx context.Context, depID, runID string) {
+	row, err := s.q.GetDeployment(ctx, depID)
+	if err != nil || ParseDispatch(row.Dispatch).Get(0) != PhaseHostPrepared {
+		return
+	}
+	if head := ParsePlacementSet(row.Placement).EntryFor(0); head != nil {
+		s.dispatchNext(ctx, depID, 0, runID, *head)
 	}
 }
 
@@ -1863,6 +2121,19 @@ func (s *Service) validPlacement(ctx context.Context, artifactID, nodeID string)
 		}
 	}
 	return "", false
+}
+
+func (s *Service) hasPlacementRecord(ctx context.Context, artifactID, nodeID string) bool {
+	rows, err := s.q.ListPlacements(ctx, artifactID)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 // variantsFor parses the deployment's placement JSON and returns the
@@ -1983,7 +2254,7 @@ func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, 
 		})
 		var tid string
 		var dispatchErr error
-		if s.transferSourceName(ctx, art.ID) == "" {
+		if s.hasPlacementRecord(ctx, art.ID, pl.NodeID) || s.transferSourceName(ctx, art.ID) == "" {
 			tid, dispatchErr = s.startOriginFetch(ctx, art, pl.NodeID, row.ID, rank)
 		} else {
 			tid, dispatchErr = s.startTransfer(ctx, art, "", pl.NodeID, "", row.Fabric.String, runID)
@@ -2022,7 +2293,7 @@ func (s *Service) startOriginFetch(ctx context.Context, artifact db.Artifact, no
 	}}
 	if !s.nodes.Send(nodeID, message) {
 		s.inflightTake(commandID)
-		return "", fmt.Errorf("destination node %s is offline", nodeID)
+		return "", fmt.Errorf("node %s is offline", nodeID)
 	}
 	s.bus.Publish(ctx, "artifact.fetch_started", nodeID, mustJSON(map[string]any{
 		"command_id": commandID, "artifact": artifact.Identity,
@@ -2686,18 +2957,32 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 		return
 	}
 	s.setPlacementContainer(ctx, row.ID, su.Rank, su.ContainerId)
-	if row.DesiredState == "running" && terminalWorkloadState(su.State) {
-		s.failWorkload(ctx, row, su)
-		return
-	}
-	if row.DesiredState == "stopped" && terminalWorkloadState(su.State) {
-		s.setRankState(row.ID, su.Rank, su.State)
-		s.setPhase(ctx, row.ID, su.Rank, PhaseStopped)
+	if row.DesiredState == "stopped" {
 		runID := ""
 		if row.RunID.Valid {
 			runID = row.RunID.String
 		}
-		s.checkStopComplete(ctx, row.ID, runID)
+		if terminalWorkloadState(su.State) {
+			s.setRankState(row.ID, su.Rank, su.State)
+			s.setPhase(ctx, row.ID, su.Rank, PhaseStopped)
+			s.checkStopComplete(ctx, row.ID, runID)
+			return
+		}
+		phase := ParseDispatch(row.Dispatch).Get(su.Rank)
+		if phase == PhaseStopped && su.State != "running" && su.State != "paused" && su.State != "restarting" {
+			return // stale pre-stop observation delivered after STOP was confirmed
+		}
+		s.setRankState(row.ID, su.Rank, "stopping")
+		s.setPhase(ctx, row.ID, su.Rank, PhaseStopping)
+		_ = s.q.SetDeploymentStopping(ctx, db.SetDeploymentStoppingParams{
+			Diagnostics: row.Diagnostics,
+			ID:          row.ID,
+		})
+		s.dispatchNext(ctx, row.ID, su.Rank, runID, s.placementFor(ctx, row.ID, su.Rank))
+		return
+	}
+	if row.DesiredState == "running" && terminalWorkloadState(su.State) {
+		s.failWorkload(ctx, row, su)
 		return
 	}
 	_, d := mapObserved(su.State, su.DiagnosticMessage)
@@ -2760,20 +3045,6 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 		}
 	}
 
-	switch row.DesiredState {
-	case "stopped":
-		// Stop confirmation: the rank is done when the agent reports the
-		// container no longer running, or the STOP ack landed (OnCommandResult).
-		if su.State == "exited" || su.State == "dead" || su.State == "missing" {
-			s.setPhase(ctx, row.ID, su.Rank, PhaseStopped)
-			s.checkStopComplete(ctx, row.ID, runID)
-		} else if su.State == "running" {
-			// STOP has not taken effect yet (reconnect race): re-drive.
-			s.setPhase(ctx, row.ID, su.Rank, PhaseStopping)
-			s.dispatchNext(ctx, row.ID, su.Rank, runID, s.placementFor(ctx, row.ID, su.Rank))
-		}
-	case "running":
-	}
 }
 
 // checkStopComplete finalizes a stop once every rank is confirmed stopped.
@@ -3454,6 +3725,18 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		Entrypoint: w.Command, NetworkMode: networkMode,
 		ReadonlyRootfs: !permissions["rootfs.write"], NoNewPrivileges: true, CapDrop: []string{"ALL"},
 	}
+	if w.HostPreparation != nil {
+		if !permissions["host.memory-tuning"] {
+			return nil, fmt.Errorf("host memory preparation requires host.memory-tuning permission")
+		}
+		spec.HostPreparation = &runtime.HostPreparationSpec{
+			RequireSwap: w.HostPreparation.RequireSwap, DropPageCache: w.HostPreparation.DropPageCache,
+		}
+		if w.HostPreparation.Swappiness != nil {
+			value := *w.HostPreparation.Swappiness
+			spec.HostPreparation.Swappiness = &value
+		}
+	}
 	for _, argument := range w.Args {
 		rendered, renderErr := m.Render(argument, rctx)
 		if renderErr != nil {
@@ -3470,6 +3753,7 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	}
 	sort.Strings(spec.Env)
 	spec.CPU = w.Resources.CPU
+	spec.CPUSetCpus = w.Resources.CPUSetCpus
 	spec.MemoryBytes = w.Resources.MemoryBytes
 	spec.ShmBytes = w.Resources.ShmBytes
 	spec.TmpfsBytes = w.Resources.TmpfsBytes

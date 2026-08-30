@@ -16,6 +16,7 @@ import (
 
 type ownershipRuntime struct {
 	info    *runtime.ContainerInfo
+	list    []runtime.ContainerInfo
 	calls   []string
 	created bool
 }
@@ -23,6 +24,10 @@ type ownershipRuntime struct {
 func (r *ownershipRuntime) Ping(context.Context) (string, error) { return "test", nil }
 func (r *ownershipRuntime) Pull(context.Context, *runtime.PullSpec) error {
 	r.calls = append(r.calls, "pull")
+	return nil
+}
+func (r *ownershipRuntime) PrepareHost(context.Context, *runtime.ContainerSpec) error {
+	r.calls = append(r.calls, "host-prepare")
 	return nil
 }
 func (r *ownershipRuntime) Create(context.Context, *runtime.ContainerSpec) (string, error) {
@@ -51,7 +56,7 @@ func (r *ownershipRuntime) Inspect(context.Context, string) (*runtime.ContainerI
 	return &copy, nil
 }
 func (r *ownershipRuntime) ListByLabel(context.Context, string, string) ([]runtime.ContainerInfo, error) {
-	return nil, nil
+	return r.list, nil
 }
 func (r *ownershipRuntime) LogsFollow(context.Context, string, bool, bool) (io.ReadCloser, error) {
 	r.calls = append(r.calls, "logs-follow")
@@ -85,6 +90,50 @@ func commandResult(t *testing.T, a *Agent) *agentv1.CommandResult {
 	default:
 		t.Fatal("missing command result")
 		return nil
+	}
+}
+
+func TestHostPreparationUsesManagedBoundedSpec(t *testing.T) {
+	swappiness := 0
+	encoded, err := json.Marshal(runtime.ContainerSpec{
+		Labels: runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "serving"),
+		HostPreparation: &runtime.HostPreparationSpec{
+			RequireSwap: true, Swappiness: &swappiness, DropPageCache: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &ownershipRuntime{}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", fake, nil)
+	a.handleWorkload(context.Background(), testWorkloadCommand(agentv1.WorkloadOp_WORKLOAD_OP_HOST_PREPARE, encoded))
+	result := commandResult(t, a)
+	if !result.GetOk() || len(fake.calls) != 1 || fake.calls[0] != "host-prepare" {
+		t.Fatalf("result=%+v calls=%v", result, fake.calls)
+	}
+}
+
+func TestHostPreparationHelperIsExcludedFromWorkloadState(t *testing.T) {
+	labels := runtime.ManagedLabels("deployment-1234", "run-1234", "recipe", "1.0.0", 0, "serving")
+	labels[runtime.LabelModule] = runtime.HostPreparationModule
+	fake := &ownershipRuntime{list: []runtime.ContainerInfo{{
+		ID: "host-helper", State: "running", Labels: labels,
+	}}}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", fake, nil)
+
+	a.workloads.tick(t.Context())
+	fake.list = nil
+	a.workloads.tick(t.Context())
+
+	select {
+	case message := <-a.sendQ:
+		t.Fatalf("host helper emitted workload state: %+v", message)
+	default:
+	}
+	a.workloads.mu.Lock()
+	defer a.workloads.mu.Unlock()
+	if len(a.workloads.last) != 0 {
+		t.Fatalf("tracked workload states = %+v, want none", a.workloads.last)
 	}
 }
 

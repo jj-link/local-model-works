@@ -107,12 +107,39 @@ export function ImportRecipeDialog({
     if (!Array.isArray(manifest?.artifacts)) return [];
     return manifest.artifacts.map((raw) => {
       const artifact = objectRecord(raw) ?? {};
+      const variants = Array.isArray(artifact.variants)
+        ? artifact.variants.map((rawVariant) => {
+            const variant = objectRecord(rawVariant) ?? {};
+            const source = objectRecord(variant.source);
+            return {
+              name: String(variant.name ?? ""),
+              label: String(variant.label ?? variant.name ?? "variant"),
+              description: String(variant.description ?? ""),
+              identity: String(source?.identity ?? "source not reported"),
+              revision: String(source?.revision ?? ""),
+            };
+          })
+        : [];
+      if (variants.length > 0) {
+        return {
+          name: String(artifact.name ?? "artifact"),
+          size: Number(artifact.sizeBytes ?? 0),
+          defaultVariant: String(artifact.defaultVariant ?? ""),
+          variants,
+        };
+      }
       const source = objectRecord(artifact.source);
       return {
         name: String(artifact.name ?? "artifact"),
-        identity: String(source?.identity ?? "source not reported"),
-        revision: String(source?.revision ?? ""),
         size: Number(artifact.sizeBytes ?? 0),
+        defaultVariant: "",
+        variants: [{
+          name: "",
+          label: "",
+          description: "",
+          identity: String(source?.identity ?? "source not reported"),
+          revision: String(source?.revision ?? ""),
+        }],
       };
     });
   }, [manifest]);
@@ -294,15 +321,25 @@ export function ImportRecipeDialog({
                     {String(image?.reference ?? (detail.isFetching ? "loading…" : "not reported"))}
                   </p>
                 </div>
-                {artifacts.map((artifact) => (
-                  <div key={artifact.name} className="grid gap-1 border-b border-hairline px-3 py-2 last:border-b-0 sm:grid-cols-[5rem_1fr_auto] sm:items-center">
-                    <span className="font-display text-xs font-semibold">{artifact.name}</span>
-                    <span className="truncate font-mono text-[11px]" title={artifact.identity}>
-                      {artifact.identity}{artifact.revision ? ` @ ${shortDigest(artifact.revision)}` : ""}
-                    </span>
-                    <span className="font-mono text-[11px] text-muted">{artifact.size > 0 ? bytes(artifact.size) : "size unknown"}</span>
-                  </div>
-                ))}
+                {artifacts.flatMap((artifact) =>
+                  artifact.variants.map((variant) => (
+                    <div key={`${artifact.name}-${variant.name}`} className="grid gap-1 border-b border-hairline px-3 py-2 last:border-b-0 sm:grid-cols-[9rem_1fr_auto] sm:items-center">
+                      <span className="font-display text-xs font-semibold">
+                        {variant.label || artifact.name}
+                        {variant.name && variant.name === artifact.defaultVariant ? (
+                          <span className="ml-1 font-mono text-[9px] font-normal text-ok">default</span>
+                        ) : null}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-mono text-[11px]" title={variant.identity}>
+                          {variant.identity}{variant.revision ? ` @ ${shortDigest(variant.revision)}` : ""}
+                        </span>
+                        {variant.description ? <span className="mt-0.5 block text-[10px] text-muted">{variant.description}</span> : null}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted">{artifact.size > 0 ? bytes(artifact.size) : "size unknown"}</span>
+                    </div>
+                  )),
+                )}
               </div>
             </section>
 
@@ -325,7 +362,7 @@ export function ImportRecipeDialog({
               </label>
             ) : (
               <div className="rounded border border-ok/35 bg-ok/5 px-3 py-2 text-sm">
-                Next, LMW will match two compatible nodes, validate their fabric, show cache/download work, and ask once before launch.
+                Next, LMW will match {String(compatibility?.nodeCount ?? "the required")} compatible nodes, validate fabric and host readiness, show cache/download work, and ask once before launch.
               </div>
             )}
           </div>

@@ -12,12 +12,12 @@ import (
 // throttle reasons are current-only and are stripped from minute rows and
 // history responses.
 type NodePayload struct {
-	CPU           *CPUPayload                `json:"cpu,omitempty"`
-	Memory        *MemoryPayload             `json:"memory,omitempty"`
-	UptimeSeconds uint64                     `json:"uptime_seconds"`
-	Network       *NetworkPayload            `json:"network,omitempty"`
-	Filesystems   []FilesystemPayload        `json:"filesystems,omitempty"`
-	Accelerators  []AcceleratorPayload       `json:"accelerators,omitempty"`
+	CPU           *CPUPayload          `json:"cpu,omitempty"`
+	Memory        *MemoryPayload       `json:"memory,omitempty"`
+	UptimeSeconds uint64               `json:"uptime_seconds"`
+	Network       *NetworkPayload      `json:"network,omitempty"`
+	Filesystems   []FilesystemPayload  `json:"filesystems,omitempty"`
+	Accelerators  []AcceleratorPayload `json:"accelerators,omitempty"`
 }
 
 // CPUPayload is one CPU gauge sample.
@@ -29,23 +29,25 @@ type CPUPayload struct {
 
 // MemoryPayload is one host memory gauge sample.
 type MemoryPayload struct {
-	UsedBytes     uint64 `json:"used_bytes"`
-	TotalBytes    uint64 `json:"total_bytes"`
-	SwapUsedBytes uint64 `json:"swap_used_bytes,omitempty"`
+	UsedBytes      uint64 `json:"used_bytes"`
+	TotalBytes     uint64 `json:"total_bytes"`
+	SwapUsedBytes  uint64 `json:"swap_used_bytes,omitempty"`
+	SwapTotalBytes uint64 `json:"swap_total_bytes,omitempty"`
+	Swappiness     uint32 `json:"swappiness"`
 }
 
 // NetworkPayload is one aggregate network sample plus per-interface rates.
 type NetworkPayload struct {
-	RxBytes          uint64                     `json:"rx_bytes,omitempty"`
-	TxBytes          uint64                     `json:"tx_bytes,omitempty"`
-	RxBytesPerSecond uint64                     `json:"rx_bytes_per_second"`
-	TxBytesPerSecond uint64                     `json:"tx_bytes_per_second"`
-	Interfaces       []NetworkInterfacePayload  `json:"interfaces,omitempty"`
+	RxBytes          uint64                    `json:"rx_bytes,omitempty"`
+	TxBytes          uint64                    `json:"tx_bytes,omitempty"`
+	RxBytesPerSecond uint64                    `json:"rx_bytes_per_second"`
+	TxBytesPerSecond uint64                    `json:"tx_bytes_per_second"`
+	Interfaces       []NetworkInterfacePayload `json:"interfaces,omitempty"`
 }
 
 // NetworkInterfacePayload is one interface's byte rates.
 type NetworkInterfacePayload struct {
-	Name          string `json:"name"`
+	Name             string `json:"name"`
 	RxBytesPerSecond uint64 `json:"rx_bytes_per_second"`
 	TxBytesPerSecond uint64 `json:"tx_bytes_per_second"`
 }
@@ -72,9 +74,9 @@ type AcceleratorPayload struct {
 
 // AcceleratorProcessPayload is one GPU process.
 type AcceleratorProcessPayload struct {
-	PID                 int32  `json:"pid"`
-	Name                string `json:"name,omitempty"`
-	UsedGpuMemoryBytes  uint64 `json:"used_gpu_memory_bytes,omitempty"`
+	PID                int32  `json:"pid"`
+	Name               string `json:"name,omitempty"`
+	UsedGpuMemoryBytes uint64 `json:"used_gpu_memory_bytes,omitempty"`
 }
 
 // NodeSample is one persisted node sample.
@@ -98,9 +100,11 @@ func NodePayloadFromProto(t *agentv1.Telemetry) NodePayload {
 	}
 	if m := t.GetMemory(); m != nil {
 		p.Memory = &MemoryPayload{
-			UsedBytes:     m.GetUsedBytes(),
-			TotalBytes:    m.GetTotalBytes(),
-			SwapUsedBytes: m.GetSwapUsedBytes(),
+			UsedBytes:      m.GetUsedBytes(),
+			TotalBytes:     m.GetTotalBytes(),
+			SwapUsedBytes:  m.GetSwapUsedBytes(),
+			SwapTotalBytes: m.GetSwapTotalBytes(),
+			Swappiness:     m.GetSwappiness(),
 		}
 	}
 	if n := t.GetNetwork(); n != nil {
@@ -112,7 +116,7 @@ func NodePayloadFromProto(t *agentv1.Telemetry) NodePayload {
 		}
 		for _, ni := range n.GetInterfaces() {
 			np.Interfaces = append(np.Interfaces, NetworkInterfacePayload{
-				Name:            ni.GetName(),
+				Name:             ni.GetName(),
 				RxBytesPerSecond: ni.GetRxBytesPerSecond(),
 				TxBytesPerSecond: ni.GetTxBytesPerSecond(),
 			})

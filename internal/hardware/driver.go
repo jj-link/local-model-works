@@ -96,6 +96,8 @@ type Telemetry struct {
 	MemoryUsedBytes   uint64                      `json:"memory_used_bytes"`
 	MemoryTotalBytes  uint64                      `json:"memory_total_bytes"`
 	SwapUsedBytes     uint64                      `json:"swap_used_bytes,omitempty"`
+	SwapTotalBytes    uint64                      `json:"swap_total_bytes,omitempty"`
+	Swappiness        uint32                      `json:"swappiness"`
 	UptimeSeconds     uint64                      `json:"uptime_seconds,omitempty"`
 	Filesystems       []FilesystemTelemetry       `json:"filesystems,omitempty"`
 	Accelerators      []AcceleratorTelemetry      `json:"accelerators"`

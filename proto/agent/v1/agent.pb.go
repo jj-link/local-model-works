@@ -85,14 +85,15 @@ func (ArtifactOp) EnumDescriptor() ([]byte, []int) {
 type WorkloadOp int32
 
 const (
-	WorkloadOp_WORKLOAD_OP_UNSPECIFIED WorkloadOp = 0
-	WorkloadOp_WORKLOAD_OP_PULL        WorkloadOp = 1
-	WorkloadOp_WORKLOAD_OP_CREATE      WorkloadOp = 2
-	WorkloadOp_WORKLOAD_OP_START       WorkloadOp = 3
-	WorkloadOp_WORKLOAD_OP_STOP        WorkloadOp = 4
-	WorkloadOp_WORKLOAD_OP_REMOVE      WorkloadOp = 5
-	WorkloadOp_WORKLOAD_OP_INSPECT     WorkloadOp = 6
-	WorkloadOp_WORKLOAD_OP_LOGS        WorkloadOp = 7
+	WorkloadOp_WORKLOAD_OP_UNSPECIFIED  WorkloadOp = 0
+	WorkloadOp_WORKLOAD_OP_PULL         WorkloadOp = 1
+	WorkloadOp_WORKLOAD_OP_CREATE       WorkloadOp = 2
+	WorkloadOp_WORKLOAD_OP_START        WorkloadOp = 3
+	WorkloadOp_WORKLOAD_OP_STOP         WorkloadOp = 4
+	WorkloadOp_WORKLOAD_OP_REMOVE       WorkloadOp = 5
+	WorkloadOp_WORKLOAD_OP_INSPECT      WorkloadOp = 6
+	WorkloadOp_WORKLOAD_OP_LOGS         WorkloadOp = 7
+	WorkloadOp_WORKLOAD_OP_HOST_PREPARE WorkloadOp = 8
 )
 
 // Enum value maps for WorkloadOp.
@@ -106,16 +107,18 @@ var (
 		5: "WORKLOAD_OP_REMOVE",
 		6: "WORKLOAD_OP_INSPECT",
 		7: "WORKLOAD_OP_LOGS",
+		8: "WORKLOAD_OP_HOST_PREPARE",
 	}
 	WorkloadOp_value = map[string]int32{
-		"WORKLOAD_OP_UNSPECIFIED": 0,
-		"WORKLOAD_OP_PULL":        1,
-		"WORKLOAD_OP_CREATE":      2,
-		"WORKLOAD_OP_START":       3,
-		"WORKLOAD_OP_STOP":        4,
-		"WORKLOAD_OP_REMOVE":      5,
-		"WORKLOAD_OP_INSPECT":     6,
-		"WORKLOAD_OP_LOGS":        7,
+		"WORKLOAD_OP_UNSPECIFIED":  0,
+		"WORKLOAD_OP_PULL":         1,
+		"WORKLOAD_OP_CREATE":       2,
+		"WORKLOAD_OP_START":        3,
+		"WORKLOAD_OP_STOP":         4,
+		"WORKLOAD_OP_REMOVE":       5,
+		"WORKLOAD_OP_INSPECT":      6,
+		"WORKLOAD_OP_LOGS":         7,
+		"WORKLOAD_OP_HOST_PREPARE": 8,
 	}
 )
 
@@ -1728,12 +1731,14 @@ func (x *CpuTelemetry) GetLoad1() uint64 {
 }
 
 type MemoryTelemetry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UsedBytes     uint64                 `protobuf:"varint,1,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
-	TotalBytes    uint64                 `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
-	SwapUsedBytes uint64                 `protobuf:"varint,3,opt,name=swap_used_bytes,json=swapUsedBytes,proto3" json:"swap_used_bytes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UsedBytes      uint64                 `protobuf:"varint,1,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	TotalBytes     uint64                 `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
+	SwapUsedBytes  uint64                 `protobuf:"varint,3,opt,name=swap_used_bytes,json=swapUsedBytes,proto3" json:"swap_used_bytes,omitempty"`
+	SwapTotalBytes uint64                 `protobuf:"varint,4,opt,name=swap_total_bytes,json=swapTotalBytes,proto3" json:"swap_total_bytes,omitempty"`
+	Swappiness     uint32                 `protobuf:"varint,5,opt,name=swappiness,proto3" json:"swappiness,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *MemoryTelemetry) Reset() {
@@ -1783,6 +1788,20 @@ func (x *MemoryTelemetry) GetTotalBytes() uint64 {
 func (x *MemoryTelemetry) GetSwapUsedBytes() uint64 {
 	if x != nil {
 		return x.SwapUsedBytes
+	}
+	return 0
+}
+
+func (x *MemoryTelemetry) GetSwapTotalBytes() uint64 {
+	if x != nil {
+		return x.SwapTotalBytes
+	}
+	return 0
+}
+
+func (x *MemoryTelemetry) GetSwappiness() uint32 {
+	if x != nil {
+		return x.Swappiness
 	}
 	return 0
 }
@@ -3991,13 +4010,17 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\fCpuTelemetry\x12#\n" +
 	"\rusage_percent\x18\x01 \x01(\rR\fusagePercent\x12\x14\n" +
 	"\x05cores\x18\x02 \x01(\rR\x05cores\x12\x14\n" +
-	"\x05load1\x18\x03 \x01(\x04R\x05load1\"y\n" +
+	"\x05load1\x18\x03 \x01(\x04R\x05load1\"\xc3\x01\n" +
 	"\x0fMemoryTelemetry\x12\x1d\n" +
 	"\n" +
 	"used_bytes\x18\x01 \x01(\x04R\tusedBytes\x12\x1f\n" +
 	"\vtotal_bytes\x18\x02 \x01(\x04R\n" +
 	"totalBytes\x12&\n" +
-	"\x0fswap_used_bytes\x18\x03 \x01(\x04R\rswapUsedBytes\"\x88\x03\n" +
+	"\x0fswap_used_bytes\x18\x03 \x01(\x04R\rswapUsedBytes\x12(\n" +
+	"\x10swap_total_bytes\x18\x04 \x01(\x04R\x0eswapTotalBytes\x12\x1e\n" +
+	"\n" +
+	"swappiness\x18\x05 \x01(\rR\n" +
+	"swappiness\"\x88\x03\n" +
 	"\x14AcceleratorTelemetry\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x05R\x05index\x12/\n" +
 	"\x13utilization_percent\x18\x02 \x01(\rR\x12utilizationPercent\x12*\n" +
@@ -4205,7 +4228,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x17ARTIFACT_OP_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14ARTIFACT_OP_VALIDATE\x10\x01\x12\x15\n" +
 	"\x11ARTIFACT_OP_FETCH\x10\x02\x12\x16\n" +
-	"\x12ARTIFACT_OP_CANCEL\x10\x03*\xcb\x01\n" +
+	"\x12ARTIFACT_OP_CANCEL\x10\x03*\xe9\x01\n" +
 	"\n" +
 	"WorkloadOp\x12\x1b\n" +
 	"\x17WORKLOAD_OP_UNSPECIFIED\x10\x00\x12\x14\n" +
@@ -4215,7 +4238,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x10WORKLOAD_OP_STOP\x10\x04\x12\x16\n" +
 	"\x12WORKLOAD_OP_REMOVE\x10\x05\x12\x17\n" +
 	"\x13WORKLOAD_OP_INSPECT\x10\x06\x12\x14\n" +
-	"\x10WORKLOAD_OP_LOGS\x10\a2X\n" +
+	"\x10WORKLOAD_OP_LOGS\x10\a\x12\x1c\n" +
+	"\x18WORKLOAD_OP_HOST_PREPARE\x10\b2X\n" +
 	"\x11EnrollmentService\x12C\n" +
 	"\x06Enroll\x12\x1b.lmw.agent.v1.EnrollRequest\x1a\x1c.lmw.agent.v1.EnrollResponse2V\n" +
 	"\fAgentService\x12F\n" +

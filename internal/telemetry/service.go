@@ -120,7 +120,10 @@ func aggregateNodeMinute(payloads []NodePayload) NodePayload {
 		}
 		if m := p.Memory; m != nil {
 			memUsedSum += int64(m.UsedBytes)
-			out.Memory = &MemoryPayload{TotalBytes: m.TotalBytes, SwapUsedBytes: m.SwapUsedBytes}
+			out.Memory = &MemoryPayload{
+				TotalBytes: m.TotalBytes, SwapUsedBytes: m.SwapUsedBytes,
+				SwapTotalBytes: m.SwapTotalBytes, Swappiness: m.Swappiness,
+			}
 			out.Memory.UsedBytes = m.UsedBytes
 		}
 		if p.UptimeSeconds > 0 {

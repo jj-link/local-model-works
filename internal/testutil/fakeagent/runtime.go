@@ -103,10 +103,11 @@ func (r *logReader) Read(p []byte) (int, error) {
 // FakeRuntime is an in-memory runtime.Runtime: containers keyed by name,
 // spec-preserving, idempotent stop/remove, tailer-readable log buffers.
 type FakeRuntime struct {
-	mu      sync.Mutex
-	byName  map[string]*FakeContainer
-	nextID  int
-	pullLog []string
+	mu               sync.Mutex
+	byName           map[string]*FakeContainer
+	nextID           int
+	pullLog          []string
+	hostPreparations int
 }
 
 // NewFakeRuntime returns an empty stub runtime.
@@ -128,6 +129,14 @@ func (rt *FakeRuntime) Ping(context.Context) (string, error) { return "27.0.0-fa
 func (rt *FakeRuntime) Pull(ctx context.Context, spec *runtime.PullSpec) error {
 	rt.mu.Lock()
 	rt.pullLog = append(rt.pullLog, spec.Reference)
+	rt.mu.Unlock()
+	return nil
+}
+
+// PrepareHost records one successful bounded host-preparation operation.
+func (rt *FakeRuntime) PrepareHost(context.Context, *runtime.ContainerSpec) error {
+	rt.mu.Lock()
+	rt.hostPreparations++
 	rt.mu.Unlock()
 	return nil
 }

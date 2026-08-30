@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -26,6 +27,8 @@ import (
 type dockerRuntime struct {
 	cli *client.Client
 }
+
+const HostPreparationImage = "docker.io/library/busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
 
 // NewDocker returns a runtime bound to the Docker socket at socketPath.
 func NewDocker(socketPath string) (Runtime, error) {
@@ -85,6 +88,131 @@ func (r *dockerRuntime) Pull(ctx context.Context, spec *PullSpec) error {
 	return nil
 }
 
+// PrepareHost uses a controller-owned, digest-pinned helper with no network to
+// apply the bounded memory controls encoded in the managed container spec.
+// The imported recipe never supplies helper code, image, paths, or privileges.
+func (r *dockerRuntime) PrepareHost(ctx context.Context, spec *ContainerSpec) error {
+	if err := ValidateManagedSpec(spec); err != nil {
+		return err
+	}
+	preparation := spec.HostPreparation
+	if preparation == nil {
+		return nil
+	}
+	script, err := hostPreparationScript(preparation)
+	if err != nil {
+		return err
+	}
+	if err := r.Pull(ctx, &PullSpec{Reference: HostPreparationImage}); err != nil {
+		return fmt.Errorf("host.prepare_helper_pull: %w", err)
+	}
+
+	name := spec.Name + "-host-prepare"
+	labels := make(map[string]string, len(spec.Labels)+1)
+	for key, value := range spec.Labels {
+		labels[key] = value
+	}
+	labels[LabelModule] = HostPreparationModule
+	if existing, inspectErr := r.cli.ContainerInspect(ctx, name); inspectErr == nil {
+		for _, key := range []string{LabelManaged, LabelDeployment, LabelRun, LabelRank, LabelRecipe} {
+			if existing.Config.Labels[key] != labels[key] {
+				return fmt.Errorf("host.prepare_identity_mismatch: existing helper %s is not owned by this run", name)
+			}
+		}
+		if removeErr := r.cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); removeErr != nil {
+			return fmt.Errorf("host.prepare_cleanup: %w", removeErr)
+		}
+	} else if !errdefs.IsNotFound(inspectErr) {
+		return fmt.Errorf("host.prepare_inspect: %w", inspectErr)
+	}
+
+	created, err := r.cli.ContainerCreate(
+		ctx,
+		&container.Config{Image: HostPreparationImage, Cmd: []string{"sh", "-ec", script}, Labels: labels},
+		&container.HostConfig{
+			Privileged:     true,
+			ReadonlyRootfs: true,
+			NetworkMode:    "none",
+			RestartPolicy:  container.RestartPolicy{Name: "no"},
+		},
+		&network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{}},
+		nil,
+		name,
+	)
+	if err != nil {
+		return fmt.Errorf("host.prepare_create: %w", err)
+	}
+	remove := func() {
+		_ = r.cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
+	}
+	if err := r.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+		remove()
+		return fmt.Errorf("host.prepare_start: %w", err)
+	}
+	statusCh, errCh := r.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
+	var statusCode int64
+	select {
+	case waitErr := <-errCh:
+		remove()
+		if waitErr == nil {
+			waitErr = fmt.Errorf("wait channel closed")
+		}
+		return fmt.Errorf("host.prepare_wait: %w", waitErr)
+	case status := <-statusCh:
+		statusCode = status.StatusCode
+	}
+	output := r.containerOutput(ctx, created.ID)
+	remove()
+	if statusCode != 0 {
+		if output == "" {
+			output = "helper exited without diagnostics"
+		}
+		return fmt.Errorf("host.prepare_failed: exit %d: %s", statusCode, output)
+	}
+	return nil
+}
+
+func hostPreparationScript(spec *HostPreparationSpec) (string, error) {
+	if spec == nil {
+		return "", fmt.Errorf("host.prepare_missing")
+	}
+	if spec.Swappiness != nil && (*spec.Swappiness < 0 || *spec.Swappiness > 200) {
+		return "", fmt.Errorf("host.prepare_swappiness_invalid: %d", *spec.Swappiness)
+	}
+	lines := []string{"set -eu"}
+	if spec.RequireSwap {
+		lines = append(lines,
+			`swap_kb="$(awk '/^SwapTotal:/ {print $2; exit}' /proc/meminfo)"`,
+			`test "${swap_kb:-0}" -gt 0 || { echo "swap is disabled; enable swap before launching this recipe" >&2; exit 40; }`,
+		)
+	}
+	if spec.Swappiness != nil {
+		lines = append(lines, fmt.Sprintf(`printf '%%s\n' %d > /proc/sys/vm/swappiness`, *spec.Swappiness))
+	}
+	if spec.DropPageCache {
+		lines = append(lines, "sync", `printf '3\n' > /proc/sys/vm/drop_caches`)
+	}
+	if spec.Swappiness != nil {
+		lines = append(lines,
+			fmt.Sprintf(`test "$(cat /proc/sys/vm/swappiness)" -eq %d || { echo "vm.swappiness verification failed" >&2; exit 41; }`, *spec.Swappiness),
+		)
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func (r *dockerRuntime) containerOutput(ctx context.Context, id string) string {
+	rc, err := r.cli.ContainerLogs(ctx, id, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	var output bytes.Buffer
+	if _, err := stdcopy.StdCopy(&output, &output, rc); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(output.String())
+}
+
 // encodeRegistryAuth produces the base64 authconfig blob the Engine expects
 // in ImagePullOptions.RegistryAuth.
 func encodeRegistryAuth(auth *Auth) (string, error) {
@@ -129,6 +257,9 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 	}
 	if spec.CPU > 0 {
 		hostCfg.Resources.NanoCPUs = int64(spec.CPU * 1e9)
+	}
+	if spec.CPUSetCpus != "" {
+		hostCfg.Resources.CpusetCpus = spec.CPUSetCpus
 	}
 	if spec.PidsLimit > 0 {
 		lim := int64(spec.PidsLimit)

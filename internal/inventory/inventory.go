@@ -43,12 +43,19 @@ type RdmaDevice struct {
 	Ports             []RdmaPort `json:"ports"`
 }
 
+type CacheRoot struct {
+	Path      string `json:"path"`
+	Backend   string `json:"backend,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+}
+
 // Inventory is the parsed node report.
 type Inventory struct {
 	Hostname     string        `json:"hostname"`
 	Accelerators []Accelerator `json:"accelerators"`
 	Interfaces   []Interface   `json:"interfaces"`
 	RdmaDevices  []RdmaDevice  `json:"rdma_devices"`
+	CacheRoots   []CacheRoot   `json:"cache_roots"`
 	PeerListen   string        `json:"peer_listen,omitempty"`
 }
 

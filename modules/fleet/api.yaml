@@ -565,6 +565,8 @@ components:
             used_bytes: { type: integer, format: int64 }
             total_bytes: { type: integer, format: int64 }
             swap_used_bytes: { type: integer, format: int64 }
+            swap_total_bytes: { type: integer, format: int64 }
+            swappiness: { type: integer, format: int32 }
         uptime_seconds: { type: integer, format: int64 }
         network:
           type: object

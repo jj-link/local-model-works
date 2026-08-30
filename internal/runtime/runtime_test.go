@@ -67,3 +67,22 @@ func TestValidateManagedSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestHostPreparationScriptIsBounded(t *testing.T) {
+	swappiness := 0
+	script, err := hostPreparationScript(&HostPreparationSpec{
+		RequireSwap: true, Swappiness: &swappiness, DropPageCache: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"SwapTotal", "/proc/sys/vm/swappiness", "sync", "/proc/sys/vm/drop_caches"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("script missing %q: %s", required, script)
+		}
+	}
+	invalid := 201
+	if _, err := hostPreparationScript(&HostPreparationSpec{Swappiness: &invalid}); err == nil {
+		t.Fatal("out-of-range swappiness unexpectedly accepted")
+	}
+}

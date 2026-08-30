@@ -168,6 +168,20 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			return
 		}
 		a.result(cmdID, true, 0, "", id, "")
+	case agentv1.WorkloadOp_WORKLOAD_OP_HOST_PREPARE:
+		if spec == nil || spec.HostPreparation == nil {
+			a.result(cmdID, false, 0, "host.prepare_missing: host preparation requires a managed container spec", "", "")
+			return
+		}
+		if err := validateSpecIdentity(spec, deploymentID, runID, wc.GetRank()); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		if err := a.rt.PrepareHost(ctx, spec); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_START:
 		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
 		if err != nil {
@@ -286,6 +300,10 @@ func (a *Agent) resultInfo(cmdID string, ok bool, exit int32, errMsg, containerI
 	}})
 }
 
+func isWorkloadStateContainer(c *runtime.ContainerInfo) bool {
+	return c.Labels[runtime.LabelModule] != runtime.HostPreparationModule
+}
+
 // reconcile re-derives container reality after (re)connect or controller
 // restart: start the state monitor, report current state, and tail logs
 // for running containers.
@@ -300,6 +318,9 @@ func (a *Agent) reconcile(sessCtx context.Context, req *agentv1.ReconcileRequest
 		return
 	}
 	for _, c := range list {
+		if !isWorkloadStateContainer(&c) {
+			continue
+		}
 		if c.State == "running" {
 			dep, run, rank := labelsOf(&c)
 			w.startTailer(sessCtx, run, dep, rank, c.ID)
@@ -362,6 +383,9 @@ func (w *workloads) tick(ctx context.Context) {
 	}
 	seen := map[string]bool{}
 	for _, c := range list {
+		if !isWorkloadStateContainer(&c) {
+			continue
+		}
 		seen[c.ID] = true
 		w.reportState(&c)
 	}

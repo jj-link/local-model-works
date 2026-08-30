@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { AlertTriangle, ArrowRight } from "lucide-react";
+import { AlertTriangle, ArrowRight, Box, HardDrive, SlidersHorizontal } from "lucide-react";
 import { Badge } from "~/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import type { DeploymentPlan, Fabric, Node } from "~/lib/api";
@@ -99,6 +99,84 @@ export function PlanPreview({
       ) : plan.placements.length > 1 ? (
         <div className="mt-3 rounded border border-fault/40 bg-fault/5 px-3 py-2 text-xs text-fault">
           No healthy fabric covers this placement. <Link to="/fleet/fabrics" className="underline">Configure fabric wiring</Link>.
+        </div>
+      ) : null}
+
+      {plan.images && plan.images.length > 0 ? (
+        <div className="mt-3">
+          <p className="lmw-label mb-1.5">immutable images</p>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {plan.images.map((image) => (
+              <li key={image.node_id} className="rounded border border-hairline bg-raised px-3 py-2 text-xs">
+                <span className="flex items-center gap-1.5 font-display font-semibold">
+                  <Box className="h-3.5 w-3.5 text-primary" aria-hidden />
+                  {nodeName(image.node_id)}
+                  <span className="ml-auto font-mono text-[10px] font-normal text-ok">verify / pull</span>
+                </span>
+                <p className="mt-1 truncate font-mono text-[10px] text-muted" title={image.reference}>
+                  {image.reference}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {plan.storage && plan.storage.length > 0 ? (
+        <div className="mt-3">
+          <p className="lmw-label mb-1.5">storage preflight</p>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {plan.storage.map((storage) => (
+              <li key={storage.node_id} className="rounded border border-hairline bg-raised px-3 py-2 text-xs">
+                <span className="flex items-center gap-1.5 font-display font-semibold">
+                  <HardDrive className="h-3.5 w-3.5 text-primary" aria-hidden />
+                  {nodeName(storage.node_id)}
+                  <span className={`ml-auto font-mono text-[10px] font-normal ${storage.sufficient ? "text-ok" : "text-fault"}`}>
+                    {!storage.known ? "capacity unavailable" : storage.sufficient ? "capacity ready" : "space required"}
+                  </span>
+                </span>
+                <p className="mt-1 font-mono text-[10px] text-muted">
+                  {storage.required_bytes > 0 ? `${bytes(storage.required_bytes)} download` : "artifacts already cached"}
+                  {storage.known ? ` · ${bytes(storage.available_bytes ?? 0)} available` : ""}
+                </p>
+                {storage.cache_root ? <p className="truncate font-mono text-[10px] text-faint" title={storage.cache_root}>{storage.cache_root}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {plan.host_preparation && plan.host_preparation.length > 0 ? (
+        <div className="mt-3">
+          <p className="lmw-label mb-1.5">host memory preparation</p>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {plan.host_preparation.map((host) => (
+              <li key={host.node_id} className={`rounded border px-3 py-2 text-xs ${
+                host.require_swap && (host.swap_total_bytes ?? 0) === 0
+                  ? "border-fault/40 bg-fault/5"
+                  : "border-warn/35 bg-warn/5"
+              }`}>
+                <span className="flex items-center gap-1.5 font-display font-semibold">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-warn" aria-hidden />
+                  {nodeName(host.node_id)}
+                </span>
+                <p className="mt-1 text-muted">
+                  {host.swappiness_target != null
+                    ? `vm.swappiness ${host.swappiness_current} → ${host.swappiness_target}`
+                    : `vm.swappiness ${host.swappiness_current}`}
+                  {host.require_swap
+                    ? (host.swap_total_bytes ?? 0) > 0
+                      ? ` · swap enabled (${bytes(host.swap_total_bytes ?? 0)})`
+                      : " · swap disabled"
+                    : ""}
+                  {host.drop_page_cache ? " · drop page cache before model load" : ""}
+                </p>
+                <p className="mt-1 font-mono text-[10px] text-faint" title={host.helper_image}>
+                  bounded privileged helper · immutable image
+                </p>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 

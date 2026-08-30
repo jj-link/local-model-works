@@ -128,10 +128,12 @@ export function NodeMonitor({ node }: { node: Node }) {
             <TrendChart series={[...netRx, ...netTx]} yLabel="net B/s" valueFormat={fmtAxis("bytes")} ariaLabel="network rates" />
           </div>
 
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[10px] text-muted md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[10px] text-muted md:grid-cols-4">
             <KV label="sum gpu power" value={agg.gpuPower ? `${(agg.gpuPower / 1000).toFixed(0)} W` : "—"} />
             <KV label="sum power limit" value={agg.gpuPowerLimit ? `${(agg.gpuPowerLimit / 1000).toFixed(0)} W` : "—"} />
             <KV label="uptime" value={agg.uptime != null ? fmtUptime(agg.uptime) : "—"} />
+            <KV label="swap" value={agg.swapTotal != null ? (agg.swapTotal > 0 ? `${bytes(agg.swapUsed ?? 0)} / ${bytes(agg.swapTotal)}` : "disabled") : "—"} />
+            <KV label="vm.swappiness" value={agg.swappiness != null ? String(agg.swappiness) : "—"} />
             <KV label="sample age" value={live ? "fresh" : latestSample.ts ? `${Math.round((Date.now() - latestSample.ts * 1000) / 1000)}s` : "—"} />
           </div>
 

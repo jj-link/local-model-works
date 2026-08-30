@@ -32,6 +32,14 @@ type Ulimit struct {
 	Soft int64  `json:"soft"`
 }
 
+// HostPreparationSpec is the bounded set of host-memory controls a reviewed
+// recipe may request. It intentionally carries no command, image, or path.
+type HostPreparationSpec struct {
+	RequireSwap   bool `json:"requireSwap,omitempty"`
+	Swappiness    *int `json:"swappiness,omitempty"`
+	DropPageCache bool `json:"dropPageCache,omitempty"`
+}
+
 // ContainerSpec is the typed, JSON-stable workload description sent to an
 // agent inside a WorkloadCommand.
 type ContainerSpec struct {
@@ -53,6 +61,7 @@ type ContainerSpec struct {
 	PidsLimit       int               `json:"pidsLimit,omitempty"`
 	MemoryBytes     int64             `json:"memoryBytes,omitempty"`
 	CPU             float64           `json:"cpu,omitempty"`
+	CPUSetCpus      string            `json:"cpusetCpus,omitempty"`
 	Mounts          []MountSpec       `json:"mounts,omitempty"`
 	GPUDeviceIDs    []string          `json:"gpuDeviceIDs,omitempty"`
 	GPUsAll         bool              `json:"gpusAll,omitempty"`
@@ -60,7 +69,8 @@ type ContainerSpec struct {
 	// Ulimits carries per-resource rlimits (e.g. memlock, stack). Required for
 	// RoCE/NCCL workloads: the container drops all capabilities, so the default
 	// RLIMIT_MEMLOCK (8 KiB) makes ibv_reg_mr_iova2 fail with ENOMEM.
-	Ulimits []Ulimit `json:"ulimits,omitempty"`
+	Ulimits         []Ulimit             `json:"ulimits,omitempty"`
+	HostPreparation *HostPreparationSpec `json:"hostPreparation,omitempty"`
 }
 
 // ContainerInfo is the observed container state.
@@ -82,6 +92,8 @@ type Runtime interface {
 	Ping(ctx context.Context) (version string, err error)
 	// Pull fetches an image by reference (optionally digest-pinned).
 	Pull(ctx context.Context, spec *PullSpec) error
+	// PrepareHost applies the bounded host-memory controls on a managed spec.
+	PrepareHost(ctx context.Context, spec *ContainerSpec) error
 	// Create materializes a stopped container from the spec.
 	Create(ctx context.Context, spec *ContainerSpec) (string, error)
 	// Start launches a created container.
@@ -125,6 +137,8 @@ const (
 	LabelRank          = "dev.localmodelworks.rank"
 	LabelModule        = "dev.localmodelworks.module"
 )
+
+const HostPreparationModule = "host-preparation"
 
 // ManagedLabels builds the label set for a workload.
 func ManagedLabels(deployment, run, recipeDigest, recipeVersion string, rank int, module string) map[string]string {

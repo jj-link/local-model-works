@@ -289,9 +289,11 @@ type NodePayload struct {
 		UsedBytes  *int64  `json:"used_bytes,omitempty"`
 	} `json:"filesystems,omitempty"`
 	Memory *struct {
-		SwapUsedBytes *int64 `json:"swap_used_bytes,omitempty"`
-		TotalBytes    *int64 `json:"total_bytes,omitempty"`
-		UsedBytes     *int64 `json:"used_bytes,omitempty"`
+		SwapTotalBytes *int64 `json:"swap_total_bytes,omitempty"`
+		SwapUsedBytes  *int64 `json:"swap_used_bytes,omitempty"`
+		Swappiness     *int32 `json:"swappiness,omitempty"`
+		TotalBytes     *int64 `json:"total_bytes,omitempty"`
+		UsedBytes      *int64 `json:"used_bytes,omitempty"`
 	} `json:"memory,omitempty"`
 	Network *struct {
 		Interfaces *[]struct {

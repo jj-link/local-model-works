@@ -32,7 +32,7 @@ import { bytes, endpointUrl, relativeTime, shortId } from "~/lib/format";
 
 function Section({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`lmw-panel ${className ?? ""}`}>
+    <section className={`lmw-panel min-w-0 ${className ?? ""}`}>
       <header className="lmw-panel-head">
         <h2 className="lmw-label">{title}</h2>
       </header>
@@ -68,9 +68,11 @@ const PHASE_LABELS: Record<string, string> = {
   artifacts_ready: "Artifacts ready",
   pulling_image: "Pulling runtime image",
   creating_container: "Creating container",
+  preparing_host: "Preparing host memory",
   starting_container: "Starting runtime",
   health_check: "Waiting for health",
   waiting_for_node: "Waiting for node",
+  waiting_for_workers: "Waiting for workers",
   healthy: "Healthy",
   failed: "Failed",
   stopped: "Stopped",
@@ -117,7 +119,7 @@ export default function DeploymentDetailRoute() {
   const progressRows = rankProgress(run?.progress);
 
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <div className="lmw-panel">
         <header className="lmw-panel-head">
           <div className="flex items-center gap-2.5">
@@ -226,12 +228,12 @@ export default function DeploymentDetailRoute() {
         </header>
 
         <div className="grid gap-4 p-3 lg:grid-cols-2">
-          <div>
+          <div className="min-w-0">
             <p className="lmw-label mb-2">endpoint</p>
             {d.endpoint ? (
               <div className="grid gap-2 font-mono text-xs">
-                <div className="flex items-center gap-2 rounded border border-hairline bg-raised/40 px-2 py-1.5">
-                  <span className="text-accent">{url}</span>
+                <div className="flex min-w-0 items-center gap-2 rounded border border-hairline bg-raised/40 px-2 py-1.5">
+                  <span className="min-w-0 truncate text-accent" title={url}>{url}</span>
                   <CopyButton value={url} label="copy url" className="ml-auto" />
                   {d.observed_state === "healthy" ? (
                     <Button size="sm" variant="outline" onClick={() => navigate(`/chat?deployment=${d.id}`)}>
@@ -329,7 +331,7 @@ export default function DeploymentDetailRoute() {
                     ) : null}
                     {progress.artifact ? <p className="truncate font-mono text-[11px]" title={progress.artifact}>{progress.artifact}</p> : null}
                     {progress.current_file ? <p className="truncate font-mono text-[11px] text-muted" title={progress.current_file}>{progress.current_file}</p> : null}
-                    {progress.message ? <p className="text-xs text-fault">{progress.message}</p> : null}
+                    {progress.message ? <p className={`text-xs ${progress.phase === "failed" ? "text-fault" : "text-muted"}`}>{progress.message}</p> : null}
                   </div>
                 </article>
               );
@@ -419,7 +421,7 @@ export default function DeploymentDetailRoute() {
             ))}
           </div>
         </div>
-        <div className="p-3">
+        <div className="min-w-0 p-3">
           <LogPane key={d.run_id ?? "none"} url={deploymentLogsUrl(d.id, logRank)} active={LOG_ACTIVE.has(d.observed_state)} />
         </div>
       </Section>

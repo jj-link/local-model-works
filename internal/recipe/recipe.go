@@ -143,9 +143,10 @@ type Artifact struct {
 // ArtVariant is one selectable model variant of an artifact. Exactly one of
 // Artifact.Source or Artifact.Variants is present (schema oneOf).
 type ArtVariant struct {
-	Name   string    `json:"name"`
-	Label  string    `json:"label,omitempty"`
-	Source ArtSource `json:"source"`
+	Name        string    `json:"name"`
+	Label       string    `json:"label,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Source      ArtSource `json:"source"`
 }
 
 // EffectiveSource resolves the artifact's source for a deployment: the
@@ -195,19 +196,29 @@ type Parameter struct {
 }
 
 type Workload struct {
-	Match       *Match            `json:"match,omitempty"`
-	Image       Image             `json:"image"`
-	Command     []string          `json:"command"`
-	Args        []string          `json:"args"`
-	Env         map[string]string `json:"env,omitempty"`
-	Ports       []Port            `json:"ports,omitempty"`
-	Resources   Resources         `json:"resources"`
-	Devices     *Devices          `json:"devices,omitempty"`
-	NetworkMode string            `json:"networkMode,omitempty"`
-	Readiness   *Probe            `json:"readiness,omitempty"`
-	Verify      *Probe            `json:"verify,omitempty"`
-	Ranks       []int             `json:"ranks,omitempty"`
-	Permissions []string          `json:"permissions,omitempty"`
+	Match           *Match            `json:"match,omitempty"`
+	Image           Image             `json:"image"`
+	Command         []string          `json:"command"`
+	Args            []string          `json:"args"`
+	Env             map[string]string `json:"env,omitempty"`
+	Ports           []Port            `json:"ports,omitempty"`
+	Resources       Resources         `json:"resources"`
+	Devices         *Devices          `json:"devices,omitempty"`
+	NetworkMode     string            `json:"networkMode,omitempty"`
+	Readiness       *Probe            `json:"readiness,omitempty"`
+	Verify          *Probe            `json:"verify,omitempty"`
+	Ranks           []int             `json:"ranks,omitempty"`
+	StartOrder      string            `json:"startOrder,omitempty"`
+	HostPreparation *HostPreparation  `json:"hostPreparation,omitempty"`
+	Permissions     []string          `json:"permissions,omitempty"`
+}
+
+// HostPreparation declares the narrow host-memory controls LMW applies after
+// image pull and container creation, immediately before model loading.
+type HostPreparation struct {
+	RequireSwap   bool `json:"requireSwap,omitempty"`
+	Swappiness    *int `json:"swappiness,omitempty"`
+	DropPageCache bool `json:"dropPageCache,omitempty"`
 }
 
 type Match struct {
@@ -234,6 +245,7 @@ type Port struct {
 
 type Resources struct {
 	CPU         float64 `json:"cpu,omitempty"`
+	CPUSetCpus  string  `json:"cpusetCpus,omitempty"`
 	MemoryBytes int64   `json:"memoryBytes,omitempty"`
 	ShmBytes    int64   `json:"shmBytes,omitempty"`
 	TmpfsBytes  int64   `json:"tmpfsBytes,omitempty"`

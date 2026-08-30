@@ -77,15 +77,17 @@ export function PlanDeploymentDialog({
   const variantArtifacts = useMemo(() => {
     const manifest = recipeDetail?.manifest as Record<string, unknown> | undefined;
     if (!manifest || !Array.isArray(manifest.artifacts)) return [];
-    const out: { name: string; defaultVariant: string; variants: { name: string; label: string }[] }[] = [];
+    const out: { name: string; defaultVariant: string; sizeBytes: number; variants: { name: string; label: string; description: string }[] }[] = [];
     for (const artifact of manifest.artifacts as Record<string, unknown>[]) {
       if (!Array.isArray(artifact.variants)) continue;
       out.push({
         name: String(artifact.name),
         defaultVariant: String(artifact.defaultVariant ?? ""),
+        sizeBytes: Number(artifact.sizeBytes ?? 0),
         variants: (artifact.variants as Record<string, unknown>[]).map((variant) => ({
           name: String(variant.name),
           label: String(variant.label ?? variant.name),
+          description: String(variant.description ?? ""),
         })),
       });
     }
@@ -246,23 +248,50 @@ export function PlanDeploymentDialog({
               </select>
             </div>
 
-            {variantArtifacts.map((artifact) => (
-              <div key={artifact.name} className="grid gap-2">
-                <Label>{artifact.name}</Label>
-                <select
-                  aria-label={artifact.name}
-                  className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  value={variantChoices[artifact.name] ?? artifact.defaultVariant}
-                  onChange={(event) => {
-                    setVariantChoices((current) => ({ ...current, [artifact.name]: event.target.value }));
-                    planMutation.reset();
-                  }}
-                  disabled={detailFetching}
-                >
-                  {artifact.variants.map((variant) => <option key={variant.name} value={variant.name}>{variant.label}</option>)}
-                </select>
-              </div>
-            ))}
+            {variantArtifacts.map((artifact) => {
+              const selected = variantChoices[artifact.name] ?? artifact.defaultVariant;
+              const label = artifact.name === "model" ? "Model weights" : artifact.name;
+              return (
+                <fieldset key={artifact.name} className="grid gap-2 sm:col-span-2">
+                  <legend className="text-sm font-medium">{label}</legend>
+                  <p className="text-xs text-muted">
+                    Choose once for this deployment. Both ranks receive the same immutable snapshot
+                    {artifact.sizeBytes > 0 ? ` · ${bytes(artifact.sizeBytes)} per node` : ""}.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {artifact.variants.map((variant) => (
+                      <label
+                        key={variant.name}
+                        className={`cursor-pointer rounded border p-3 transition-colors ${
+                          selected === variant.name
+                            ? "border-primary bg-primary/5"
+                            : "border-hairline bg-card hover:border-primary/50"
+                        }`}
+                      >
+                        <span className="flex items-start gap-2">
+                          <input
+                            type="radio"
+                            name={`variant-${artifact.name}`}
+                            value={variant.name}
+                            checked={selected === variant.name}
+                            onChange={() => {
+                              setVariantChoices((current) => ({ ...current, [artifact.name]: variant.name }));
+                              planMutation.reset();
+                            }}
+                            disabled={detailFetching}
+                            className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
+                          />
+                          <span>
+                            <span className="block font-display text-sm font-semibold">{variant.label}</span>
+                            {variant.description ? <span className="mt-1 block text-xs text-muted">{variant.description}</span> : null}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              );
+            })}
           </section>
 
           {recipeDigest ? (

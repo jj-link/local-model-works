@@ -566,6 +566,7 @@ func (s *Server) applyTransferProgress(ctx context.Context, nodeID string, tp *a
 	_ = s.q.UpdateTransferProgress(ctx, db.UpdateTransferProgressParams{
 		BytesDone: int64(tp.GetBytesDone()), BytesTotal: bytesTotal, ID: tp.GetTransferId(),
 	})
+	s.deploys.OnTransferProgress(ctx, tp)
 	s.bus.Publish(ctx, "transfer.progress", nodeID, mustJSON(tp))
 }
 

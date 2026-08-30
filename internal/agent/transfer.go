@@ -586,6 +586,25 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 	return nil
 }
 
+func cleanupTransferStaging(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".untrusted-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func safeRelativePath(value string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(value))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {

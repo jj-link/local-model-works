@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
@@ -174,6 +175,20 @@ func (h *harness) seedNode(t *testing.T, nodeID string, accs []inventory.Acceler
 		t.Fatalf("inventory %s: %v", nodeID, err)
 	}
 	h.nodes.setOnline(nodeID, true)
+}
+
+func (h *harness) seedHostTelemetry(t *testing.T, nodeID string, swapTotal uint64, swappiness uint32) {
+	t.Helper()
+	payload := fmt.Sprintf(
+		`{"memory":{"used_bytes":34359738368,"total_bytes":137438953472,"swap_total_bytes":%d,"swappiness":%d}}`,
+		swapTotal,
+		swappiness,
+	)
+	if err := h.q.InsertTelemetry5s(context.Background(), db.InsertTelemetry5sParams{
+		NodeID: nodeID, Ts: time.Now().Unix(), Payload: payload,
+	}); err != nil {
+		t.Fatalf("seed telemetry %s: %v", nodeID, err)
+	}
 }
 
 func (h *harness) seedRecipe(t *testing.T, digest, manifest string) {
@@ -439,7 +454,7 @@ func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
 	  "workloads":[{
 	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	    "command":["serve"],"args":["--node","${node.id}","--addr","${node.address}"],
-	    "resources":{"cpu":2,"memoryBytes":33554432,"tmpfsBytes":67108864,"pids":128}
+	    "resources":{"cpu":2,"cpusetCpus":"5-9,15-19","memoryBytes":33554432,"tmpfsBytes":67108864,"pids":128}
 	  }]
 	}`
 	h := newHarness(t)
@@ -456,11 +471,211 @@ func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
 	}
 	if spec.NetworkMode != "none" || !spec.ReadonlyRootfs || !spec.NoNewPrivileges ||
 		len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" ||
-		spec.CPU != 2 || spec.MemoryBytes != 33554432 || spec.PidsLimit != 128 || spec.TmpfsBytes != 67108864 {
+		spec.CPU != 2 || spec.CPUSetCpus != "5-9,15-19" || spec.MemoryBytes != 33554432 || spec.PidsLimit != 128 || spec.TmpfsBytes != 67108864 {
 		t.Fatalf("hardened spec = %+v", spec)
 	}
 	if len(spec.Cmd) < 4 || spec.Cmd[1] != "node-exact" {
 		t.Fatalf("rendered node arguments = %v", spec.Cmd)
+	}
+}
+
+func TestHostPreparationRunsBetweenCreateAndStart(t *testing.T) {
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"host-prep","version":"1"},
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],
+	    "hostPreparation":{"requireSwap":true,"swappiness":0,"dropPageCache":true},
+	    "permissions":["host.memory-tuning"],
+	    "resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	  }]
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "node", nil, "")
+	h.seedHostTelemetry(t, "node", 16<<30, 60)
+	h.seedRecipe(t, "recipe-host-prep", manifest)
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-host-prep",
+		Placements:   []PlacementOverride{{NodeID: "node", Rank: 0}},
+	})
+	if err != nil || !plan.Ready {
+		t.Fatalf("host preparation plan = %+v, err=%v", plan, err)
+	}
+	if len(plan.Images) != 1 || plan.Images[0].Digest != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("image preflight = %+v", plan.Images)
+	}
+	if len(plan.HostPreparation) != 1 || plan.HostPreparation[0].SwapTotalBytes != 16<<30 ||
+		plan.HostPreparation[0].SwappinessCurrent != 60 ||
+		plan.HostPreparation[0].SwappinessTarget == nil || *plan.HostPreparation[0].SwappinessTarget != 0 {
+		t.Fatalf("host preparation preflight = %+v", plan.HostPreparation)
+	}
+	deployment := h.createDeployment(t, "recipe-host-prep", PlacementOverride{NodeID: "node", Rank: 0})
+
+	pull := h.nodes.workloadCommands()[0].msg.GetWorkloadCommand()
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: pull.GetCommandId(), Ok: true})
+	create := h.nodes.workloadCommands()[1].msg.GetWorkloadCommand()
+	if create.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
+		t.Fatalf("operation after pull = %s, want CREATE", create.GetOp())
+	}
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: create.GetCommandId(), Ok: true})
+
+	commands := h.nodes.workloadCommands()
+	prepare := commands[len(commands)-1].msg.GetWorkloadCommand()
+	if prepare.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_HOST_PREPARE {
+		t.Fatalf("operation after create = %s, want HOST_PREPARE", prepare.GetOp())
+	}
+	if got := ParseDispatch(deploymentRow(t, h, deployment.ID).Dispatch).Get(0); got != PhaseHostPreparing {
+		t.Fatalf("phase during host preparation = %s, want %s", got, PhaseHostPreparing)
+	}
+	var spec runtime.ContainerSpec
+	if err := json.Unmarshal(prepare.GetContainerSpec(), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.HostPreparation == nil || !spec.HostPreparation.RequireSwap ||
+		spec.HostPreparation.Swappiness == nil || *spec.HostPreparation.Swappiness != 0 ||
+		!spec.HostPreparation.DropPageCache {
+		t.Fatalf("host preparation spec = %+v", spec.HostPreparation)
+	}
+
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: prepare.GetCommandId(), Ok: true})
+	start := h.nodes.workloadCommands()[len(h.nodes.workloadCommands())-1].msg.GetWorkloadCommand()
+	if start.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_START {
+		t.Fatalf("operation after host preparation = %s, want START", start.GetOp())
+	}
+}
+
+func TestPlanBlocksArtifactDownloadWhenCacheStorageIsInsufficient(t *testing.T) {
+	revision := strings.Repeat("a", 40)
+	identity := "hf://Acme/Big@" + revision
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"storage","version":"1"},
+	  "artifacts":[{
+	    "name":"model","kind":"model","sizeBytes":2147483648,
+	    "source":{"type":"huggingface","identity":"hf://Acme/Big","revision":"` + revision + `"},
+	    "mount":"/models/model"
+	  }],
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	  }]
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "node", nil, "")
+	inventoryJSON, err := json.Marshal(inventory.Inventory{
+		Hostname:   "node",
+		CacheRoots: []inventory.CacheRoot{{Path: "/var/lib/lmw"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.q.SetNodeInventory(context.Background(), db.SetNodeInventoryParams{
+		ID: "node", Inventory: nullString(string(inventoryJSON)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.q.InsertTelemetry5s(context.Background(), db.InsertTelemetry5sParams{
+		NodeID: "node",
+		Ts:     time.Now().Unix(),
+		Payload: `{"filesystems":[{
+			"mount_path":"/var/lib/lmw","used_bytes":9663676416,"total_bytes":10737418240
+		}]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.seedArtifact(t, "big-model", identity)
+	h.seedRecipe(t, "recipe-storage", manifest)
+
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-storage",
+		Placements:   []PlacementOverride{{NodeID: "node", Rank: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Ready || len(plan.Storage) != 1 || plan.Storage[0].Sufficient ||
+		plan.Storage[0].RequiredBytes != 2<<30 || plan.Storage[0].AvailableBytes != 1<<30 {
+		t.Fatalf("storage preflight = ready %t, preview %+v", plan.Ready, plan.Storage)
+	}
+	found := false
+	for _, diagnostic := range plan.Diagnostics {
+		if diagnostic.Code == "storage.insufficient" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %+v, want storage.insufficient", plan.Diagnostics)
+	}
+}
+
+func TestWorkersFirstPersistsHeadWaitAndStartsWorkerFirst(t *testing.T) {
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"worker-first","version":"1"},
+	  "compatibility":{"nodeCount":2},
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],"ranks":[0,1],"startOrder":"workers-first",
+	    "resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	  }]
+	}`
+	h := newHarness(t)
+	h.seedNode(t, "head", nil, "")
+	h.seedNode(t, "worker", nil, "")
+	h.seedRecipe(t, "recipe-worker-first", manifest)
+	deployment := h.createDeployment(t, "recipe-worker-first",
+		PlacementOverride{NodeID: "head", Rank: 0},
+		PlacementOverride{NodeID: "worker", Rank: 1},
+	)
+
+	initial := append([]sentMsg(nil), h.nodes.workloadCommands()...)
+	for _, sent := range initial {
+		command := sent.msg.GetWorkloadCommand()
+		if command.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+			t.Fatalf("initial operation = %s, want PULL", command.GetOp())
+		}
+		h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+	}
+	for _, sent := range append([]sentMsg(nil), h.nodes.workloadCommands()...) {
+		command := sent.msg.GetWorkloadCommand()
+		if sent.nodeID == "head" && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
+			h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+		}
+	}
+	if got := ParseDispatch(deploymentRow(t, h, deployment.ID).Dispatch).Get(0); got != PhaseHostPrepared {
+		t.Fatalf("head wait phase = %s, want persisted %s", got, PhaseHostPrepared)
+	}
+	for _, sent := range h.nodes.workloadCommands() {
+		if sent.nodeID == "head" && sent.msg.GetWorkloadCommand().GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_START {
+			t.Fatal("head started before worker")
+		}
+	}
+
+	for _, sent := range append([]sentMsg(nil), h.nodes.workloadCommands()...) {
+		command := sent.msg.GetWorkloadCommand()
+		if sent.nodeID == "worker" && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
+			h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+		}
+	}
+	var workerStart *agentv1.WorkloadCommand
+	for _, sent := range h.nodes.workloadCommands() {
+		command := sent.msg.GetWorkloadCommand()
+		if sent.nodeID == "worker" && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_START {
+			workerStart = command
+		}
+	}
+	if workerStart == nil {
+		t.Fatal("worker START was not dispatched")
+	}
+	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: workerStart.GetCommandId(), Ok: true})
+
+	var headStart *agentv1.WorkloadCommand
+	for _, sent := range h.nodes.workloadCommands() {
+		command := sent.msg.GetWorkloadCommand()
+		if sent.nodeID == "head" && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_START {
+			headStart = command
+		}
+	}
+	if headStart == nil {
+		t.Fatal("head START was not dispatched after worker acknowledgement")
 	}
 }
 
@@ -732,6 +947,44 @@ func TestPlanCreatePersistsWorkloadIndex(t *testing.T) {
 	}
 }
 
+func TestPlanDigestIgnoresLivePreflightTelemetry(t *testing.T) {
+	fabric := "spark-p2p"
+	plan := Plan{
+		RecipeDigest:  "sha256:recipe",
+		Profile:       "default",
+		Variants:      map[string]string{"model": "stable"},
+		WorkloadIndex: 0,
+		Placements: []Placement{
+			{NodeID: "spark2", Rank: 0, AcceleratorUUID: "GPU-head"},
+			{NodeID: "spark3", Rank: 1, AcceleratorUUID: "GPU-worker"},
+		},
+		Fabric:   &fabric,
+		Ports:    []PortPreview{{NodeID: "spark2", HostPort: 8888, ContainerPort: 8888}},
+		Endpoint: Endpoint{Host: "100.92.139.82", Port: 8888, Path: "/health"},
+		Storage: []StoragePreview{
+			{NodeID: "spark2", AvailableBytes: 1 << 40, Known: true, Sufficient: true},
+		},
+		HostPreparation: []HostPreparationPreview{
+			{NodeID: "spark2", SwapTotalBytes: 16 << 30, SwappinessCurrent: 0},
+		},
+		Ready: true,
+	}
+	reviewed := plan.PlanDigest()
+
+	plan.Storage[0].AvailableBytes -= 4096
+	plan.Transfers = []TransferPreview{{ArtifactID: "model", SourceNode: "origin", DestNode: "spark2", Bytes: 200 << 30}}
+	plan.HostPreparation[0].SwapTotalBytes += 4096
+	plan.Diagnostics = []diag.Diagnostic{{Code: "telemetry.changed"}}
+	if fresh := plan.PlanDigest(); fresh != reviewed {
+		t.Fatalf("live preflight telemetry changed plan digest: %s != %s", fresh, reviewed)
+	}
+
+	plan.Endpoint.Port++
+	if changed := plan.PlanDigest(); changed == reviewed {
+		t.Fatal("launch contract change did not change plan digest")
+	}
+}
+
 func TestHFOriginFetchIsPreparableAndDispatched(t *testing.T) {
 	revision := strings.Repeat("a", 40)
 	identity := "hf://Acme/Model@" + revision
@@ -783,6 +1036,71 @@ func TestHFOriginFetchIsPreparableAndDispatched(t *testing.T) {
 	row := deploymentRow(t, h, deployment.ID)
 	if row.ObservedState != "failed" || !strings.Contains(row.Diagnostics, "artifact.fetch_failed") {
 		t.Fatalf("deployment after artifact failure = %+v", row)
+	}
+}
+
+func TestHFOriginFetchIgnoresOfflineCachedSource(t *testing.T) {
+	revision := strings.Repeat("b", 40)
+	identity := "hf://Acme/Model@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
+	)
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedNode(t, "offline-source", gpuAccs("s"), "100.86.3.45:4433")
+	h.seedArtifact(t, "hf-artifact-offline-source", identity)
+	h.seedPlacement(t, "hf-artifact-offline-source", "offline-source", "/var/lib/lmw/artifacts/model", "valid")
+	h.seedRecipe(t, "recipe-origin-offline-source", manifest)
+	h.nodes.online["offline-source"] = false
+
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-origin-offline-source",
+		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
+		t.Fatalf("offline-source plan = %+v, err=%v", plan, err)
+	}
+	h.createDeployment(t, "recipe-origin-offline-source", PlacementOverride{NodeID: "dest", Rank: 0})
+	commands := h.nodes.artifactCommands()
+	if len(commands) != 1 || commands[0].nodeID != "dest" ||
+		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
+		t.Fatalf("artifact commands = %+v", commands)
+	}
+}
+
+func TestHFOriginFetchResumesDestinationPartialBeforePeerCopy(t *testing.T) {
+	revision := strings.Repeat("d", 40)
+	identity := "hf://Acme/Model@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
+	)
+	h := newHarness(t)
+	h.seedNode(t, "dest", gpuAccs("d"), "")
+	h.seedNode(t, "source", gpuAccs("s"), "100.86.3.45:4433")
+	h.seedArtifact(t, "hf-artifact-partial-dest", identity)
+	h.seedPlacement(t, "hf-artifact-partial-dest", "source", "/var/lib/lmw/artifacts/model", "valid")
+	h.seedPlacement(t, "hf-artifact-partial-dest", "dest", "/var/lib/lmw/artifacts/model", "invalid")
+	h.seedRecipe(t, "recipe-origin-partial-dest", manifest)
+
+	plan, err := h.svc.Plan(context.Background(), PlanRequest{
+		RecipeDigest: "recipe-origin-partial-dest",
+		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
+		t.Fatalf("partial-destination plan = %+v, err=%v", plan, err)
+	}
+	h.createDeployment(t, "recipe-origin-partial-dest", PlacementOverride{NodeID: "dest", Rank: 0})
+	commands := h.nodes.artifactCommands()
+	if len(commands) != 1 || commands[0].nodeID != "dest" ||
+		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
+		t.Fatalf("artifact commands = %+v", commands)
+	}
+	if transfers := h.nodes.transferCommands(); len(transfers) != 0 {
+		t.Fatalf("peer transfers = %+v, want resumable origin fetch", transfers)
 	}
 }
 
@@ -905,6 +1223,24 @@ func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
 	}
 	if state, _ := transferState(t, h, tid); state != "pending" {
 		t.Fatalf("transfer state = %s, want pending", state)
+	}
+	h.svc.OnTransferProgress(context.Background(), &agentv1.TransferProgress{
+		TransferId: tid, BytesDone: 64, BytesTotal: 128,
+	})
+	progressRow := deploymentRow(t, h, dep.ID)
+	activeRun, err := h.svc.runs.Get(context.Background(), progressRow.RunID.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranks, ok := activeRun.Progress["ranks"].([]any)
+	if !ok || len(ranks) != 1 {
+		t.Fatalf("serve progress = %#v", activeRun.Progress)
+	}
+	rankProgress, _ := ranks[0].(map[string]any)
+	if rankProgress["phase"] != "downloading" || rankProgress["artifact"] != identity ||
+		rankProgress["bytes_done"] != float64(64) || rankProgress["bytes_total"] != float64(128) ||
+		rankProgress["message"] != "copying verified cache from another fleet node" {
+		t.Fatalf("rank progress = %#v", rankProgress)
 	}
 
 	// Destination writes the copy and reports it valid.
@@ -1088,6 +1424,38 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("active gpu leases = %d, want 0", n)
+	}
+
+	// A queued pre-stop observation must not regress a confirmed stop.
+	commandCount := len(h.nodes.workloadCommands())
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "created", Rank: 0,
+	})
+	row = deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopped" || ParseDispatch(row.Dispatch).Get(0) != PhaseStopped {
+		t.Fatalf("stale created update regressed stop: %+v", row)
+	}
+	if got := len(h.nodes.workloadCommands()); got != commandCount {
+		t.Fatalf("stale created update dispatched %d commands, want %d", got, commandCount)
+	}
+
+	// A genuinely active container after confirmation is driven back to stop.
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "running", Rank: 0,
+	})
+	row = deploymentRow(t, h, dep.ID)
+	if row.ObservedState != "stopping" || ParseDispatch(row.Dispatch).Get(0) != PhaseStopping {
+		t.Fatalf("running update after stop = %+v, want stopping", row)
+	}
+	commands := h.nodes.workloadCommands()
+	if got := commands[len(commands)-1].msg.GetWorkloadCommand().GetOp(); got != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("recovery workload op = %v, want STOP", got)
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+	})
+	if row = deploymentRow(t, h, dep.ID); row.ObservedState != "stopped" {
+		t.Fatalf("recovered stop observed = %s, want stopped", row.ObservedState)
 	}
 }
 

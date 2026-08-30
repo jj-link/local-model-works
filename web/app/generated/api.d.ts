@@ -1155,6 +1155,8 @@ export interface components {
                 port?: number;
             };
             fabric?: string | null;
+            host_preparation?: components["schemas"]["HostPreparationPreview"][];
+            images?: components["schemas"]["ImagePreview"][];
             placements: {
                 accelerator_index: number;
                 accelerator_uuid?: string;
@@ -1180,6 +1182,7 @@ export interface components {
             recipe_name?: string;
             recipe_version?: string;
             risks?: string[];
+            storage?: components["schemas"]["StoragePreview"][];
             transfers?: components["schemas"]["TransferPreview"][];
             /** @description Resolved per-artifact model variants */
             variants?: {
@@ -1250,6 +1253,29 @@ export interface components {
             /** Format: uuid */
             node_id: string;
             rdma_device?: string;
+        };
+        HostPreparationPreview: {
+            drop_page_cache: boolean;
+            helper_image: string;
+            /** Format: uuid */
+            node_id: string;
+            node_name?: string;
+            require_swap: boolean;
+            /** Format: int64 */
+            swap_total_bytes?: number;
+            /** Format: int32 */
+            swappiness_current: number;
+            /** Format: int32 */
+            swappiness_target?: number;
+        };
+        ImagePreview: {
+            /** @enum {string} */
+            action: "verify-or-pull";
+            digest: string;
+            /** Format: uuid */
+            node_id: string;
+            node_name?: string;
+            reference: string;
         };
         Inventory: {
             accelerators?: components["schemas"]["Accelerator"][];
@@ -1411,7 +1437,11 @@ export interface components {
             }[];
             memory?: {
                 /** Format: int64 */
+                swap_total_bytes?: number;
+                /** Format: int64 */
                 swap_used_bytes?: number;
+                /** Format: int32 */
+                swappiness?: number;
                 /** Format: int64 */
                 total_bytes?: number;
                 /** Format: int64 */
@@ -1738,6 +1768,20 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
             username: string;
+        };
+        StoragePreview: {
+            /** Format: int64 */
+            available_bytes?: number;
+            cache_root?: string;
+            known: boolean;
+            /** Format: uuid */
+            node_id: string;
+            node_name?: string;
+            /** Format: int64 */
+            required_bytes: number;
+            sufficient: boolean;
+            /** Format: int64 */
+            total_bytes?: number;
         };
         SystemInfo: {
             /** Format: uri */

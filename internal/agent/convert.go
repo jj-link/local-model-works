@@ -76,9 +76,11 @@ func toProtoTelemetry(t hardware.Telemetry) *agentv1.Telemetry {
 			Load1:        t.Load1x100,
 		},
 		Memory: &agentv1.MemoryTelemetry{
-			UsedBytes:     t.MemoryUsedBytes,
-			TotalBytes:    t.MemoryTotalBytes,
-			SwapUsedBytes: t.SwapUsedBytes,
+			UsedBytes:      t.MemoryUsedBytes,
+			TotalBytes:     t.MemoryTotalBytes,
+			SwapUsedBytes:  t.SwapUsedBytes,
+			SwapTotalBytes: t.SwapTotalBytes,
+			Swappiness:     t.Swappiness,
 		},
 		Network: &agentv1.NetworkTelemetry{
 			RxBytes:          t.NetRxBytes,

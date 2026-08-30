@@ -1,0 +1,187 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: glm53-flash-nvfp4-dflash2-spark-tp2
+  version: 1.0.4
+  displayName: GLM-5.3 Flash NVFP4 + DFlash2 · 2× DGX Spark
+  model: glm-5.3-flash
+  engine: vllm
+  description: >-
+    GLM-5.3 Flash NVFP4 across two NVIDIA GB10 DGX Sparks with tensor
+    parallelism over RoCE, profiler-sized FP8 KV cache, 262K context, tool
+    calling, reasoning, and DFlash2 k=7 speculative decoding. Choose the stable
+    censored checkpoint or clearly marked legacy censored and uncensored
+    ModelOpt weights. LMW pins every image, weight snapshot, and upstream patch;
+    prepares both hosts; starts the worker before the API head; and verifies
+    /health rather than the misleading /v1/models endpoint.
+  license: CC-BY-NC-ND-4.0
+  source:
+    url: https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark
+    revision: "7497e96b8fb46ed837f51b58f0e15943c8cb9658"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts:
+  - name: model
+    kind: model
+    sizeBytes: 197897969933
+    defaultVariant: censored
+    variants:
+      - name: censored
+        label: Censored · stable output (recommended)
+        description: RedHatAI compressed-tensors W4A4 checkpoint · ungated · avoids vLLM issue 54150 corrupted token IDs · loads about 2× faster · slight hard-reasoning quality tradeoff
+        source:
+          type: huggingface
+          identity: hf://RedHatAI/GLM-5.3-Flash-NVFP4
+          revision: "36c184c6cda000a481711306df5adde42f63321a"
+      - name: censored_modelopt
+        label: Censored · legacy ModelOpt W4A16
+        description: LibertAIDAI stock weights · known intermittent corrupted token IDs can desync tool calls and trigger repetition loops · choose only to compare W4A16 quality
+        source:
+          type: huggingface
+          identity: hf://LibertAIDAI/GLM-5.3-Flash-NVFP4
+          revision: "357b45cc73a07a541cede88861f7736c9487ebf7"
+      - name: uncensored
+        label: Uncensored · abliterated ModelOpt layers 15–45
+        description: Refusals removed · gated terms may require a Hugging Face token · carries the same known ModelOpt corrupted-token risk as the legacy censored checkpoint
+        source:
+          type: huggingface
+          identity: hf://drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock
+          revision: "d7f8afa81e62c156446fda43304d704563622590"
+    mount: /models/target
+    validation: snapshot
+  - name: drafter
+    kind: model
+    sizeBytes: 2342175855
+    source:
+      type: huggingface
+      identity: hf://incoai/GLM-5.3-Flash-DFlash2
+      revision: "dc77ff1c99eeb2df044ee3d4f0094eb033fee410"
+    mount: /models/drafter
+    validation: snapshot
+workloads:
+  - match:
+      nodeCount: 2
+      accelerator:
+        vendor: nvidia
+        architectures:
+          - sm_121
+    image:
+      reference: ghcr.io/tonyd2wild/vllm-glm53-flash@sha256:4def0ef644cb2e9814136dcffd5e385e21bc594f48f3b292234051904abe85a6
+      digest: sha256:4def0ef644cb2e9814136dcffd5e385e21bc594f48f3b292234051904abe85a6
+    command:
+      - /bin/bash
+      - /lmw/assets/serve.sh
+    args: []
+    ranks:
+      - 0
+      - 1
+    startOrder: workers-first
+    hostPreparation:
+      requireSwap: true
+      swappiness: 0
+      dropPageCache: true
+    env:
+      NODE_RANK: "${node.rank}"
+      WORLD_SIZE: "2"
+      MASTER_ADDR: "${fabric.address}"
+      MASTER_PORT: "29521"
+      LOCAL_FABRIC_ADDR: "${fabric.node_address}"
+      FABRIC_INTERFACE: "${fabric.interface}"
+      FABRIC_RDMA_DEVICE: "${fabric.rdma_device}"
+      FABRIC_GID_INDEX: "${fabric.gid_index}"
+      MODEL_PATH: "${artifact.model.path}"
+      DFLASH_MODEL_PATH: "${artifact.drafter.path}"
+      SERVED_MODEL_NAME: glm-5.3-flash
+      API_PORT: "8888"
+      TENSOR_PARALLEL_SIZE: "2"
+      MAX_MODEL_LEN: "262144"
+      MAX_NUM_SEQS: "6"
+      GPU_MEMORY_UTILIZATION: "0.88"
+      KV_CACHE_DTYPE: fp8_e4m3
+      DFLASH_TOKENS: "7"
+      BLOCK_SIZE: "2304"
+      MOE_BACKEND: marlin
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      NCCL_NET: IB
+      NCCL_IB_DISABLE: "0"
+      NCCL_IB_HCA: "${fabric.rdma_device}"
+      NCCL_IB_GID_INDEX: "${fabric.gid_index}"
+      NCCL_IB_ROCE_VERSION_NUM: "2"
+      NCCL_IB_ADDR_FAMILY: AF_INET
+      NCCL_SOCKET_IFNAME: "${fabric.interface}"
+      GLOO_SOCKET_IFNAME: "${fabric.interface}"
+      TP_SOCKET_IFNAME: "${fabric.interface}"
+      MN_IF_NAME: "${fabric.interface}"
+      NCCL_NVLS_ENABLE: "0"
+      NCCL_CROSS_NIC: "0"
+      NCCL_IB_MERGE_NICS: "0"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_DEBUG: WARN
+      TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+      VLLM_HOST_IP: "${fabric.node_address}"
+      HF_HOME: /tmp/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      TORCH_CUDA_ARCH_LIST: 12.1a
+      FLASHINFER_CUDA_ARCH_LIST: 12.1a
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+      HOME: /tmp/home
+      NUMBA_CACHE_DIR: /tmp/numba
+      TRITON_CACHE_DIR: /tmp/triton
+      TILELANG_CACHE_DIR: /tmp/tilelang
+      XDG_CACHE_HOME: /tmp/cache
+      VLLM_CACHE_ROOT: /tmp/vllm-cache
+    devices:
+      accelerator:
+        all: true
+      rdma:
+        all: true
+    networkMode: host
+    permissions:
+      - devices.rdma
+      - network.host
+      - memory.shm-large
+      - rootfs.write
+      - host.memory-tuning
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      intervalSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 30
+    resources:
+      cpu: 16
+      memoryBytes: 124554051584
+      shmBytes: 34359738368
+      tmpfsBytes: 8589934592
+      pids: 8192
+    verify:
+      expect:
+        statusCode: 200
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+assets:
+  - serve.sh
+  - chat_template_mm.jinja
+  - docker/sparse_attn_indexer_kpool_sm121.py

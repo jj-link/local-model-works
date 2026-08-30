@@ -149,3 +149,27 @@ func TestMakeTransferredArtifactMountable(t *testing.T) {
 		t.Fatalf("file mode = %v; want 0644", info.Mode().Perm())
 	}
 }
+
+func TestCleanupTransferStagingRemovesOnlyUntrustedDirectories(t *testing.T) {
+	root := t.TempDir()
+	staging := filepath.Join(root, ".untrusted-abandoned-transfer")
+	complete := filepath.Join(root, "verified-model")
+	for _, directory := range []string{staging, complete} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "model.bin"), []byte("weights"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := cleanupTransferStaging(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("stale staging still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(complete, "model.bin")); err != nil {
+		t.Fatalf("verified artifact removed: %v", err)
+	}
+}

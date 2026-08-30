@@ -38,7 +38,8 @@ func newHostSampler() *hostSampler {
 // elapsed interval all yield zero rather than a spike.
 func (s *hostSampler) Sample(ctx context.Context) Telemetry {
 	t := Telemetry{CPUCores: uint32(runtime.NumCPU())}
-	t.MemoryUsedBytes, t.MemoryTotalBytes, t.SwapUsedBytes = readMeminfo()
+	t.MemoryUsedBytes, t.MemoryTotalBytes, t.SwapUsedBytes, t.SwapTotalBytes = readMeminfo()
+	t.Swappiness = readSwappiness()
 	t.UptimeSeconds = readUptimeSeconds()
 	t.Load1x100 = readLoad1x100()
 
@@ -112,18 +113,30 @@ func byteRate(delta uint64, dt float64) uint64 {
 
 // hostMemoryTotal is a stateless memory snapshot used by inventory probes.
 func hostMemoryTotal() uint64 {
-	_, total, _ := readMeminfo()
+	_, total, _, _ := readMeminfo()
 	return total
 }
 
-// readMeminfo returns used, total, swap bytes from /proc/meminfo.
-func readMeminfo() (used, total, swap uint64) {
+// readMeminfo returns host memory and swap usage from /proc/meminfo.
+func readMeminfo() (used, total, swapUsed, swapTotal uint64) {
 	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
 		var tm Telemetry
 		parseMeminfo(raw, &tm)
-		return tm.MemoryUsedBytes, tm.MemoryTotalBytes, tm.SwapUsedBytes
+		return tm.MemoryUsedBytes, tm.MemoryTotalBytes, tm.SwapUsedBytes, tm.SwapTotalBytes
 	}
-	return 0, 0, 0
+	return 0, 0, 0, 0
+}
+
+func readSwappiness() uint32 {
+	raw, err := os.ReadFile("/proc/sys/vm/swappiness")
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(value)
 }
 
 // readUptimeSeconds returns host uptime from /proc/uptime.
@@ -160,20 +173,31 @@ func readLoad1x100() uint64 {
 }
 
 func parseMeminfo(raw []byte, t *Telemetry) {
+	var memoryAvailable, swapFree uint64
 	sc := bufio.NewScanner(strings.NewReader(string(raw)))
 	for sc.Scan() {
 		line := sc.Text()
 		var key string
 		var val uint64
-		if _, err := fmtSscanf(line, &key, &val); err == nil {
-			switch key {
-			case "MemTotal":
-				t.MemoryTotalBytes = val * 1024
-			case "MemAvailable":
-				t.MemoryUsedBytes = (t.MemoryTotalBytes - val*1024 + 1023) / 1024 * 1024
-			case "SwapTotal", "SwapFree":
-			}
+		if _, err := fmtSscanf(line, &key, &val); err != nil {
+			continue
 		}
+		switch key {
+		case "MemTotal":
+			t.MemoryTotalBytes = val * 1024
+		case "MemAvailable":
+			memoryAvailable = val * 1024
+		case "SwapTotal":
+			t.SwapTotalBytes = val * 1024
+		case "SwapFree":
+			swapFree = val * 1024
+		}
+	}
+	if t.MemoryTotalBytes >= memoryAvailable {
+		t.MemoryUsedBytes = t.MemoryTotalBytes - memoryAvailable
+	}
+	if t.SwapTotalBytes >= swapFree {
+		t.SwapUsedBytes = t.SwapTotalBytes - swapFree
 	}
 }
 

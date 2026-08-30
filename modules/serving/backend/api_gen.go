@@ -89,6 +89,21 @@ func (e DiagnosticSeverity) Valid() bool {
 	}
 }
 
+// Defines values for ImagePreviewAction.
+const (
+	VerifyOrPull ImagePreviewAction = "verify-or-pull"
+)
+
+// Valid indicates whether the value is a known member of the ImagePreviewAction enum.
+func (e ImagePreviewAction) Valid() bool {
+	switch e {
+	case VerifyOrPull:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetDeploymentTelemetryParamsResolution.
 const (
 	N1m GetDeploymentTelemetryParamsResolution = "1m"
@@ -174,8 +189,10 @@ type DeploymentPlan struct {
 		Path  *string `json:"path,omitempty"`
 		Port  *int    `json:"port,omitempty"`
 	} `json:"endpoint,omitempty"`
-	Fabric     *string `json:"fabric,omitempty"`
-	Placements []struct {
+	Fabric          *string                   `json:"fabric,omitempty"`
+	HostPreparation *[]HostPreparationPreview `json:"host_preparation,omitempty"`
+	Images          *[]ImagePreview           `json:"images,omitempty"`
+	Placements      []struct {
 		AcceleratorIndex int                `json:"accelerator_index"`
 		AcceleratorUuid  *string            `json:"accelerator_uuid,omitempty"`
 		NodeId           openapi_types.UUID `json:"node_id"`
@@ -200,6 +217,7 @@ type DeploymentPlan struct {
 	RecipeName    *string            `json:"recipe_name,omitempty"`
 	RecipeVersion *string            `json:"recipe_version,omitempty"`
 	Risks         *[]string          `json:"risks,omitempty"`
+	Storage       *[]StoragePreview  `json:"storage,omitempty"`
 	Transfers     *[]TransferPreview `json:"transfers,omitempty"`
 
 	// Variants Resolved per-artifact model variants
@@ -242,6 +260,30 @@ type Error struct {
 	Message string                  `json:"message"`
 }
 
+// HostPreparationPreview defines model for HostPreparationPreview.
+type HostPreparationPreview struct {
+	DropPageCache     bool               `json:"drop_page_cache"`
+	HelperImage       string             `json:"helper_image"`
+	NodeId            openapi_types.UUID `json:"node_id"`
+	NodeName          *string            `json:"node_name,omitempty"`
+	RequireSwap       bool               `json:"require_swap"`
+	SwapTotalBytes    *int64             `json:"swap_total_bytes,omitempty"`
+	SwappinessCurrent int32              `json:"swappiness_current"`
+	SwappinessTarget  *int32             `json:"swappiness_target,omitempty"`
+}
+
+// ImagePreview defines model for ImagePreview.
+type ImagePreview struct {
+	Action    ImagePreviewAction `json:"action"`
+	Digest    string             `json:"digest"`
+	NodeId    openapi_types.UUID `json:"node_id"`
+	NodeName  *string            `json:"node_name,omitempty"`
+	Reference string             `json:"reference"`
+}
+
+// ImagePreviewAction defines model for ImagePreview.Action.
+type ImagePreviewAction string
+
 // ServingPayload defines model for ServingPayload.
 type ServingPayload struct {
 	Available           *bool    `json:"available,omitempty"`
@@ -270,6 +312,18 @@ type ServingTelemetrySample struct {
 	DeploymentId openapi_types.UUID `json:"deployment_id"`
 	Payload      ServingPayload     `json:"payload"`
 	Ts           int64              `json:"ts"`
+}
+
+// StoragePreview defines model for StoragePreview.
+type StoragePreview struct {
+	AvailableBytes *int64             `json:"available_bytes,omitempty"`
+	CacheRoot      *string            `json:"cache_root,omitempty"`
+	Known          bool               `json:"known"`
+	NodeId         openapi_types.UUID `json:"node_id"`
+	NodeName       *string            `json:"node_name,omitempty"`
+	RequiredBytes  int64              `json:"required_bytes"`
+	Sufficient     bool               `json:"sufficient"`
+	TotalBytes     *int64             `json:"total_bytes,omitempty"`
 }
 
 // TransferPreview defines model for TransferPreview.

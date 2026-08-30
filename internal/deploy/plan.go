@@ -89,24 +89,62 @@ type TransferPreview struct {
 	Network    string `json:"network,omitempty"`
 }
 
+// ImagePreview is the immutable image each selected node will verify/pull.
+type ImagePreview struct {
+	NodeID    string `json:"node_id"`
+	NodeName  string `json:"node_name,omitempty"`
+	Reference string `json:"reference"`
+	Digest    string `json:"digest"`
+	Action    string `json:"action"`
+}
+
+// StoragePreview compares missing artifact bytes with the live filesystem
+// that owns the node's configured cache root.
+type StoragePreview struct {
+	NodeID         string `json:"node_id"`
+	NodeName       string `json:"node_name,omitempty"`
+	CacheRoot      string `json:"cache_root,omitempty"`
+	RequiredBytes  int64  `json:"required_bytes"`
+	AvailableBytes int64  `json:"available_bytes,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	Known          bool   `json:"known"`
+	Sufficient     bool   `json:"sufficient"`
+}
+
+// HostPreparationPreview makes privileged-but-bounded memory preparation
+// explicit before launch.
+type HostPreparationPreview struct {
+	NodeID            string `json:"node_id"`
+	NodeName          string `json:"node_name,omitempty"`
+	RequireSwap       bool   `json:"require_swap"`
+	SwapTotalBytes    int64  `json:"swap_total_bytes,omitempty"`
+	SwappinessCurrent uint32 `json:"swappiness_current"`
+	SwappinessTarget  *int   `json:"swappiness_target,omitempty"`
+	DropPageCache     bool   `json:"drop_page_cache"`
+	HelperImage       string `json:"helper_image"`
+}
+
 // Plan is the previewed deployment (openapi DeploymentPlan).
 type Plan struct {
-	RecipeDigest  string            `json:"recipe_digest"`
-	RecipeName    string            `json:"recipe_name,omitempty"`
-	RecipeVersion string            `json:"recipe_version,omitempty"`
-	Profile       string            `json:"profile"`
-	Variants      map[string]string `json:"variants,omitempty"`
-	WorkloadIndex int               `json:"workload_index"`
-	Placements    []Placement       `json:"placements"`
-	Fabric        *string           `json:"fabric,omitempty"`
-	Transfers     []TransferPreview `json:"transfers,omitempty"`
-	Ports         []PortPreview     `json:"ports,omitempty"`
-	Endpoint      Endpoint          `json:"endpoint,omitempty"`
-	Risks         []string          `json:"risks,omitempty"`
-	Conflicts     []Conflict        `json:"conflicts,omitempty"`
-	Diagnostics   []diag.Diagnostic `json:"diagnostics,omitempty"`
-	Ready         bool              `json:"ready"`
-	Digest        string            `json:"plan_digest,omitempty"`
+	RecipeDigest    string                   `json:"recipe_digest"`
+	RecipeName      string                   `json:"recipe_name,omitempty"`
+	RecipeVersion   string                   `json:"recipe_version,omitempty"`
+	Profile         string                   `json:"profile"`
+	Variants        map[string]string        `json:"variants,omitempty"`
+	WorkloadIndex   int                      `json:"workload_index"`
+	Placements      []Placement              `json:"placements"`
+	Fabric          *string                  `json:"fabric,omitempty"`
+	Transfers       []TransferPreview        `json:"transfers,omitempty"`
+	Images          []ImagePreview           `json:"images,omitempty"`
+	Storage         []StoragePreview         `json:"storage,omitempty"`
+	HostPreparation []HostPreparationPreview `json:"host_preparation,omitempty"`
+	Ports           []PortPreview            `json:"ports,omitempty"`
+	Endpoint        Endpoint                 `json:"endpoint,omitempty"`
+	Risks           []string                 `json:"risks,omitempty"`
+	Conflicts       []Conflict               `json:"conflicts,omitempty"`
+	Diagnostics     []diag.Diagnostic        `json:"diagnostics,omitempty"`
+	Ready           bool                     `json:"ready"`
+	Digest          string                   `json:"plan_digest,omitempty"`
 }
 
 // PlanRequest previews a deployment (openapi DeploymentPlanRequest).
@@ -133,15 +171,17 @@ type CreateRequest struct {
 type dispatchPhases map[int32]string
 
 const (
-	PhaseNone      = "none"
-	PhasePreparing = "preparing"
-	PhasePrepared  = "prepared"
-	PhasePulled    = "pulled"
-	PhaseCreated   = "created"
-	PhaseVerifying = "verifying"
-	PhaseStarted   = "started"
-	PhaseStopping  = "stopping"
-	PhaseStopped   = "stopped"
+	PhaseNone          = "none"
+	PhasePreparing     = "preparing"
+	PhasePrepared      = "prepared"
+	PhasePulled        = "pulled"
+	PhaseCreated       = "created"
+	PhaseHostPreparing = "host_preparing"
+	PhaseHostPrepared  = "host_prepared"
+	PhaseVerifying     = "verifying"
+	PhaseStarted       = "started"
+	PhaseStopping      = "stopping"
+	PhaseStopped       = "stopped"
 )
 
 func (d dispatchPhases) Get(rank int32) string {
@@ -161,11 +201,27 @@ func ParseDispatch(raw string) dispatchPhases {
 	return out
 }
 
-// PlanDigest computes sha256 over the canonical plan JSON minus the digest.
+// PlanDigest identifies the launch contract the operator reviewed. Live
+// preflight telemetry (free bytes, cache/download actions, host readings, and
+// diagnostics) is deliberately excluded: Create recomputes and enforces that
+// telemetry, but harmless changes between preview and click must not make an
+// otherwise identical launch stale.
 func (p *Plan) PlanDigest() string {
-	cp := *p
-	cp.Digest = ""
-	b, err := cjson.Marshal(cp)
+	contract := struct {
+		RecipeDigest  string            `json:"recipe_digest"`
+		Profile       string            `json:"profile"`
+		Variants      map[string]string `json:"variants,omitempty"`
+		WorkloadIndex int               `json:"workload_index"`
+		Placements    []Placement       `json:"placements"`
+		Fabric        *string           `json:"fabric,omitempty"`
+		Ports         []PortPreview     `json:"ports,omitempty"`
+		Endpoint      Endpoint          `json:"endpoint,omitempty"`
+	}{
+		RecipeDigest: p.RecipeDigest, Profile: p.Profile, Variants: p.Variants,
+		WorkloadIndex: p.WorkloadIndex, Placements: p.Placements, Fabric: p.Fabric,
+		Ports: p.Ports, Endpoint: p.Endpoint,
+	}
+	b, err := cjson.Marshal(contract)
 	if err != nil {
 		return ""
 	}

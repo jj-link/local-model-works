@@ -58,6 +58,9 @@ export interface AggregatedNodePayload {
   memUsed?: number;
   memTotal?: number;
   gpuUtilMax?: number;
+  swapUsed?: number;
+  swapTotal?: number;
+  swappiness?: number;
   gpuTempMax?: number;
   gpuMemUsed?: number;
   gpuMemTotal?: number;
@@ -81,6 +84,9 @@ export function aggregateNodePayload(p: NodePayload | undefined): AggregatedNode
   out.cpuCores = p.cpu?.cores;
   out.memUsed = p.memory?.used_bytes;
   out.memTotal = p.memory?.total_bytes;
+  out.swapUsed = p.memory?.swap_used_bytes;
+  out.swapTotal = p.memory?.swap_total_bytes;
+  out.swappiness = p.memory?.swappiness;
   out.netRxRate = p.network?.rx_bytes_per_second;
   out.netTxRate = p.network?.tx_bytes_per_second;
   if (typeof p.uptime_seconds === "number") out.uptime = p.uptime_seconds;

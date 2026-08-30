@@ -94,7 +94,7 @@ export function LogPane({
   }
 
   return (
-    <div className={cn("lmw-panel flex flex-col overflow-hidden", className)}>
+    <div className={cn("lmw-panel flex w-full min-w-0 max-w-full flex-col overflow-hidden", className)}>
       <div className="flex items-center gap-2 border-b border-hairline px-3 py-1.5">
         <span className="lmw-label">logs</span>
         {reconnecting ? (
@@ -132,7 +132,7 @@ export function LogPane({
       </div>
       <div
         ref={scrollRef}
-        className={cn("overflow-auto bg-background/60 p-3 font-mono text-xs leading-5", height)}
+        className={cn("max-w-full overflow-auto bg-background/60 p-3 font-mono text-xs leading-5", height)}
         role="log"
         aria-live={follow ? "polite" : "off"}
       >

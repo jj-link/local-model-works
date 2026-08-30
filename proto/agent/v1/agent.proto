@@ -188,6 +188,8 @@ message MemoryTelemetry {
   uint64 used_bytes = 1;
   uint64 total_bytes = 2;
   uint64 swap_used_bytes = 3;
+  uint64 swap_total_bytes = 4;
+  uint32 swappiness = 5;
 }
 
 message AcceleratorTelemetry {
@@ -376,6 +378,7 @@ enum WorkloadOp {
   WORKLOAD_OP_REMOVE = 5;
   WORKLOAD_OP_INSPECT = 6;
   WORKLOAD_OP_LOGS = 7;
+  WORKLOAD_OP_HOST_PREPARE = 8;
 }
 
 message LogRequest {

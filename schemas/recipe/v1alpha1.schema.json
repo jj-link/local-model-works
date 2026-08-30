@@ -148,6 +148,7 @@
             "properties": {
               "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
               "label": { "type": "string", "maxLength": 128 },
+              "description": { "type": "string", "maxLength": 512 },
               "source": { "$ref": "#/$defs/variantSource" }
             }
           }
@@ -300,6 +301,7 @@
           "required": ["cpu", "memoryBytes", "pids"],
           "properties": {
             "cpu": { "type": "number", "minimum": 0.1 },
+            "cpusetCpus": { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$", "maxLength": 128 },
             "memoryBytes": { "type": "integer", "minimum": 16777216 },
             "shmBytes": { "type": "integer", "minimum": 67108864 },
             "tmpfsBytes": { "type": "integer", "minimum": 67108864, "maximum": 34359738368 },
@@ -337,11 +339,27 @@
           "items": { "type": "integer", "minimum": 0 },
           "maxItems": 8
         },
+        "startOrder": {
+          "type": "string",
+          "enum": ["parallel", "workers-first"],
+          "default": "parallel",
+          "description": "workers-first holds rank 0 until every worker container has started"
+        },
+        "hostPreparation": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "requireSwap": { "type": "boolean", "default": false },
+            "swappiness": { "type": "integer", "minimum": 0, "maximum": 200 },
+            "dropPageCache": { "type": "boolean", "default": false }
+          }
+        },
         "permissions": {
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["network.host", "devices.rdma", "memory.shm-large", "rootfs.write"]
+            "enum": ["network.host", "devices.rdma", "memory.shm-large", "rootfs.write", "host.memory-tuning"]
           },
           "uniqueItems": true
         }

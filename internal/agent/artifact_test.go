@@ -61,6 +61,86 @@ func TestResumeHTTPFileRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+func TestRetryResumeHTTPFileContinuesAfterTransientStreamFailure(t *testing.T) {
+	payload := []byte(strings.Repeat("resumable-model-shard-", 4096))
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		call := calls.Add(1)
+		offset := 0
+		if value := request.Header.Get("Range"); value != "" {
+			if _, err := fmt.Sscanf(value, "bytes=%d-", &offset); err != nil {
+				t.Errorf("range = %q", value)
+				return
+			}
+			response.WriteHeader(http.StatusPartialContent)
+		} else {
+			response.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+		}
+		if call == 1 {
+			_, _ = response.Write(payload[:len(payload)/3])
+			return
+		}
+		_, _ = response.Write(payload[offset:])
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "artifact.part")
+	if err := retryResumeHTTPFile(t.Context(), server.Client(), server.URL, "", destination, int64(len(payload))); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("requests = %d, want 2", calls.Load())
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("download mismatch: size=%d err=%v", len(got), err)
+	}
+}
+
+func TestResumeHTTPFileAcceptsCompletePartialWithoutNetwork(t *testing.T) {
+	payload := []byte("complete-but-not-yet-validated")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls.Add(1)
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "artifact.part")
+	if err := os.WriteFile(destination, payload, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumeHTTPFile(t.Context(), server.Client(), server.URL, "", destination, int64(len(payload))); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("requests = %d, want 0", calls.Load())
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("mode = %v, want 0644", info.Mode().Perm())
+	}
+}
+
+func TestRetryResumeHTTPFileDoesNotRetryTerminalStatus(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(response, "missing", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	err := retryResumeHTTPFile(t.Context(), server.Client(), server.URL, "", filepath.Join(t.TempDir(), "artifact.part"), 10)
+	if err == nil {
+		t.Fatal("terminal response accepted")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", calls.Load())
+	}
+}
+
 // TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds proves the
 // metadata request carries ?blobs=true (without it Hugging Face omits
 // size/lfs on siblings) and that both a regular Git blob and an LFS sibling
@@ -225,6 +305,28 @@ func TestMakePackageTraversableFixesCachedModes(t *testing.T) {
 	}
 	if mode := fileInfo.Mode().Perm(); mode != 0o555 {
 		t.Errorf("serve.sh mode = %o, want 0555 (files keep packed mode)", mode)
+	}
+}
+
+// TestEnsurePackageAssetsDirCreatesEmptyBindSource covers the spark1 Qwen
+// DGX Spark deployment failure: a compiled package whose asset layer is
+// legitimately empty (a zero-asset recipe) left no assets/ directory behind,
+// and the workload create failed with "bind source path does not exist"
+// because the container spec always mounts <package>/assets read-only.
+func TestEnsurePackageAssetsDirCreatesEmptyBindSource(t *testing.T) {
+	pkg := t.TempDir()
+	if err := ensurePackageAssetsDir(pkg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(pkg, "assets"))
+	if err != nil {
+		t.Fatalf("assets dir must exist for zero-asset packages: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("assets is not a directory")
+	}
+	if mode := info.Mode().Perm(); mode != 0o755 {
+		t.Errorf("assets mode = %o, want 0755", mode)
 	}
 }
 

@@ -16,4 +16,7 @@ func TestParseMeminfo(t *testing.T) {
 	if tm.MemoryUsedBytes != 127535204*1024-1000*1024 {
 		t.Fatalf("MemoryUsedBytes = %d, want %d", tm.MemoryUsedBytes, 127535204*1024-1000*1024)
 	}
+	if tm.SwapTotalBytes != 15*1024 || tm.SwapUsedBytes != 1024 {
+		t.Fatalf("swap bytes = %d/%d, want %d/%d", tm.SwapUsedBytes, tm.SwapTotalBytes, 1024, 15*1024)
+	}
 }

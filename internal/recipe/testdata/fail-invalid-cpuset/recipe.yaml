@@ -1,0 +1,41 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: lmw-fail-cpuset
+  version: 1.0.0
+  displayName: lmw-fail-cpuset
+  description: Malformed cpusetCpus fixture.
+  license: MIT
+  source:
+    url: https://fixtures.local/fail-invalid-cpuset
+    revision: "0000000000000000000000000000000000000000"
+    path: .
+compatibility:
+  nodeCount: 1
+artifacts:
+  - name: model
+    kind: model
+    source:
+      type: huggingface
+      identity: hf://drowzeys/keys-demo
+      revision: 6c47916f85e52b5e712223ca8f93952f90255714
+    mount: /var/lib/lmw/artifacts/model
+    validation: snapshot
+workloads:
+  - image:
+      reference: ghcr.io/localmodelworks/demo-serve:1.0.0
+      digest: sha256:1f2e3d4c5b6a798091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708
+    command:
+      - /bin/serve
+    args:
+      - --model
+      - ${artifact.model.path}
+    resources:
+      cpu: 1
+      cpusetCpus: "5-9,oops"
+      memoryBytes: 2147483648
+      pids: 64
+    readiness:
+      httpGet:
+        path: /health
+        port: 8000

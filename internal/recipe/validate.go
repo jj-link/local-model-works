@@ -276,6 +276,9 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 		if w.Resources.ShmBytes >= 1024*1024*1024 && !perms["memory.shm-large"] {
 			add("recipe.permission-missing", "shared memory >= 1 GiB requires the memory.shm-large permission", p+".permissions")
 		}
+		if w.HostPreparation != nil && !perms["host.memory-tuning"] {
+			add("recipe.permission-missing", "host memory preparation requires the host.memory-tuning permission", p+".permissions")
+		}
 	}
 
 	// Variant predicates: duplicates rejected; empty predicate only last.

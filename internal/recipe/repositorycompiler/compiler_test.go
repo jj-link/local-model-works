@@ -83,6 +83,101 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 		t.Fatalf("unexpected layout error = %v", err)
 	}
 
+	dgxCheckout := t.TempDir()
+	for _, name := range []string{"README.md", ".env.sample", "start.sh", "stop.sh"} {
+		if err := os.WriteFile(filepath.Join(dgxCheckout, name), []byte("# reviewed upstream contract\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dgxSource := recipe.RepositorySource{
+		RepositoryID: repositoryID(t, QwenDGXSparkRepositoryURL), URL: QwenDGXSparkRepositoryURL, Path: ".",
+		CommitSHA: strings.Repeat("7", 40), TreeSHA: strings.Repeat("8", 40),
+	}
+	dgxCompiler := &MiaQwenDGXSparkCompiler{validator: validator}
+	assertDeterministic(t, dgxCompiler, dgxSource, dgxCheckout)
+	compiledDGX, err := dgxCompiler.Compile(context.Background(), dgxSource, dgxCheckout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dgxManifest, err := recipe.Parse(compiledDGX.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dgxManifest.Metadata.Name != "qwen38-27b-nvfp4-mtp-dgx-spark" ||
+		dgxManifest.Metadata.Version != "1.0.0" ||
+		dgxManifest.Metadata.DisplayName != "MiaAI-Lab Qwen3.8-27B NVFP4 MTP · DGX Spark" ||
+		dgxManifest.Metadata.Model != "qwen3.8-27b-sglang" ||
+		dgxManifest.Metadata.Engine != "sglang" ||
+		dgxManifest.Metadata.License != "MIT" ||
+		dgxManifest.Metadata.Source == nil ||
+		dgxManifest.Metadata.Source.Revision != strings.Repeat("7", 40) {
+		t.Fatalf("managed DGX Spark metadata = %+v", dgxManifest.Metadata)
+	}
+	if dgxManifest.Compatibility.NodeCount != 1 ||
+		dgxManifest.Compatibility.Accelerator == nil ||
+		len(dgxManifest.Compatibility.Accelerator.Architectures) != 1 ||
+		dgxManifest.Compatibility.Accelerator.Architectures[0] != "sm_121" ||
+		dgxManifest.Compatibility.Accelerator.Count != 1 ||
+		dgxManifest.Compatibility.Accelerator.MinMemoryBytes != 128849018880 {
+		t.Fatalf("managed DGX Spark compatibility = %+v", dgxManifest.Compatibility)
+	}
+	if len(dgxManifest.Artifacts) != 1 {
+		t.Fatalf("DGX Spark artifacts = %d", len(dgxManifest.Artifacts))
+	}
+	dgxModel := dgxManifest.Artifacts[0]
+	if dgxModel.SizeBytes != 23772921363 || dgxModel.Mount != "/models/base" || dgxModel.DefaultVariant != "packed_fp4_current" ||
+		len(dgxModel.Variants) != 2 || dgxModel.Variants[1].Name != "dense_bf16_head" ||
+		dgxModel.Variants[0].Source.Identity != "hf://RadixArk/Qwen3.8-27B-NVFP4" ||
+		dgxModel.Variants[0].Source.Revision != "91cea059647696fd83964e43d57db122ff745993" ||
+		dgxModel.Variants[1].Source.Identity != "hf://RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead" ||
+		dgxModel.Variants[1].Source.Revision != "009632fef96dd349150baa780c984e62e70e91fe" {
+		t.Fatalf("managed DGX Spark model artifact = %+v", dgxModel)
+	}
+	if got := dgxManifest.Workloads[0].Image.Digest; got != "sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1" {
+		t.Fatalf("DGX Spark image digest = %q", got)
+	}
+	dgxWorkload := dgxManifest.Workloads[0]
+	if dgxWorkload.NetworkMode != "bridge" || dgxWorkload.Resources.CPU != 10 ||
+		dgxWorkload.Resources.CPUSetCpus != "5-9,15-19" ||
+		dgxWorkload.Resources.MemoryBytes != 124554051584 ||
+		dgxWorkload.Resources.ShmBytes != 34359738368 ||
+		dgxWorkload.Resources.TmpfsBytes != 8589934592 ||
+		dgxWorkload.Resources.Pids != 8192 ||
+		dgxWorkload.HostPreparation == nil ||
+		dgxWorkload.HostPreparation.Swappiness == nil ||
+		*dgxWorkload.HostPreparation.Swappiness != 60 ||
+		!dgxWorkload.HostPreparation.RequireSwap ||
+		!dgxWorkload.HostPreparation.DropPageCache {
+		t.Fatalf("managed DGX Spark workload resources = %+v", dgxWorkload.Resources)
+	}
+	dgxPort := false
+	for _, p := range dgxWorkload.Ports {
+		if p.Container == 8000 && p.Host == 8000 {
+			dgxPort = true
+		}
+		if p.Container == 8888 || p.Host == 8888 {
+			t.Fatalf("DGX Spark workload must not declare port 8888: %+v", dgxWorkload.Ports)
+		}
+	}
+	if !dgxPort {
+		t.Fatalf("DGX Spark workload missing port 8000: %+v", dgxWorkload.Ports)
+	}
+	if dgxPort && !strings.Contains(strings.Join(dgxWorkload.Args, "\n"), "--speculative-algorithm\nEAGLE") {
+		t.Fatalf("DGX Spark workload missing EAGLE flags: %v", dgxWorkload.Args)
+	}
+	for i, arg := range dgxWorkload.Args {
+		if arg == "--port" && i+1 < len(dgxWorkload.Args) && dgxWorkload.Args[i+1] != "8000" {
+			t.Fatalf("DGX Spark launch port = %s, want 8000", dgxWorkload.Args[i+1])
+		}
+	}
+	if err := os.Remove(filepath.Join(dgxCheckout, "start.sh")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = dgxCompiler.Compile(context.Background(), dgxSource, dgxCheckout, nil)
+	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
+		t.Fatalf("DGX Spark layout error = %v", err)
+	}
+
 	deepCheckout := t.TempDir()
 	for _, name := range []string{".env.dspark.example", "docker-compose.dspark.yml", "dspark-numeric-knobs.sh"} {
 		if err := os.WriteFile(filepath.Join(deepCheckout, name), []byte("PINNED=\"value\"\n"), 0o644); err != nil {
@@ -142,6 +237,62 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 	_, err = glmCompiler.Compile(context.Background(), glmSource, glmCheckout, nil)
 	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
 		t.Fatalf("GLM layout error = %v", err)
+	}
+
+	nvfp4Checkout := t.TempDir()
+	for _, name := range []string{
+		"README.md",
+		"launch-glm53-vllm-tp2-dflash2.sh",
+		"chat_template_mm.jinja",
+		"docker/sparse_attn_indexer_kpool_sm121.py",
+	} {
+		target := filepath.Join(nvfp4Checkout, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("# reviewed upstream contract\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nvfp4Source := recipe.RepositorySource{
+		RepositoryID: repositoryID(t, GLM53NVFP4RepositoryURL), URL: GLM53NVFP4RepositoryURL, Path: ".",
+		CommitSHA: strings.Repeat("1", 40), TreeSHA: strings.Repeat("2", 40),
+	}
+	nvfp4Compiler := &TonyGLM53NVFP4Compiler{validator: validator}
+	assertDeterministic(t, nvfp4Compiler, nvfp4Source, nvfp4Checkout)
+	compiledNVFP4, err := nvfp4Compiler.Compile(context.Background(), nvfp4Source, nvfp4Checkout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nvfp4Manifest, err := recipe.Parse(compiledNVFP4.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nvfp4Manifest.Metadata.Name != "glm53-flash-nvfp4-dflash2-spark-tp2" ||
+		nvfp4Manifest.Metadata.Model != "glm-5.3-flash" ||
+		len(nvfp4Manifest.Artifacts) != 2 ||
+		len(nvfp4Manifest.Artifacts[0].Variants) != 3 ||
+		nvfp4Manifest.Workloads[0].StartOrder != "workers-first" ||
+		nvfp4Manifest.Workloads[0].HostPreparation == nil ||
+		nvfp4Manifest.Workloads[0].HostPreparation.Swappiness == nil ||
+		*nvfp4Manifest.Workloads[0].HostPreparation.Swappiness != 0 {
+		t.Fatalf("managed NVFP4 contract = %+v", nvfp4Manifest)
+	}
+	stable := nvfp4Manifest.Artifacts[0].Variants[0]
+	if stable.Name != "censored" ||
+		stable.Source.Identity != "hf://RedHatAI/GLM-5.3-Flash-NVFP4" ||
+		stable.Source.Revision != "36c184c6cda000a481711306df5adde42f63321a" {
+		t.Fatalf("stable checkpoint = %+v", stable)
+	}
+	if got := nvfp4Manifest.Workloads[0].Image.Digest; got != "sha256:4def0ef644cb2e9814136dcffd5e385e21bc594f48f3b292234051904abe85a6" {
+		t.Fatalf("NVFP4 image digest = %q", got)
+	}
+	if err := os.Remove(filepath.Join(nvfp4Checkout, "docker", "sparse_attn_indexer_kpool_sm121.py")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = nvfp4Compiler.Compile(context.Background(), nvfp4Source, nvfp4Checkout, nil)
+	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
+		t.Fatalf("NVFP4 layout error = %v", err)
 	}
 }
 

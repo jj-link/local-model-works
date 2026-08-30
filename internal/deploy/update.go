@@ -891,7 +891,7 @@ func updateStepForDispatch(phase string) (int, string) {
 		return 2, "pulling"
 	case PhasePulled:
 		return 3, "starting"
-	case PhaseCreated, PhaseVerifying:
+	case PhaseCreated, PhaseHostPreparing, PhaseHostPrepared, PhaseVerifying:
 		return 3, "starting"
 	case PhaseStarted:
 		return 4, "verifying"

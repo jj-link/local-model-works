@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	QwenRepositoryURL     = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
-	DeepSeekRepositoryURL = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
-	GLM53RepositoryURL    = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
+	QwenRepositoryURL         = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
+	DeepSeekRepositoryURL     = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
+	GLM53RepositoryURL        = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
+	GLM53NVFP4RepositoryURL   = "https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark"
+	QwenDGXSparkRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark"
 )
 
 const qwenManagedLicense = "patch/sglang/LICENSE"
@@ -33,6 +35,11 @@ var glm53UpstreamAssets = map[string]struct{}{
 	"scripts/boot-shape-warmup.sh":                 {},
 }
 
+var glm53NVFP4UpstreamAssets = map[string]struct{}{
+	"chat_template_mm.jinja":                    {},
+	"docker/sparse_attn_indexer_kpool_sm121.py": {},
+}
+
 type Compiler = recipe.RepositoryCompiler
 
 // Registry selects an explicit driver before falling back to a native bundle.
@@ -45,12 +52,16 @@ func NewRegistry(validator *recipe.Validator) *Registry {
 	qwenID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenRepositoryURL, Path: "."})
 	deepSeekID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: DeepSeekRepositoryURL, Path: "."})
 	glm53ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53RepositoryURL, Path: "."})
+	glm53NVFP4ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53NVFP4RepositoryURL, Path: "."})
+	qwenDGXID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenDGXSparkRepositoryURL, Path: "."})
 	return &Registry{
 		validator: validator,
 		drivers: map[string]Compiler{
-			qwenID:     &MiaQwenSGLangCompiler{validator: validator},
-			deepSeekID: &MiaDeepSeekDSparkCompiler{validator: validator},
-			glm53ID:    &MiaGLM53EXL3Compiler{validator: validator},
+			qwenID:       &MiaQwenSGLangCompiler{validator: validator},
+			deepSeekID:   &MiaDeepSeekDSparkCompiler{validator: validator},
+			glm53ID:      &MiaGLM53EXL3Compiler{validator: validator},
+			glm53NVFP4ID: &TonyGLM53NVFP4Compiler{validator: validator},
+			qwenDGXID:    &MiaQwenDGXSparkCompiler{validator: validator},
 		},
 	}
 }
@@ -94,6 +105,29 @@ func (c *NativeBundleCompiler) Compile(_ context.Context, source recipe.Reposito
 		return nil, err
 	}
 	return packed, nil
+}
+
+// MiaQwenDGXSparkCompiler maps the upstream imperative DGX Spark
+// distribution to a fully declarative single-node LMW workload. The
+// reviewed start/stop scripts are required for layout drift detection
+// but never executed; the controller-owned template carries the whole
+// runtime contract.
+type MiaQwenDGXSparkCompiler struct {
+	validator *recipe.Validator
+}
+
+func (c *MiaQwenDGXSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	root, err := checkoutPath(checkout, source.Path)
+	if err != nil {
+		return nil, err
+	}
+	for _, required := range []string{"README.md", ".env.sample", "start.sh", "stop.sh"} {
+		info, statErr := os.Lstat(filepath.Join(root, required))
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
+		}
+	}
+	return compileManagedAssets(source, checkout, "qwen38-27b-dgx-spark-mtp", nil, false, c.validator)
 }
 
 // MiaQwenSGLangCompiler combines the controller-owned runtime template with
@@ -150,6 +184,43 @@ func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.Reposito
 		"glm53-flash-exl3-dflash2-spark-tp2",
 		func(asset string) bool {
 			_, ok := glm53UpstreamAssets[filepath.ToSlash(asset)]
+			return ok
+		},
+		false,
+		c.validator,
+	)
+}
+
+// TonyGLM53NVFP4Compiler turns the reviewed imperative TP2 distribution into
+// an immutable LMW contract and packages only the two runtime assets required
+// from upstream. The upstream launch script is required for layout drift
+// detection but is never executed.
+type TonyGLM53NVFP4Compiler struct {
+	validator *recipe.Validator
+}
+
+func (c *TonyGLM53NVFP4Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	root, err := checkoutPath(checkout, source.Path)
+	if err != nil {
+		return nil, err
+	}
+	for _, required := range []string{
+		"README.md",
+		"launch-glm53-vllm-tp2-dflash2.sh",
+		"chat_template_mm.jinja",
+		"docker/sparse_attn_indexer_kpool_sm121.py",
+	} {
+		info, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(required)))
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
+		}
+	}
+	return compileManagedAssets(
+		source,
+		checkout,
+		"glm53-flash-nvfp4-dflash2-spark-tp2",
+		func(asset string) bool {
+			_, ok := glm53NVFP4UpstreamAssets[filepath.ToSlash(asset)]
 			return ok
 		},
 		false,
@@ -221,10 +292,14 @@ func compileManagedAssets(source recipe.RepositorySource, checkout, template str
 	if _, diagnostics, err := validator.ValidateStrict(canonical); err != nil {
 		return nil, err
 	} else {
+		var errors []string
 		for _, diagnostic := range diagnostics {
 			if diagnostic.Severity == "error" {
-				return nil, fmt.Errorf("recipe validation: %s", diagnostic.Message)
+				errors = append(errors, diagnostic.Message)
 			}
+		}
+		if len(errors) > 0 {
+			return nil, fmt.Errorf("recipe validation: %s", strings.Join(errors, "; "))
 		}
 	}
 	return recipe.PackManifest(canonical, assets, map[string]string{

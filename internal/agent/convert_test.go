@@ -13,6 +13,8 @@ func TestToProtoTelemetryCarriesExtendedFields(t *testing.T) {
 		MemoryUsedBytes:  1 << 30,
 		MemoryTotalBytes: 2 << 30,
 		SwapUsedBytes:    3,
+		SwapTotalBytes:   16,
+		Swappiness:       60,
 		UptimeSeconds:    99,
 		NetRxBytes:       5,
 		NetTxBytes:       6,
@@ -32,7 +34,7 @@ func TestToProtoTelemetryCarriesExtendedFields(t *testing.T) {
 			TemperatureC:    3,
 			PowerMW:         4,
 			PowerLimitMW:    5,
-			ThrottleReasons:  []string{"thermal"},
+			ThrottleReasons: []string{"thermal"},
 			Processes: []hardware.AcceleratorProcess{
 				{PID: 42, Name: "python", UsedGpuMem: 9000},
 			},
@@ -42,6 +44,9 @@ func TestToProtoTelemetryCarriesExtendedFields(t *testing.T) {
 	p := toProtoTelemetry(tm)
 	if p.GetUptimeSeconds() != 99 {
 		t.Fatalf("uptime=%d want 99", p.GetUptimeSeconds())
+	}
+	if p.GetMemory().GetSwapTotalBytes() != 16 || p.GetMemory().GetSwappiness() != 60 {
+		t.Fatalf("memory: %+v", p.GetMemory())
 	}
 	if p.GetNetwork().GetRxBytesPerSecond() != 7 || p.GetNetwork().GetTxBytesPerSecond() != 8 {
 		t.Fatalf("net rates: %+v", p.GetNetwork())
@@ -66,9 +71,9 @@ func TestToProtoTelemetryZeroValuesAndAbsentFields(t *testing.T) {
 	// A minimal older-agent sample has no extended fields; conversion must not
 	// invent them, and valid zero utilization/rates must remain present.
 	tm := hardware.Telemetry{
-		CPUUsagePercent: 0,
-		CPUCores:        8,
-		MemoryUsedBytes: 0,
+		CPUUsagePercent:  0,
+		CPUCores:         8,
+		MemoryUsedBytes:  0,
 		MemoryTotalBytes: 0,
 		Accelerators: []hardware.AcceleratorTelemetry{{
 			Index: 0, UtilizationPct: 0, MemUsedBytes: 0, MemTotalBytes: 0,

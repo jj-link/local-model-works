@@ -303,6 +303,44 @@ components:
           type: string
           description: Network path, e.g. fabric spark-p2p (roce), tailnet, local
 
+    ImagePreview:
+      type: object
+      required: [node_id, reference, digest, action]
+      properties:
+        node_id: { type: string, format: uuid }
+        node_name: { type: string }
+        reference: { type: string }
+        digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        action:
+          type: string
+          enum: [verify-or-pull]
+
+    StoragePreview:
+      type: object
+      required: [node_id, required_bytes, known, sufficient]
+      properties:
+        node_id: { type: string, format: uuid }
+        node_name: { type: string }
+        cache_root: { type: string }
+        required_bytes: { type: integer, format: int64 }
+        available_bytes: { type: integer, format: int64 }
+        total_bytes: { type: integer, format: int64 }
+        known: { type: boolean }
+        sufficient: { type: boolean }
+
+    HostPreparationPreview:
+      type: object
+      required: [node_id, require_swap, swappiness_current, drop_page_cache, helper_image]
+      properties:
+        node_id: { type: string, format: uuid }
+        node_name: { type: string }
+        require_swap: { type: boolean }
+        swap_total_bytes: { type: integer, format: int64 }
+        swappiness_current: { type: integer, format: int32 }
+        swappiness_target: { type: integer, format: int32 }
+        drop_page_cache: { type: boolean }
+        helper_image: { type: string }
+
     DeploymentPlan:
       type: object
       required: [recipe_digest, profile, placements, ready]
@@ -351,6 +389,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TransferPreview'
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImagePreview'
+        storage:
+          type: array
+          items:
+            $ref: '#/components/schemas/StoragePreview'
+        host_preparation:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostPreparationPreview'
         ports:
           type: array
           items:

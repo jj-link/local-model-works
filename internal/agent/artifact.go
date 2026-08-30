@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +36,10 @@ type hfModelInfo struct {
 	} `json:"siblings"`
 }
 
-const hfDownloadConcurrency = 16
+const (
+	hfDownloadConcurrency = 16
+	hfDownloadAttempts    = 5
+)
 
 type hfDownloadJob struct {
 	index          int
@@ -444,7 +448,7 @@ func fetchHFSnapshot(ctx context.Context, identity, cacheRoot, token string, rep
 			stateMu.Unlock()
 		}
 		downloadOne := func(job hfDownloadJob) (hfSnapshotFile, error) {
-			if err := resumeHTTPFile(downloadCtx, client, job.downloadURL, token, job.partial, job.expectedSize, func(fileBytes int64) {
+			if err := retryResumeHTTPFile(downloadCtx, client, job.downloadURL, token, job.partial, job.expectedSize, func(fileBytes int64) {
 				updateProgress(job, fileBytes, nil)
 			}); err != nil {
 				return hfSnapshotFile{}, err
@@ -549,6 +553,51 @@ func (w *downloadProgressWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
+type downloadHTTPStatusError struct {
+	status int
+}
+
+func (e *downloadHTTPStatusError) Error() string {
+	return fmt.Sprintf("download HTTP %d", e.status)
+}
+
+func retryResumeHTTPFile(
+	ctx context.Context,
+	client *http.Client,
+	sourceURL, token, destination string,
+	expectedSize int64,
+	reporters ...func(int64),
+) error {
+	var lastErr error
+	for attempt := 1; attempt <= hfDownloadAttempts; attempt++ {
+		lastErr = resumeHTTPFile(ctx, client, sourceURL, token, destination, expectedSize, reporters...)
+		if lastErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var statusErr *downloadHTTPStatusError
+		if errors.As(lastErr, &statusErr) &&
+			statusErr.status != http.StatusRequestTimeout &&
+			statusErr.status != http.StatusTooManyRequests &&
+			statusErr.status < http.StatusInternalServerError {
+			return lastErr
+		}
+		if attempt == hfDownloadAttempts {
+			break
+		}
+		timer := time.NewTimer(time.Second << (attempt - 1))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("download failed after %d attempts: %w", hfDownloadAttempts, lastErr)
+}
+
 func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, destination string, expectedSize int64, reporters ...func(int64)) error {
 	offset := int64(0)
 	if info, err := os.Stat(destination); err == nil {
@@ -559,6 +608,9 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 			}
 			offset = 0
 		}
+	}
+	if offset == expectedSize {
+		return os.Chmod(destination, 0o644)
 	}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if token != "" {
@@ -579,7 +631,7 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 		flags |= os.O_TRUNC
 		offset = 0
 	} else {
-		return fmt.Errorf("download HTTP %d", response.StatusCode)
+		return &downloadHTTPStatusError{status: response.StatusCode}
 	}
 	// The blob is bind-mounted into the workload container, which runs as
 	// root with all capabilities dropped (no CAP_DAC_OVERRIDE). It must be
@@ -683,6 +735,9 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 		if err := makePackageTraversable(final); err != nil {
 			return err
 		}
+		if err := ensurePackageAssetsDir(final); err != nil {
+			return err
+		}
 		a.sendPlacement(placementCandidate{Identity: identity, Path: final, State: "valid", Size: int64(len(layer))})
 		return nil
 	}
@@ -698,6 +753,9 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 	if err := recipe.UnpackLayer(layer, assets); err != nil {
 		return err
 	}
+	if err := ensurePackageAssetsDir(staging); err != nil {
+		return err
+	}
 	if err := makePackageTraversable(staging); err != nil {
 		return err
 	}
@@ -705,6 +763,17 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 		return err
 	}
 	a.sendPlacement(placementCandidate{Identity: identity, Path: final, State: "valid", Size: int64(len(layer))})
+	return nil
+}
+
+// ensurePackageAssetsDir creates the assets bind-source directory when a
+// package carries zero assets: the workload create always mounts
+// <package>/assets read-only, so an empty layer must still leave the
+// directory behind.
+func ensurePackageAssetsDir(pkgDir string) error {
+	if err := os.MkdirAll(filepath.Join(pkgDir, "assets"), 0o755); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -116,6 +116,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			return fmt.Errorf("state dir %s: %w", d, err)
 		}
 	}
+	if err := cleanupTransferStaging(a.cfg.TransferDir()); err != nil {
+		return fmt.Errorf("clean stale transfer staging: %w", err)
+	}
 	if err := a.loadIdentity(); err != nil {
 		return err
 	}

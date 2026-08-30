@@ -2113,6 +2113,14 @@ components:
         fabric:
           nullable: true
           type: string
+        host_preparation:
+          items:
+            $ref: '#/components/schemas/HostPreparationPreview'
+          type: array
+        images:
+          items:
+            $ref: '#/components/schemas/ImagePreview'
+          type: array
         placements:
           items:
             properties:
@@ -2170,6 +2178,10 @@ components:
         risks:
           items:
             type: string
+          type: array
+        storage:
+          items:
+            $ref: '#/components/schemas/StoragePreview'
           type: array
         transfers:
           items:
@@ -2335,6 +2347,57 @@ components:
         - node_id
         - interface_name
         - address
+      type: object
+    HostPreparationPreview:
+      properties:
+        drop_page_cache:
+          type: boolean
+        helper_image:
+          type: string
+        node_id:
+          format: uuid
+          type: string
+        node_name:
+          type: string
+        require_swap:
+          type: boolean
+        swap_total_bytes:
+          format: int64
+          type: integer
+        swappiness_current:
+          format: int32
+          type: integer
+        swappiness_target:
+          format: int32
+          type: integer
+      required:
+        - node_id
+        - require_swap
+        - swappiness_current
+        - drop_page_cache
+        - helper_image
+      type: object
+    ImagePreview:
+      properties:
+        action:
+          enum:
+            - verify-or-pull
+          type: string
+        digest:
+          pattern: ^sha256:[0-9a-f]{64}$
+          type: string
+        node_id:
+          format: uuid
+          type: string
+        node_name:
+          type: string
+        reference:
+          type: string
+      required:
+        - node_id
+        - reference
+        - digest
+        - action
       type: object
     Inventory:
       properties:
@@ -2695,8 +2758,14 @@ components:
           type: array
         memory:
           properties:
+            swap_total_bytes:
+              format: int64
+              type: integer
             swap_used_bytes:
               format: int64
+              type: integer
+            swappiness:
+              format: int32
               type: integer
             total_bytes:
               format: int64
@@ -3493,6 +3562,34 @@ components:
         - username
         - csrf_token
         - expires_at
+      type: object
+    StoragePreview:
+      properties:
+        available_bytes:
+          format: int64
+          type: integer
+        cache_root:
+          type: string
+        known:
+          type: boolean
+        node_id:
+          format: uuid
+          type: string
+        node_name:
+          type: string
+        required_bytes:
+          format: int64
+          type: integer
+        sufficient:
+          type: boolean
+        total_bytes:
+          format: int64
+          type: integer
+      required:
+        - node_id
+        - required_bytes
+        - known
+        - sufficient
       type: object
     SystemInfo:
       properties:
