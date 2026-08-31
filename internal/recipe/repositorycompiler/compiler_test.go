@@ -66,9 +66,22 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if qwenManifest.Metadata.Name != "qwen38-27b-radixark-nvfp4-dflash2-avt" ||
-		qwenManifest.Metadata.Version != "1.0.3" ||
+		qwenManifest.Metadata.Version != "1.0.4" ||
 		qwenManifest.Metadata.License != "Apache-2.0" {
 		t.Fatalf("managed Qwen metadata = %+v", qwenManifest.Metadata)
+	}
+	if len(qwenManifest.Artifacts) != 2 ||
+		qwenManifest.Artifacts[0].DefaultVariant != "radixark_nvfp4" ||
+		len(qwenManifest.Artifacts[0].Variants) != 1 ||
+		qwenManifest.Artifacts[1].DefaultVariant != "zlab_dflash2" ||
+		len(qwenManifest.Artifacts[1].Variants) != 1 ||
+		len(qwenManifest.Parameters) != 1 ||
+		qwenManifest.Parameters[0].Name != "kv_cache_dtype" ||
+		len(qwenManifest.Parameters[0].Enum) != 1 ||
+		qwenManifest.Parameters[0].Enum[0] != "fp8_e4m3" ||
+		qwenManifest.Workloads[0].Env["KV_CACHE_DTYPE"] != "${setting.kv_cache_dtype}" {
+		t.Fatalf("managed Qwen launch settings = artifacts:%+v parameters:%+v env:%+v",
+			qwenManifest.Artifacts, qwenManifest.Parameters, qwenManifest.Workloads[0].Env)
 	}
 	if err := os.Remove(filepath.Join(qwenCheckout, filepath.FromSlash(qwenManagedLicense))); err != nil {
 		t.Fatal(err)

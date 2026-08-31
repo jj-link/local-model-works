@@ -42,7 +42,6 @@ function DeploymentTable({ deployments, stopped }: { deployments: Deployment[]; 
             <TableHead>Recipe</TableHead>
             <TableHead>Model</TableHead>
             <TableHead>Engine</TableHead>
-            <TableHead>Profile</TableHead>
             <TableHead>Endpoint</TableHead>
             <TableHead>Desired</TableHead>
             <TableHead>Observed</TableHead>
@@ -62,12 +61,9 @@ function DeploymentTable({ deployments, stopped }: { deployments: Deployment[]; 
                 </Link>
               </TableCell>
               <TableCell>
-                <Link
-                  to={`/library/recipes/${deployment.recipe_digest}`}
-                  className="control font-mono text-xs text-muted hover:text-foreground"
-                >
+                <span className="font-mono text-xs text-muted">
                   {shortDigest(deployment.recipe_digest)}
-                </Link>
+                </span>
               </TableCell>
               <TableCell>{deployment.endpoint?.model || "Not reported"}</TableCell>
               <TableCell>
@@ -77,7 +73,6 @@ function DeploymentTable({ deployments, stopped }: { deployments: Deployment[]; 
                     ? "SGLang"
                     : deployment.engine || "Not reported"}
               </TableCell>
-              <TableCell className="font-mono text-xs text-muted">{deployment.profile}</TableCell>
               <TableCell className="font-mono text-xs text-primary">
                 {deployment.endpoint ? endpointLabel(deployment.endpoint) : "—"}
               </TableCell>

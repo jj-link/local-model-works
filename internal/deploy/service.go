@@ -122,17 +122,16 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		recipeName = m.Metadata.Name
 		recipeVersion = m.Metadata.Version
 	}
-	values, err := m.ProfileValues(req.Profile)
+	variants, values, err := resolveSettings(ctx, s, m, req.RecipeDigest, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrProfile, err)
+		return nil, err
 	}
-
 	plan := &Plan{
 		RecipeDigest:  req.RecipeDigest,
 		RecipeName:    recipeName,
 		RecipeVersion: recipeVersion,
-		Profile:       req.Profile,
-		Variants:      req.Variants,
+		Settings:      values,
+		Variants:      variants,
 	}
 
 	nodes, err := s.q.ListNodes(ctx)
@@ -678,7 +677,12 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 			if base == 0 {
 				base = first.Container
 			}
-			model := profileString(values, "model")
+			model := settingString(values, "model")
+			if model == "" {
+				if defaults, err := m.EffectiveSettings(nil); err == nil {
+					model = settingString(defaults, "model")
+				}
+			}
 			if model == "" {
 				model = m.Metadata.Model
 			}
@@ -695,11 +699,9 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 			plan.Endpoint = ep
 		}
 	}
-
-	// Artifacts.
 	requiredByNode := map[string]int64{}
 	for _, a := range m.Artifacts {
-		src, srcErr := a.EffectiveSource(req.Variants[a.Name])
+		src, srcErr := a.EffectiveSource(variants[a.Name])
 		if srcErr != nil {
 			return nil, fmt.Errorf("artifact %s: %w", a.Name, srcErr)
 		}
@@ -719,8 +721,8 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 				requiredByNode[placement.NodeID] += a.SizeBytes
 			}
 			plan.Transfers = append(plan.Transfers, TransferPreview{
-				ArtifactID: identity, Identity: identity, SourceNode: "origin",
-				DestNode: "all", DestPath: dest, Bytes: a.SizeBytes,
+				ArtifactID: identity, Identity: identity, Action: PreparationDownloadOrigin,
+				SourceNode: "origin", DestNode: "all", DestPath: dest, Bytes: a.SizeBytes,
 			})
 			plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
 			plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
@@ -731,14 +733,27 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		if size == 0 {
 			size = a.SizeBytes
 		}
-		var missing []Placement
+		parsed, parseErr := artifactidentity.Parse(art.Identity)
+		exactSnapshot := parseErr == nil && parsed.Kind == "model"
+		type missingPlacement struct {
+			Placement
+			hasRecord bool
+			reconcile bool
+		}
+		var missing []missingPlacement
 		for _, placement := range placements {
-			placed, perr := s.artifactPlaced(ctx, art.ID, placement.NodeID)
+			valid, hasRecord, reconcile, perr := s.artifactPlacementState(ctx, art.ID, placement.NodeID)
 			if perr != nil {
 				return nil, perr
 			}
-			if !placed {
-				missing = append(missing, placement)
+			if valid {
+				continue
+			}
+			reconcile = exactSnapshot && reconcile
+			missing = append(missing, missingPlacement{
+				Placement: placement, hasRecord: hasRecord, reconcile: reconcile,
+			})
+			if !reconcile {
 				requiredByNode[placement.NodeID] += size
 			}
 		}
@@ -746,31 +761,37 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 			continue
 		}
 		srcName := s.transferSourceName(ctx, art.ID)
-		parsed, parseErr := artifactidentity.Parse(art.Identity)
-		modelArtifact := parseErr == nil && parsed.Kind == "model"
-		if srcName == "" {
-			if modelArtifact {
-				srcName = "origin"
+		originRiskAdded := false
+		addOriginRisk := func() {
+			if !originRiskAdded {
 				plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
-			} else {
-				plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
-					"no node holds a valid copy of "+art.Identity))
+				originRiskAdded = true
 			}
 		}
-		resumeRiskAdded := srcName == "origin"
-		for _, placement := range missing {
-			placementSource := srcName
-			if modelArtifact && s.hasPlacementRecord(ctx, art.ID, placement.NodeID) {
-				placementSource = "origin"
-				if !resumeRiskAdded {
-					plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
-					resumeRiskAdded = true
-				}
+		if srcName == "" && !exactSnapshot {
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
+				"no node holds a valid copy of "+art.Identity))
+		}
+		for _, item := range missing {
+			preview := TransferPreview{
+				ArtifactID: art.ID, Identity: art.Identity,
+				DestNode: item.NodeID, DestPath: dest,
 			}
-			plan.Transfers = append(plan.Transfers, TransferPreview{
-				ArtifactID: art.ID, Identity: art.Identity, SourceNode: placementSource,
-				DestNode: placement.NodeID, DestPath: dest, Bytes: size,
-			})
+			switch {
+			case item.reconcile:
+				preview.Action = PreparationReconcileLocal
+				preview.SourceNode = item.NodeID
+			case exactSnapshot && (item.hasRecord || srcName == ""):
+				preview.Action = PreparationDownloadOrigin
+				preview.SourceNode = "origin"
+				preview.Bytes = size
+				addOriginRisk()
+			default:
+				preview.Action = PreparationPeerCopy
+				preview.SourceNode = srcName
+				preview.Bytes = size
+			}
+			plan.Transfers = append(plan.Transfers, preview)
 		}
 	}
 
@@ -782,6 +803,9 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		}
 		storageNodes[placement.NodeID] = true
 		required := requiredByNode[placement.NodeID]
+		if required == 0 {
+			continue
+		}
 		cacheRoot := ""
 		if candidate := nodeByID[placement.NodeID]; candidate != nil && candidate.inv != nil && len(candidate.inv.CacheRoots) > 0 {
 			cacheRoot = candidate.inv.CacheRoots[0].Path
@@ -936,17 +960,27 @@ func matchesWorkloadAccelerator(workload *recipe.Workload, nodeCount int, accele
 	return err == nil && ok
 }
 
-func (s *Service) artifactPlaced(ctx context.Context, artifactID, nodeID string) (bool, error) {
+// artifactPlacementState distinguishes a valid placement from an existing
+// exact snapshot that only needs its local completion manifest reconciled.
+// Any other non-valid record is a real missing/corrupt placement.
+func (s *Service) artifactPlacementState(ctx context.Context, artifactID, nodeID string) (valid, hasRecord, reconcile bool, err error) {
 	rows, err := s.q.ListPlacements(ctx, artifactID)
 	if err != nil {
-		return false, err
+		return false, false, false, err
 	}
-	for _, r := range rows {
-		if r.NodeID == nodeID && r.State == "valid" {
-			return true, nil
+	for _, row := range rows {
+		if row.NodeID != nodeID {
+			continue
 		}
+		if row.State == "valid" {
+			return true, true, false, nil
+		}
+		diagnostics := diag.Decode(row.Diagnostics)
+		return false, true,
+			len(diagnostics) == 1 && diagnostics[0].Code == "artifact.snapshot_manifest_missing",
+			nil
 	}
-	return false, nil
+	return false, false, false, nil
 }
 
 func artifactSize(metadata string) int64 {
@@ -1021,7 +1055,7 @@ func (s *Service) transferSourceName(ctx context.Context, artifactID string) str
 	return ""
 }
 
-func profileString(values map[string]any, key string) string {
+func settingString(values map[string]any, key string) string {
 	if v, ok := values[key]; ok {
 		if str, ok := v.(string); ok {
 			return str
@@ -1117,10 +1151,11 @@ func (ps placementSet) EntryFor(rank int32) *Placement {
 // resource leases, and starts the dispatch sequence.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, error) {
 	plan, err := s.Plan(ctx, PlanRequest{
-		RecipeDigest: req.RecipeDigest,
-		Profile:      req.Profile,
-		Placements:   req.Placements,
-		Variants:     req.Variants,
+		RecipeDigest:    req.RecipeDigest,
+		Placements:      req.Placements,
+		LaunchProfileID: req.LaunchProfileID,
+		Variants:        req.Variants,
+		Parameters:      req.Parameters,
 	})
 	if err != nil {
 		return nil, err
@@ -1154,7 +1189,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 	if err := qtx.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:           depID,
 		RecipeDigest: plan.RecipeDigest,
-		Profile:      plan.Profile,
+		Parameters:   marshalParameters(plan.Settings),
 		Placement:    ps.Marshal(),
 		Fabric:       fabric,
 	}); err != nil {
@@ -1163,7 +1198,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 	}
 	input, _ := json.Marshal(map[string]any{
 		"recipe_digest": plan.RecipeDigest,
-		"profile":       plan.Profile,
+		"parameters":    plan.Settings,
 		"plan_digest":   plan.Digest,
 	})
 	if err := qtx.CreateRun(ctx, db.CreateRunParams{
@@ -1557,12 +1592,9 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 	if err != nil {
 		return nil, err
 	}
-	values, err := manifest.ProfileValues(row.Profile)
-	if err != nil {
-		return nil, err
-	}
+	values := parametersFor(row)
 	renderContext := recipe.RenderContext{
-		NodeID: placement.NodeID, NodeRank: int(rank), Artifacts: map[string]string{}, Profiles: values,
+		NodeID: placement.NodeID, NodeRank: int(rank), Artifacts: map[string]string{}, Settings: values,
 	}
 	for _, artifact := range manifest.Artifacts {
 		dest := artifact.Mount
@@ -2144,6 +2176,25 @@ func variantsFor(row db.GetDeploymentRow) map[string]string {
 	}
 	return out
 }
+
+// parametersFor decodes the deployment's persisted launch settings JSON
+// (empty map when absent). These are the resolved operator overrides from
+// plan time; the manifest was validated at plan and create.
+func parametersFor(row db.GetDeploymentRow) map[string]any {
+	out := map[string]any{}
+	if row.Parameters == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(row.Parameters), &out)
+	return out
+}
+
+// marshalParameters serializes plan settings for the deployments.parameters
+// column; an empty map stores {}.
+func marshalParameters(values map[string]any) string {
+	return marshalJSONOrEmpty(values)
+}
+
 func canonicalArtifactIdentity(artifact recipe.Artifact, variant string) (string, error) {
 	src, err := artifact.EffectiveSource(variant)
 	if err != nil {
@@ -2152,6 +2203,21 @@ func canonicalArtifactIdentity(artifact recipe.Artifact, variant string) (string
 	return artifactidentity.Canonical(
 		src.Type, src.Identity, src.Revision, src.Digest,
 	)
+}
+
+// parametersForValue decodes persisted parameters JSON by value.
+func parametersForValue(raw string) map[string]any {
+	return parametersFor(db.GetDeploymentRow{Parameters: raw})
+}
+
+// decodeParameters decodes persisted parameters JSON for API views.
+func decodeParameters(raw string) map[string]any {
+	out := map[string]any{}
+	if raw == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
 }
 
 // ensureArtifacts gates container dispatch on every recipe artifact having
@@ -3159,9 +3225,9 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 	}
 	plan, err := s.Plan(ctx, PlanRequest{
 		RecipeDigest: row.RecipeDigest,
-		Profile:      row.Profile,
 		Placements:   overrides,
 		Variants:     ps.Variants,
+		Parameters:   parametersFor(row),
 	})
 	if err != nil {
 		return nil, err
@@ -3179,7 +3245,7 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 	runIDStr, _ := id.New()
 	input, _ := json.Marshal(map[string]any{
 		"recipe_digest": plan.RecipeDigest,
-		"profile":       plan.Profile,
+		"parameters":    plan.Settings,
 		"plan_digest":   plan.Digest,
 	})
 	if err := qtx.CreateRun(ctx, db.CreateRunParams{
@@ -3304,11 +3370,11 @@ func (s *Service) Verify(ctx context.Context, depID string) (*Deployment, error)
 	if path == "" {
 		path = "/health"
 	}
-	values, _ := m.ProfileValues(row.Profile)
+	values := parametersFor(row)
 	rctx := recipe.RenderContext{
 		NodeID:    depID,
 		Artifacts: map[string]string{},
-		Profiles:  values,
+		Settings:  values,
 	}
 	if strings.Contains(path, "{") {
 		if rendered, rerr := m.Render(path, rctx); rerr == nil {
@@ -3405,7 +3471,7 @@ type Deployment struct {
 	RecipeDigest      string            `json:"recipe_digest"`
 	RecipeName        string            `json:"recipe_name,omitempty"`
 	RecipeVersion     string            `json:"recipe_version,omitempty"`
-	Profile           string            `json:"profile"`
+	Settings          map[string]any    `json:"settings,omitempty"`
 	Engine            string            `json:"engine,omitempty"`
 	Placements        []Placement       `json:"placements"`
 	Fabric            *string           `json:"fabric,omitempty"`
@@ -3452,7 +3518,7 @@ type MonitorTarget struct {
 	ObservedState string
 	Endpoint      Endpoint
 	// EndpointModel/EndpointPath are the persisted identity; empty for
-	// pre-migration rows that fell back to recipe/profile metadata.
+	// pre-migration rows that fell back to recipe setting/metadata.
 	EndpointModel string
 	EndpointPath  string
 }
@@ -3496,7 +3562,7 @@ func rowToDeployment(r db.GetDeploymentRow) db.Deployment {
 	return db.Deployment{
 		ID:                r.ID,
 		RecipeDigest:      r.RecipeDigest,
-		Profile:           r.Profile,
+		Parameters:        r.Parameters,
 		Placement:         r.Placement,
 		Fabric:            r.Fabric,
 		DesiredState:      r.DesiredState,
@@ -3517,7 +3583,7 @@ func listRowToDeployment(r db.ListDeploymentsRow) db.Deployment {
 	return db.Deployment{
 		ID:                r.ID,
 		RecipeDigest:      r.RecipeDigest,
-		Profile:           r.Profile,
+		Parameters:        r.Parameters,
 		Placement:         r.Placement,
 		Fabric:            r.Fabric,
 		DesiredState:      r.DesiredState,
@@ -3538,7 +3604,7 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 	v := &Deployment{
 		ID:            row.ID,
 		RecipeDigest:  row.RecipeDigest,
-		Profile:       row.Profile,
+		Settings:      decodeParameters(row.Parameters),
 		Placements:    ParsePlacementSet(row.Placement).Entries,
 		DesiredState:  row.DesiredState,
 		ObservedState: row.ObservedState,
@@ -3555,14 +3621,7 @@ func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, err
 			return nil, fmt.Errorf("recipe manifest: %w", parseErr)
 		}
 		v.Engine = manifest.Metadata.Engine
-		values, profileErr := manifest.ProfileValues(row.Profile)
-		if profileErr != nil {
-			return nil, fmt.Errorf("recipe profile: %w", profileErr)
-		}
-		endpointModel = profileString(values, "model")
-		if endpointModel == "" {
-			endpointModel = manifest.Metadata.Model
-		}
+		endpointModel = endpointModelFor(manifest, parametersForValue(row.Parameters))
 	}
 	if row.Fabric.Valid {
 		v.Fabric = &row.Fabric.String
@@ -3613,6 +3672,21 @@ func (s *Service) selectWorkload(ctx context.Context, row db.GetDeploymentRow, m
 
 // ---------------------------------------------------------------- spec rendering
 
+// endpointModelFor resolves the endpoint model for a deployment read-back:
+// persisted overrides, then recipe parameter defaults, then manifest metadata.
+func endpointModelFor(manifest *recipe.Manifest, parameters map[string]any) string {
+	model := settingString(parameters, "model")
+	if model == "" {
+		if defaults, err := manifest.EffectiveSettings(nil); err == nil {
+			model = settingString(defaults, "model")
+		}
+	}
+	if model == "" {
+		model = manifest.Metadata.Model
+	}
+	return model
+}
+
 // renderSpec builds the agent container spec for one rank. Artifact mounts
 // always resolve to the node's actual valid placement path; a missing
 // placement is an error, never a guess.
@@ -3632,10 +3706,7 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	if err != nil {
 		return nil, err
 	}
-	values, err := m.ProfileValues(row.Profile)
-	if err != nil {
-		return nil, err
-	}
+	values := parametersFor(row)
 	nodeAddress := ""
 	if node, nodeErr := s.q.GetNode(ctx, pl.NodeID); nodeErr == nil && node.Inventory.Valid {
 		var inv inventory.Inventory
@@ -3680,7 +3751,7 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		NodeID: pl.NodeID, NodeRank: int(rank), NodeAddress: nodeAddress,
 		FabricAddr: fabricAddress, FabricNodeAddr: fabricNodeAddress,
 		FabricInterface: fabricInterface, FabricRDMADevice: fabricRDMADevice,
-		FabricGIDIndex: fabricGIDIndex, Artifacts: map[string]string{}, Profiles: values,
+		FabricGIDIndex: fabricGIDIndex, Artifacts: map[string]string{}, Settings: values,
 	}
 	for _, artifact := range m.Artifacts {
 		dest := artifact.Mount

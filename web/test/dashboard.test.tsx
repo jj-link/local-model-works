@@ -31,7 +31,7 @@ describe("DashboardRoute", () => {
             id: "active",
             recipe_digest: "sha256:qwen",
             recipe_name: "qwen",
-            profile: "fast",
+            parameters: {},
             placements: [],
             desired_state: "running",
             observed_state: "degraded",
@@ -41,7 +41,7 @@ describe("DashboardRoute", () => {
             id: "stopped-duplicate",
             recipe_digest: "sha256:qwen",
             recipe_name: "qwen",
-            profile: "fast",
+            parameters: {},
             placements: [],
             desired_state: "stopped",
             observed_state: "stopped",
@@ -51,7 +51,7 @@ describe("DashboardRoute", () => {
             id: "stopping",
             recipe_digest: "sha256:other",
             recipe_name: "other",
-            profile: "default",
+            parameters: {},
             placements: [],
             desired_state: "stopped",
             observed_state: "stopping",
@@ -67,7 +67,7 @@ describe("DashboardRoute", () => {
 
     const table = await screen.findByRole("table", { name: "Active deployments" });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
-    expect(within(table).getAllByText("qwen@fast")).toHaveLength(1);
+    expect(within(table).getAllByText("qwen")).toHaveLength(1);
     expect(within(table).queryByText("stopped-duplicate")).not.toBeInTheDocument();
     expect(screen.queryByText(/live activity/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "all →" })).not.toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Network, Server } from "lucide-react";
+import { Download, HardDrive, Server } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -14,49 +14,84 @@ import { Button } from "~/components/ui/button";
 import { Label } from "~/components/ui/label";
 import {
   useCreateDeployment,
-  useFabrics,
+  useCreateLaunchProfile,
+  useDeleteLaunchProfile,
+  useLaunchProfiles,
   useNodes,
   usePlanDeployment,
   useRecipe,
   useRecipes,
+  useUpdateLaunchProfile,
 } from "~/lib/queries";
-import { PlanPreview } from "~/components/plan-preview";
 import { bytes } from "~/lib/format";
 
-/**
- * Plan a deployment: pick an installed recipe + profile, optionally pin
- * nodes per rank, preview the plan, then create. The backend remains the
- * compatibility authority; node cards expose real inventory and fabrics.
- */
+type VariantChoice = {
+  name: string;
+  label: string;
+  description: string;
+};
+
+type VariantArtifact = {
+  name: string;
+  label: string;
+  defaultValue: string;
+  variants: VariantChoice[];
+};
+
+type EnumParameter = {
+  name: string;
+  label: string;
+  description: string;
+  defaultValue: string;
+  values: string[];
+};
+
+function titleCase(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export function PlanDeploymentDialog({
   open,
   onOpenChange,
   initialRecipeDigest,
+  onBack,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialRecipeDigest?: string;
+  onBack?: () => void;
 }) {
   const navigate = useNavigate();
   const { data: recipes } = useRecipes();
   const { data: nodes } = useNodes();
-  const fabricsQuery = useFabrics();
   const planMutation = usePlanDeployment();
   const createMutation = useCreateDeployment();
+  const createProfileMutation = useCreateLaunchProfile();
+  const updateProfileMutation = useUpdateLaunchProfile();
+  const deleteProfileMutation = useDeleteLaunchProfile();
   const resetPlan = planMutation.reset;
   const resetCreate = createMutation.reset;
   const wasOpen = useRef(false);
   const autoPreviewKey = useRef("");
+  const initializedSettings = useRef("");
 
   const [recipeDigest, setRecipeDigest] = useState("");
-  const [profile, setProfile] = useState("");
   const [nodeOverrides, setNodeOverrides] = useState<Record<number, string>>({});
   const [variantChoices, setVariantChoices] = useState<Record<string, string>>({});
+  const [parameterChoices, setParameterChoices] = useState<Record<string, unknown>>({});
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [sourceProfileId, setSourceProfileId] = useState("");
+  const [newProfileName, setNewProfileName] = useState("");
+
   const { data: recipeDetail, isFetching: detailFetching } = useRecipe(recipeDigest || undefined);
+  const profilesQuery = useLaunchProfiles(recipeDigest || undefined);
 
   const distinctRecipes = useMemo(() => {
     const seen = new Set<string>();
-    const out = [] as (typeof recipes extends (infer T)[] | undefined ? T : unknown)[];
+    const out = [] as NonNullable<typeof recipes>;
     for (const recipe of recipes ?? []) {
       const key = `${recipe.name}@${recipe.version}`;
       if (seen.has(key)) continue;
@@ -66,36 +101,59 @@ export function PlanDeploymentDialog({
     return out;
   }, [recipes]);
 
-  const profiles = useMemo(() => {
-    const manifest = recipeDetail?.manifest;
-    if (!manifest || typeof manifest !== "object") return [];
-    const values = (manifest as Record<string, unknown>).profiles;
-    if (!values || typeof values !== "object") return [];
-    return Object.keys(values as Record<string, unknown>);
-  }, [recipeDetail]);
+  const manifest = useMemo(
+    () => recipeDetail?.manifest as Record<string, unknown> | undefined,
+    [recipeDetail],
+  );
 
-  const variantArtifacts = useMemo(() => {
-    const manifest = recipeDetail?.manifest as Record<string, unknown> | undefined;
+  const variantArtifacts = useMemo<VariantArtifact[]>(() => {
     if (!manifest || !Array.isArray(manifest.artifacts)) return [];
-    const out: { name: string; defaultVariant: string; sizeBytes: number; variants: { name: string; label: string; description: string }[] }[] = [];
-    for (const artifact of manifest.artifacts as Record<string, unknown>[]) {
-      if (!Array.isArray(artifact.variants)) continue;
+    const out: VariantArtifact[] = [];
+    for (const value of manifest.artifacts as Record<string, unknown>[]) {
+      if (!Array.isArray(value.variants) || value.variants.length === 0) continue;
+      const name = String(value.name ?? "");
+      const variants = (value.variants as Record<string, unknown>[]).map((variant) => ({
+        name: String(variant.name ?? ""),
+        label: String(variant.label ?? variant.name ?? ""),
+        description: String(variant.description ?? ""),
+      }));
       out.push({
-        name: String(artifact.name),
-        defaultVariant: String(artifact.defaultVariant ?? ""),
-        sizeBytes: Number(artifact.sizeBytes ?? 0),
-        variants: (artifact.variants as Record<string, unknown>[]).map((variant) => ({
-          name: String(variant.name),
-          label: String(variant.label ?? variant.name),
-          description: String(variant.description ?? ""),
-        })),
+        name,
+        label: name === "model" ? "Model" : name === "drafter" ? "Drafter" : titleCase(name),
+        defaultValue: String(value.defaultVariant ?? variants[0]?.name ?? ""),
+        variants,
       });
     }
     return out;
-  }, [recipeDetail]);
+  }, [manifest]);
+
+  const enumParameters = useMemo<EnumParameter[]>(() => {
+    if (!manifest || !Array.isArray(manifest.parameters)) return [];
+    const out: EnumParameter[] = [];
+    for (const value of manifest.parameters as Record<string, unknown>[]) {
+      if (value.type !== "enum" || !Array.isArray(value.enum) || value.enum.length === 0) continue;
+      const name = String(value.name ?? "");
+      out.push({
+        name,
+        label: titleCase(name),
+        description: String(value.description ?? ""),
+        defaultValue: String(value.default ?? value.enum[0] ?? ""),
+        values: value.enum.map(String),
+      });
+    }
+    return out;
+  }, [manifest]);
+
+  const visibleVariantArtifacts = variantArtifacts.filter((artifact) => artifact.variants.length > 1);
+  const visibleEnumParameters = enumParameters.filter((parameter) => parameter.values.length > 1);
+  const profiles = profilesQuery.data ?? [];
+  const sourceProfile = profiles.find((profile) => profile.id === sourceProfileId);
+  const showSettings =
+    visibleVariantArtifacts.length > 0 ||
+    visibleEnumParameters.length > 0 ||
+    profiles.length > 0;
 
   const nodeCount = recipeDetail?.compatibility?.nodeCount || 1;
-
   const acceleratorRequirement = useMemo(() => {
     const accelerator = recipeDetail?.compatibility?.accelerator;
     if (!accelerator || typeof accelerator !== "object") return undefined;
@@ -109,7 +167,9 @@ export function PlanDeploymentDialog({
 
   const nodeReason = (node: NonNullable<typeof nodes>[number], rank: number) => {
     if (node.status !== "online") return node.status;
-    if (Object.entries(nodeOverrides).some(([otherRank, nodeId]) => Number(otherRank) !== rank && nodeId === node.id)) {
+    if (Object.entries(nodeOverrides).some(
+      ([otherRank, nodeId]) => Number(otherRank) !== rank && nodeId === node.id,
+    )) {
       return "already assigned";
     }
     if (!acceleratorRequirement) return "";
@@ -117,79 +177,209 @@ export function PlanDeploymentDialog({
       const vendor = String(accelerator.vendor ?? "").toLowerCase();
       const architecture = String(accelerator.architecture ?? "");
       return (!acceleratorRequirement.vendor || vendor === acceleratorRequirement.vendor) &&
-        (acceleratorRequirement.architectures.length === 0 || acceleratorRequirement.architectures.includes(architecture)) &&
-        (!acceleratorRequirement.minMemory || Number(accelerator.memory_bytes ?? 0) >= acceleratorRequirement.minMemory);
+        (acceleratorRequirement.architectures.length === 0 ||
+          acceleratorRequirement.architectures.includes(architecture)) &&
+        (!acceleratorRequirement.minMemory ||
+          Number(accelerator.memory_bytes ?? 0) >= acceleratorRequirement.minMemory);
     });
     return matching ? "" : "incompatible accelerator";
   };
 
+  const resetForRecipe = (digest: string) => {
+    setRecipeDigest(digest);
+    setNodeOverrides({});
+    setVariantChoices({});
+    setParameterChoices({});
+    setSelectedProfileId("");
+    setSourceProfileId("");
+    setNewProfileName("");
+    initializedSettings.current = "";
+    autoPreviewKey.current = "";
+    resetPlan();
+  };
+
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setRecipeDigest(initialRecipeDigest ?? "");
-      setProfile("");
-      setNodeOverrides({});
-      setVariantChoices({});
-      resetPlan();
+      resetForRecipe(initialRecipeDigest ?? "");
       resetCreate();
-      autoPreviewKey.current = "";
     }
     wasOpen.current = open;
   }, [initialRecipeDigest, open, resetCreate, resetPlan]);
 
   useEffect(() => {
-    setProfile((current) => (profiles.includes(current) ? current : profiles[0] ?? ""));
-  }, [profiles]);
+    if (!recipeDigest || !manifest || initializedSettings.current === recipeDigest) return;
+    initializedSettings.current = recipeDigest;
+    setVariantChoices(Object.fromEntries(
+      variantArtifacts.map((artifact) => [artifact.name, artifact.defaultValue]),
+    ));
+    setParameterChoices(Object.fromEntries(
+      enumParameters.map((parameter) => [parameter.name, parameter.defaultValue]),
+    ));
+  }, [enumParameters, manifest, recipeDigest, variantArtifacts]);
 
-  const plan = planMutation.data;
-  const selectedFabric = plan?.fabric
-    ? (fabricsQuery.data ?? []).find((fabric) => fabric.id === plan.fabric)
-    : undefined;
-
-  const preview = async () => {
-    if (!recipeDigest) return;
-    const placements = Object.entries(nodeOverrides)
-      .filter(([, nodeId]) => nodeId)
-      .map(([rank, node_id]) => ({ rank: Number(rank), node_id }));
-    const variants = Object.fromEntries(
-      Object.entries(variantChoices).filter(([, variant]) => variant),
-    );
-    try {
-      await planMutation.mutateAsync({
-        recipe_digest: recipeDigest,
-        profile,
-        ...(Object.keys(variants).length > 0 ? { variants } : {}),
-        ...(placements.length > 0 ? { placements } : {}),
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "plan failed");
+  const applyProfile = (profileId: string) => {
+    if (!profileId) {
+      setSelectedProfileId("");
+      setSourceProfileId("");
+      setVariantChoices(Object.fromEntries(
+        variantArtifacts.map((artifact) => [artifact.name, artifact.defaultValue]),
+      ));
+      setParameterChoices(Object.fromEntries(
+        enumParameters.map((parameter) => [parameter.name, parameter.defaultValue]),
+      ));
+      return;
     }
+    const profile = profiles.find((candidate) => candidate.id === profileId);
+    if (!profile) return;
+    setSelectedProfileId(profile.id);
+    setSourceProfileId(profile.id);
+    setVariantChoices(Object.fromEntries(
+      variantArtifacts.map((artifact) => [
+        artifact.name,
+        profile.variants?.[artifact.name] ?? artifact.defaultValue,
+      ]),
+    ));
+    setParameterChoices(Object.fromEntries(
+      enumParameters.map((parameter) => [
+        parameter.name,
+        profile.parameters?.[parameter.name] ?? parameter.defaultValue,
+      ]),
+    ));
+    autoPreviewKey.current = "";
+  };
+
+  const markCustom = () => {
+    setSelectedProfileId("");
+    autoPreviewKey.current = "";
   };
 
   useEffect(() => {
-    if (!open || !initialRecipeDigest || !recipeDetail || !nodes || detailFetching) return;
-    const key = `${recipeDigest}:${profile}:${nodes.map((node) => `${node.id}:${node.status}`).join(",")}`;
+    if (!open || !recipeDigest || !recipeDetail || !nodes || detailFetching) return;
+    const placements = Object.entries(nodeOverrides)
+      .filter(([, nodeId]) => nodeId)
+      .map(([rank, node_id]) => ({ rank: Number(rank), node_id }));
+    const request = selectedProfileId
+      ? {
+          recipe_digest: recipeDigest,
+          launch_profile_id: selectedProfileId,
+          ...(placements.length > 0 ? { placements } : {}),
+        }
+      : {
+          recipe_digest: recipeDigest,
+          variants: variantChoices,
+          parameters: parameterChoices,
+          ...(placements.length > 0 ? { placements } : {}),
+        };
+    const key = JSON.stringify(request);
     if (autoPreviewKey.current === key) return;
     autoPreviewKey.current = key;
-    void preview();
-  }, [open, initialRecipeDigest, recipeDetail, nodes, detailFetching, recipeDigest, profile]);
+    void planMutation.mutateAsync(request).catch(() => undefined);
+  }, [
+    detailFetching,
+    nodeOverrides,
+    nodes,
+    open,
+    parameterChoices,
+    recipeDetail,
+    recipeDigest,
+    selectedProfileId,
+    variantChoices,
+  ]);
+
+  const profileBody = () => ({
+    name: newProfileName.trim() || sourceProfile?.name || "",
+    variants: variantChoices,
+    parameters: parameterChoices,
+  });
+
+  const saveProfile = async () => {
+    if (!recipeDigest || !newProfileName.trim()) return;
+    try {
+      const profile = await createProfileMutation.mutateAsync({
+        recipeDigest,
+        body: profileBody(),
+      });
+      setNewProfileName("");
+      setSelectedProfileId(profile.id);
+      setSourceProfileId(profile.id);
+      toast.success("Profile saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "profile save failed");
+    }
+  };
+
+  const updateProfile = async () => {
+    if (!sourceProfile) return;
+    try {
+      const profile = await updateProfileMutation.mutateAsync({
+        id: sourceProfile.id,
+        body: { ...profileBody(), name: sourceProfile.name },
+      });
+      setSelectedProfileId(profile.id);
+      setSourceProfileId(profile.id);
+      toast.success("Profile updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "profile update failed");
+    }
+  };
+
+  const deleteProfile = async () => {
+    if (!sourceProfile) return;
+    try {
+      await deleteProfileMutation.mutateAsync({
+        id: sourceProfile.id,
+        recipeDigest,
+      });
+      applyProfile("");
+      toast.success("Profile deleted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "profile delete failed");
+    }
+  };
+
+  const plan = planMutation.data;
+  const originDownloads = plan?.transfers?.filter(
+    (transfer) => transfer.action === "download-origin",
+  ) ?? [];
+  const peerCopies = plan?.transfers?.filter(
+    (transfer) => transfer.action === "peer-copy",
+  ) ?? [];
+  const knownDownloadBytes = originDownloads.reduce(
+    (total, transfer) => total + (transfer.bytes ?? 0),
+    0,
+  );
+  const hasUnknownDownload = originDownloads.some((transfer) => transfer.bytes == null);
+  const targetLabel = plan?.placements?.length
+    ? plan.placements.map((placement) => placement.node_name ?? placement.node_id).join(", ")
+    : "Checking compatible nodes…";
+  const endpoint = plan?.endpoint;
+  const endpointLabel = endpoint?.host
+    ? `${endpoint.host}:${endpoint.port ?? ""}${endpoint.path ?? ""}`
+    : "Assigned at launch";
+  const recipeTitle = recipeDetail?.name ??
+    distinctRecipes.find((recipe) => recipe.digest === recipeDigest)?.name ??
+    "deployment";
 
   const create = async () => {
     if (!plan) return;
-    const variants = Object.fromEntries(
-      Object.entries(variantChoices).filter(([, variant]) => variant),
-    );
+    const request = selectedProfileId
+      ? {
+          recipe_digest: recipeDigest,
+          launch_profile_id: selectedProfileId,
+          plan_digest: plan.plan_digest,
+          placements: plan.placements.map(({ node_id, rank }) => ({ node_id, rank })),
+        }
+      : {
+          recipe_digest: recipeDigest,
+          variants: variantChoices,
+          parameters: parameterChoices,
+          plan_digest: plan.plan_digest,
+          placements: plan.placements.map(({ node_id, rank }) => ({ node_id, rank })),
+        };
     try {
-      const deployment = await createMutation.mutateAsync({
-        recipe_digest: recipeDigest,
-        profile,
-        plan_digest: plan.plan_digest,
-        ...(Object.keys(variants).length > 0 ? { variants } : {}),
-        ...(plan.placements.length > 0
-          ? { placements: plan.placements.map((placement) => ({ node_id: placement.node_id, rank: placement.rank })) }
-          : {}),
-      });
+      const deployment = await createMutation.mutateAsync(request);
       toast.success("Deployment launching", {
-        description: `${deployment.recipe_name} @ ${deployment.profile}`,
+        description: deployment.recipe_name ?? recipeTitle,
       });
       onOpenChange(false);
       navigate(`/serving/deployments/${deployment.id}`);
@@ -200,210 +390,296 @@ export function PlanDeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-h-[92dvh] sm:max-w-4xl sm:overflow-auto max-sm:inset-0 max-sm:m-0 max-sm:h-full max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:overflow-auto max-sm:rounded-none">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl font-semibold">Launch deployment</DialogTitle>
-          <DialogDescription>
-            Confirm the launch contract, assign Head and Worker roles, then preview capacity, fabric wiring, downloads, and endpoint before anything changes.
+          <DialogTitle className="font-display text-xl font-semibold">
+            Launch {recipeTitle}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Confirm the target and launch this recipe.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4">
-          <section className="lmw-panel-raised grid gap-3 p-3 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Recipe</Label>
-              <select
-                aria-label="Recipe"
-                className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring"
-                value={recipeDigest}
-                onChange={(event) => {
-                  setRecipeDigest(event.target.value);
-                  setNodeOverrides({});
-                  setVariantChoices({});
-                  planMutation.reset();
-                }}
-              >
-                <option value="">Select recipe</option>
-                {distinctRecipes.map((recipe) => (
-                  <option key={recipe.digest} value={recipe.digest}>
-                    {recipe.name}@{recipe.version}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Profile</Label>
-              <select
-                aria-label="Profile"
-                className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
-                value={profile}
-                onChange={(event) => {
-                  setProfile(event.target.value);
-                  planMutation.reset();
-                }}
-                disabled={detailFetching}
-              >
-                <option value="">{profiles.length === 0 ? "No profiles" : "Select profile"}</option>
-                {profiles.map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-            </div>
+        {!initialRecipeDigest ? (
+          <div className="grid gap-2">
+            <Label htmlFor="launch-recipe">Recipe</Label>
+            <select
+              id="launch-recipe"
+              className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm"
+              value={recipeDigest}
+              onChange={(event) => resetForRecipe(event.target.value)}
+            >
+              <option value="">Select recipe</option>
+              {distinctRecipes.map((recipe) => (
+                <option key={recipe.digest} value={recipe.digest}>
+                  {recipe.name}@{recipe.version}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
 
-            {variantArtifacts.map((artifact) => {
-              const selected = variantChoices[artifact.name] ?? artifact.defaultVariant;
-              const label = artifact.name === "model" ? "Model weights" : artifact.name;
-              return (
-                <fieldset key={artifact.name} className="grid gap-2 sm:col-span-2">
-                  <legend className="text-sm font-medium">{label}</legend>
-                  <p className="text-xs text-muted">
-                    Choose once for this deployment. Both ranks receive the same immutable snapshot
-                    {artifact.sizeBytes > 0 ? ` · ${bytes(artifact.sizeBytes)} per node` : ""}.
-                  </p>
+        {recipeDigest ? (
+          <div className="divide-y divide-hairline rounded-lg border border-hairline bg-card">
+            <div className="grid grid-cols-[7rem_1fr] items-center gap-3 px-4 py-3">
+              <span className="lmw-label">Target</span>
+              {nodeCount === 1 ? (
+                <select
+                  aria-label="Target"
+                  className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm"
+                  value={nodeOverrides[0] ?? ""}
+                  onChange={(event) => {
+                    setNodeOverrides(event.target.value ? { 0: event.target.value } : {});
+                    autoPreviewKey.current = "";
+                  }}
+                >
+                  <option value="">{targetLabel}</option>
+                  {(nodes ?? []).map((node) => {
+                    const reason = nodeReason(node, 0);
+                    return (
+                      <option key={node.id} value={node.id} disabled={Boolean(reason)}>
+                        {node.display_name}{reason ? ` · ${reason}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              ) : (
+                <span className="text-sm">{targetLabel}</span>
+              )}
+            </div>
+            <div className="grid grid-cols-[7rem_1fr] items-center gap-3 px-4 py-3">
+              <span className="lmw-label">Endpoint</span>
+              <span className="font-mono text-xs">{endpointLabel}</span>
+            </div>
+            <div className="grid grid-cols-[7rem_1fr] items-center gap-3 px-4 py-3">
+              <span className="lmw-label">Preparation</span>
+              {planMutation.isPending || detailFetching ? (
+                <span className="text-sm text-muted">Checking…</span>
+              ) : originDownloads.length > 0 ? (
+                <span className="flex items-center gap-2 text-sm text-warn">
+                  <Download className="h-4 w-4" aria-hidden />
+                  Download required
+                  {hasUnknownDownload
+                    ? " · size unknown"
+                    : knownDownloadBytes > 0
+                      ? ` · ${bytes(knownDownloadBytes)}`
+                      : ""}
+                </span>
+              ) : peerCopies.length > 0 ? (
+                <span className="flex items-center gap-2 text-sm">
+                  <Server className="h-4 w-4 text-primary" aria-hidden />
+                  Copy from another node
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-sm text-ok">
+                  <HardDrive className="h-4 w-4" aria-hidden />
+                  Installed
+                </span>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {nodeCount > 1 && recipeDigest ? (
+          <details className="rounded-lg border border-hairline bg-card" open>
+            <summary className="cursor-pointer px-4 py-3 font-display text-sm font-semibold">
+              Cluster roles
+            </summary>
+            <div className="grid gap-3 border-t border-hairline p-4 sm:grid-cols-2">
+              {Array.from({ length: nodeCount }, (_, rank) => (
+                <label key={rank} className="grid gap-1.5">
+                  <span className="text-xs font-medium">
+                    {rank === 0 ? "Head · API" : `Worker ${rank}`}
+                  </span>
+                  <select
+                    aria-label={`Rank ${rank} node`}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    value={nodeOverrides[rank] ?? ""}
+                    onChange={(event) => {
+                      setNodeOverrides((current) => ({
+                        ...current,
+                        [rank]: event.target.value,
+                      }));
+                      autoPreviewKey.current = "";
+                    }}
+                  >
+                    <option value="">Automatic</option>
+                    {(nodes ?? []).map((node) => {
+                      const reason = nodeReason(node, rank);
+                      return (
+                        <option key={node.id} value={node.id} disabled={Boolean(reason)}>
+                          {node.display_name}{reason ? ` · ${reason}` : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </details>
+        ) : null}
+
+        {showSettings ? (
+          <details className="rounded-lg border border-hairline bg-card">
+            <summary className="cursor-pointer px-4 py-3 font-display text-sm font-semibold">
+              Settings · {profiles.find((profile) => profile.id === selectedProfileId)?.name ?? "Custom"}
+            </summary>
+            <div className="grid gap-4 border-t border-hairline p-4">
+              {profiles.length > 0 ? (
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium">Profile</span>
+                  <select
+                    aria-label="Profile"
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    value={selectedProfileId}
+                    onChange={(event) => applyProfile(event.target.value)}
+                  >
+                    <option value="">Custom</option>
+                    {profiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {visibleVariantArtifacts.map((artifact) => (
+                <fieldset key={artifact.name} className="grid gap-2">
+                  <legend className="text-xs font-medium">{artifact.label}</legend>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {artifact.variants.map((variant) => (
                       <label
                         key={variant.name}
-                        className={`cursor-pointer rounded border p-3 transition-colors ${
-                          selected === variant.name
+                        className={`cursor-pointer rounded-md border p-3 ${
+                          variantChoices[artifact.name] === variant.name
                             ? "border-primary bg-primary/5"
-                            : "border-hairline bg-card hover:border-primary/50"
+                            : "border-hairline"
                         }`}
                       >
-                        <span className="flex items-start gap-2">
+                        <span className="flex gap-2">
                           <input
                             type="radio"
                             name={`variant-${artifact.name}`}
-                            value={variant.name}
-                            checked={selected === variant.name}
+                            checked={variantChoices[artifact.name] === variant.name}
                             onChange={() => {
-                              setVariantChoices((current) => ({ ...current, [artifact.name]: variant.name }));
-                              planMutation.reset();
+                              setVariantChoices((current) => ({
+                                ...current,
+                                [artifact.name]: variant.name,
+                              }));
+                              markCustom();
                             }}
-                            disabled={detailFetching}
-                            className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
                           />
                           <span>
-                            <span className="block font-display text-sm font-semibold">{variant.label}</span>
-                            {variant.description ? <span className="mt-1 block text-xs text-muted">{variant.description}</span> : null}
+                            <span className="block text-sm font-medium">{variant.label}</span>
+                            {variant.description ? (
+                              <span className="mt-1 block text-xs text-muted">{variant.description}</span>
+                            ) : null}
                           </span>
                         </span>
                       </label>
                     ))}
                   </div>
                 </fieldset>
-              );
-            })}
-          </section>
+              ))}
 
-          {recipeDigest ? (
-            <section className="grid gap-2">
-              <div>
-                <p className="lmw-label">Cluster roles</p>
-                <p className="text-xs text-muted">Automatic placement uses compatible online hardware. Pin a role only when the cluster order matters.</p>
+              {visibleEnumParameters.map((parameter) => (
+                <label key={parameter.name} className="grid gap-1.5">
+                  <span className="text-xs font-medium">{parameter.label}</span>
+                  {parameter.description ? (
+                    <span className="text-xs text-muted">{parameter.description}</span>
+                  ) : null}
+                  <select
+                    aria-label={parameter.label}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    value={String(parameterChoices[parameter.name] ?? parameter.defaultValue)}
+                    onChange={(event) => {
+                      setParameterChoices((current) => ({
+                        ...current,
+                        [parameter.name]: event.target.value,
+                      }));
+                      markCustom();
+                    }}
+                  >
+                    {parameter.values.map((value) => (
+                      <option key={value} value={value}>{value}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="grid min-w-44 flex-1 gap-1.5">
+                  <span className="text-xs font-medium">New profile name</span>
+                  <input
+                    aria-label="New profile name"
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    value={newProfileName}
+                    onChange={(event) => setNewProfileName(event.target.value)}
+                  />
+                </label>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!newProfileName.trim() || createProfileMutation.isPending}
+                  onClick={() => void saveProfile()}
+                >
+                  Save profile
+                </Button>
+                {sourceProfile ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={updateProfileMutation.isPending}
+                      onClick={() => void updateProfile()}
+                    >
+                      Update profile
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={deleteProfileMutation.isPending}
+                      onClick={() => void deleteProfile()}
+                    >
+                      Delete profile
+                    </Button>
+                  </>
+                ) : null}
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: nodeCount }, (_, rank) => {
-                  const selectedId = nodeOverrides[rank] ?? "";
-                  const selectedNode = (nodes ?? []).find((node) => node.id === selectedId);
-                  const memberships = (fabricsQuery.data ?? []).filter((fabric) => selectedId && fabric.members.includes(selectedId));
-                  const accelerators = selectedNode?.inventory?.accelerators ?? [];
-                  const rdmaCount = selectedNode?.inventory?.rdma_devices?.length ?? 0;
-                  return (
-                    <article key={rank} className="lmw-panel overflow-hidden">
-                      <header className="lmw-panel-head flex items-center gap-2">
-                        <Server className="h-4 w-4 text-primary" aria-hidden />
-                        <h3 className="font-display font-semibold">{rank === 0 ? "Head · API" : `Worker ${rank}`}</h3>
-                        <span className="ml-auto font-mono text-[10px] text-muted">{selectedNode?.status ?? "automatic"}</span>
-                      </header>
-                      <div className="grid gap-3 p-3">
-                        <select
-                          aria-label={`Rank ${rank} node`}
-                          className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring"
-                          value={selectedId}
-                          onChange={(event) => {
-                            setNodeOverrides((current) => ({ ...current, [rank]: event.target.value }));
-                            planMutation.reset();
-                          }}
-                        >
-                          <option value="">{rank === 0 ? "Head · automatic" : `Worker ${rank} · automatic`}</option>
-                          {(nodes ?? []).map((node) => {
-                            const reason = nodeReason(node, rank);
-                            return (
-                              <option key={node.id} value={node.id} disabled={Boolean(reason)}>
-                                {node.display_name} · {reason || "compatible"}
-                              </option>
-                            );
-                          })}
-                        </select>
-
-                        {selectedNode ? (
-                          <dl className="grid grid-cols-2 gap-2 text-xs">
-                            <div><dt className="lmw-label">Accelerators</dt><dd>{accelerators.length ? accelerators.map((accelerator) => accelerator.name).join(", ") : "None reported"}</dd></div>
-                            <div><dt className="lmw-label">Accelerator memory</dt><dd>{accelerators.length ? bytes(accelerators.reduce((total, accelerator) => total + accelerator.memory_bytes, 0)) : "Not reported"}</dd></div>
-                            <div><dt className="lmw-label">RDMA</dt><dd>{rdmaCount > 0 ? `${rdmaCount} device${rdmaCount === 1 ? "" : "s"}` : "Not present"}</dd></div>
-                            <div>
-                              <dt className="lmw-label">Fabrics</dt>
-                              <dd className="space-y-0.5">
-                                {fabricsQuery.isPending ? (
-                                  <span className="text-muted">Loading fabric data…</span>
-                                ) : fabricsQuery.isError ? (
-                                  <span className="text-warn">Fabric data unavailable</span>
-                                ) : memberships.length > 0 ? (
-                                  memberships.map((fabric) => (
-                                    <span key={fabric.id} className="flex items-center gap-1">
-                                      <Network className="h-3 w-3 text-ok" aria-hidden />
-                                      {fabric.name} · {fabric.transport}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span>None</span>
-                                )}
-                              </dd>
-                            </div>
-                          </dl>
-                        ) : (
-                          <p className="text-xs text-muted">LMW will match this role against live accelerator inventory, leases, and a complete shared fabric.</p>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
-
-          {plan ? (
-            <div className="rounded-md border border-hairline bg-card p-3">
-              <PlanPreview plan={plan} nodes={nodes ?? []} fabric={selectedFabric} />
             </div>
-          ) : planMutation.isError ? (
-            <p className="rounded-md border border-fault/40 bg-fault/5 px-3 py-2 font-mono text-xs text-fault">
-              {planMutation.error instanceof Error ? planMutation.error.message : "plan failed"}
-            </p>
-          ) : null}
-          {recipeDigest && recipeDetail?.compatibility?.fabric && !plan?.fabric && !planMutation.isPending ? (
-            <p className="rounded border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">
-              This recipe needs a healthy cluster fabric with complete per-node wiring.{" "}
-              <Link to="/fleet/fabrics" className="underline underline-offset-2">Open Fabrics</Link>
-            </p>
-          ) : null}
-        </div>
+          </details>
+        ) : null}
+
+        {planMutation.isError ? (
+          <p className="rounded-md border border-fault/40 bg-fault/5 px-3 py-2 text-sm text-fault">
+            {planMutation.error instanceof Error ? planMutation.error.message : "Unable to plan launch"}
+          </p>
+        ) : null}
+        {plan && !plan.ready && !planMutation.isPending ? (
+          <p className="rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">
+            {plan.diagnostics?.[0]?.message ?? "No compatible launch target is ready."}
+            {recipeDetail?.compatibility?.fabric && !plan.fabric ? (
+              <> <Link to="/fleet/fabrics" className="underline underline-offset-2">Open Fabrics</Link></>
+            ) : null}
+          </p>
+        ) : null}
 
         <DialogFooter className="sm:justify-between">
-          <Button
-            variant="secondary"
-            onClick={() => void preview()}
-            disabled={!recipeDigest || planMutation.isPending}
-          >
-            {planMutation.isPending ? "Checking cluster…" : plan ? "Recheck placement" : "Preview placement"}
-          </Button>
+          <div>
+            {onBack ? (
+              <Button variant="ghost" onClick={onBack}>Back</Button>
+            ) : null}
+          </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => void create()} disabled={!plan?.ready || createMutation.isPending}>
+            <Button
+              onClick={() => void create()}
+              disabled={!plan?.ready || createMutation.isPending || planMutation.isPending}
+            >
               {createMutation.isPending
                 ? "Launching…"
-                : plan?.transfers?.some((transfer) => transfer.source_node === "origin")
+                : originDownloads.length > 0
                   ? "Download & launch"
-                  : "Launch now"}
+                  : "Launch"}
             </Button>
           </div>
         </DialogFooter>

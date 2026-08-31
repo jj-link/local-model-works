@@ -121,7 +121,7 @@ export default function DashboardRoute() {
                           to={`/serving/deployments/${d.id}`}
                           className="font-mono text-xs text-foreground hover:text-primary"
                         >
-                          {d.recipe_name}@{d.profile}
+                          {d.recipe_name}
                         </Link>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted">

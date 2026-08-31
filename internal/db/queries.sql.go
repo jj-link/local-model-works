@@ -303,7 +303,7 @@ func (q *Queries) CreateBrowserLoginToken(ctx context.Context, arg CreateBrowser
 }
 
 const createDeployment = `-- name: CreateDeployment :exec
-INSERT INTO deployments (id, recipe_digest, profile, placement, fabric,
+INSERT INTO deployments (id, recipe_digest, parameters, placement, fabric,
                          desired_state, observed_state, run_id)
 VALUES (?, ?, ?, ?, ?, 'running', 'unknown', ?)
 `
@@ -311,7 +311,7 @@ VALUES (?, ?, ?, ?, ?, 'running', 'unknown', ?)
 type CreateDeploymentParams struct {
 	ID           string         `json:"id"`
 	RecipeDigest string         `json:"recipe_digest"`
-	Profile      string         `json:"profile"`
+	Parameters   string         `json:"parameters"`
 	Placement    string         `json:"placement"`
 	Fabric       sql.NullString `json:"fabric"`
 	RunID        sql.NullString `json:"run_id"`
@@ -321,7 +321,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 	_, err := q.db.ExecContext(ctx, createDeployment,
 		arg.ID,
 		arg.RecipeDigest,
-		arg.Profile,
+		arg.Parameters,
 		arg.Placement,
 		arg.Fabric,
 		arg.RunID,
@@ -380,6 +380,32 @@ func (q *Queries) CreateFabric(ctx context.Context, arg CreateFabricParams) erro
 		arg.Members,
 		arg.Bindings,
 		arg.Version,
+	)
+	return err
+}
+
+const createLaunchProfile = `-- name: CreateLaunchProfile :exec
+
+INSERT INTO launch_profiles (id, name, recipe_digest, variants, parameters)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type CreateLaunchProfileParams struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	RecipeDigest string `json:"recipe_digest"`
+	Variants     string `json:"variants"`
+	Parameters   string `json:"parameters"`
+}
+
+// ---------------------------------------------------------------- launch profiles
+func (q *Queries) CreateLaunchProfile(ctx context.Context, arg CreateLaunchProfileParams) error {
+	_, err := q.db.ExecContext(ctx, createLaunchProfile,
+		arg.ID,
+		arg.Name,
+		arg.RecipeDigest,
+		arg.Variants,
+		arg.Parameters,
 	)
 	return err
 }
@@ -622,6 +648,29 @@ func (q *Queries) DeleteFabric(ctx context.Context, arg DeleteFabricParams) erro
 	return err
 }
 
+const deleteLaunchProfile = `-- name: DeleteLaunchProfile :exec
+DELETE FROM launch_profiles WHERE id = ?
+`
+
+func (q *Queries) DeleteLaunchProfile(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteLaunchProfile, id)
+	return err
+}
+
+const deleteLaunchProfilesByDigestAndName = `-- name: DeleteLaunchProfilesByDigestAndName :exec
+DELETE FROM launch_profiles WHERE recipe_digest = ? AND name = ?
+`
+
+type DeleteLaunchProfilesByDigestAndNameParams struct {
+	RecipeDigest string `json:"recipe_digest"`
+	Name         string `json:"name"`
+}
+
+func (q *Queries) DeleteLaunchProfilesByDigestAndName(ctx context.Context, arg DeleteLaunchProfilesByDigestAndNameParams) error {
+	_, err := q.db.ExecContext(ctx, deleteLaunchProfilesByDigestAndName, arg.RecipeDigest, arg.Name)
+	return err
+}
+
 const deleteRecipe = `-- name: DeleteRecipe :exec
 DELETE FROM recipes WHERE digest = ?
 `
@@ -746,7 +795,7 @@ func (q *Queries) GetArtifactByIdentity(ctx context.Context, identity string) (A
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
@@ -756,7 +805,7 @@ FROM deployments WHERE id = ?
 type GetDeploymentRow struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -778,7 +827,7 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (GetDeploymentRo
 	err := row.Scan(
 		&i.ID,
 		&i.RecipeDigest,
-		&i.Profile,
+		&i.Parameters,
 		&i.Placement,
 		&i.Fabric,
 		&i.DesiredState,
@@ -796,25 +845,25 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (GetDeploymentRo
 	return i, err
 }
 
-const getDeploymentByRecipeProfilePlacement = `-- name: GetDeploymentByRecipeProfilePlacement :one
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+const getDeploymentByRecipeParametersPlacement = `-- name: GetDeploymentByRecipeParametersPlacement :one
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments
-WHERE recipe_digest = ? AND profile = ? AND placement = ?
+WHERE recipe_digest = ? AND parameters = ? AND placement = ?
 `
 
-type GetDeploymentByRecipeProfilePlacementParams struct {
+type GetDeploymentByRecipeParametersPlacementParams struct {
 	RecipeDigest string `json:"recipe_digest"`
-	Profile      string `json:"profile"`
+	Parameters   string `json:"parameters"`
 	Placement    string `json:"placement"`
 }
 
-type GetDeploymentByRecipeProfilePlacementRow struct {
+type GetDeploymentByRecipeParametersPlacementRow struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -830,13 +879,13 @@ type GetDeploymentByRecipeProfilePlacementRow struct {
 	UpdatedAt         string         `json:"updated_at"`
 }
 
-func (q *Queries) GetDeploymentByRecipeProfilePlacement(ctx context.Context, arg GetDeploymentByRecipeProfilePlacementParams) (GetDeploymentByRecipeProfilePlacementRow, error) {
-	row := q.db.QueryRowContext(ctx, getDeploymentByRecipeProfilePlacement, arg.RecipeDigest, arg.Profile, arg.Placement)
-	var i GetDeploymentByRecipeProfilePlacementRow
+func (q *Queries) GetDeploymentByRecipeParametersPlacement(ctx context.Context, arg GetDeploymentByRecipeParametersPlacementParams) (GetDeploymentByRecipeParametersPlacementRow, error) {
+	row := q.db.QueryRowContext(ctx, getDeploymentByRecipeParametersPlacement, arg.RecipeDigest, arg.Parameters, arg.Placement)
+	var i GetDeploymentByRecipeParametersPlacementRow
 	err := row.Scan(
 		&i.ID,
 		&i.RecipeDigest,
-		&i.Profile,
+		&i.Parameters,
 		&i.Placement,
 		&i.Fabric,
 		&i.DesiredState,
@@ -961,6 +1010,51 @@ func (q *Queries) GetFabricByIfMatch(ctx context.Context, arg GetFabricByIfMatch
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Bindings,
+	)
+	return i, err
+}
+
+const getLaunchProfile = `-- name: GetLaunchProfile :one
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE id = ?
+`
+
+func (q *Queries) GetLaunchProfile(ctx context.Context, id string) (LaunchProfile, error) {
+	row := q.db.QueryRowContext(ctx, getLaunchProfile, id)
+	var i LaunchProfile
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.RecipeDigest,
+		&i.Variants,
+		&i.Parameters,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLaunchProfileByName = `-- name: GetLaunchProfileByName :one
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE recipe_digest = ? AND name = ?
+`
+
+type GetLaunchProfileByNameParams struct {
+	RecipeDigest string `json:"recipe_digest"`
+	Name         string `json:"name"`
+}
+
+func (q *Queries) GetLaunchProfileByName(ctx context.Context, arg GetLaunchProfileByNameParams) (LaunchProfile, error) {
+	row := q.db.QueryRowContext(ctx, getLaunchProfileByName, arg.RecipeDigest, arg.Name)
+	var i LaunchProfile
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.RecipeDigest,
+		&i.Variants,
+		&i.Parameters,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1487,7 +1581,7 @@ func (q *Queries) LeasesForOwner(ctx context.Context, arg LeasesForOwnerParams) 
 }
 
 const listActiveDeployments = `-- name: ListActiveDeployments :many
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
@@ -1497,7 +1591,7 @@ FROM deployments WHERE desired_state = 'running'
 type ListActiveDeploymentsRow struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -1525,7 +1619,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]ListActiveDeploy
 		if err := rows.Scan(
 			&i.ID,
 			&i.RecipeDigest,
-			&i.Profile,
+			&i.Parameters,
 			&i.Placement,
 			&i.Fabric,
 			&i.DesiredState,
@@ -1784,7 +1878,7 @@ func (q *Queries) ListDeploymentMonitorTargets(ctx context.Context) ([]ListDeplo
 }
 
 const listDeployments = `-- name: ListDeployments :many
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
@@ -1794,7 +1888,7 @@ FROM deployments ORDER BY created_at DESC
 type ListDeploymentsRow struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -1822,7 +1916,7 @@ func (q *Queries) ListDeployments(ctx context.Context) ([]ListDeploymentsRow, er
 		if err := rows.Scan(
 			&i.ID,
 			&i.RecipeDigest,
-			&i.Profile,
+			&i.Parameters,
 			&i.Placement,
 			&i.Fabric,
 			&i.DesiredState,
@@ -1960,6 +2054,42 @@ func (q *Queries) ListFabrics(ctx context.Context) ([]Fabric, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Bindings,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLaunchProfilesByRecipe = `-- name: ListLaunchProfilesByRecipe :many
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE recipe_digest = ? ORDER BY created_at DESC, name
+`
+
+func (q *Queries) ListLaunchProfilesByRecipe(ctx context.Context, recipeDigest string) ([]LaunchProfile, error) {
+	rows, err := q.db.QueryContext(ctx, listLaunchProfilesByRecipe, recipeDigest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LaunchProfile
+	for rows.Next() {
+		var i LaunchProfile
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.RecipeDigest,
+			&i.Variants,
+			&i.Parameters,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2363,7 +2493,7 @@ func (q *Queries) ListRecipes(ctx context.Context) ([]Recipe, error) {
 }
 
 const listRepositoryActiveDeployments = `-- name: ListRepositoryActiveDeployments :many
-SELECT d.id, d.recipe_digest, d.profile, d.placement, d.fabric,
+SELECT d.id, d.recipe_digest, d.parameters, d.placement, d.fabric,
        d.desired_state, d.observed_state, d.endpoint, d.endpoint_model,
        d.endpoint_path, d.model_capabilities, d.diagnostics, d.run_id,
        d.dispatch, d.created_at, d.updated_at
@@ -2381,7 +2511,7 @@ ORDER BY d.id
 type ListRepositoryActiveDeploymentsRow struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -2409,7 +2539,7 @@ func (q *Queries) ListRepositoryActiveDeployments(ctx context.Context, repositor
 		if err := rows.Scan(
 			&i.ID,
 			&i.RecipeDigest,
-			&i.Profile,
+			&i.Parameters,
 			&i.Placement,
 			&i.Fabric,
 			&i.DesiredState,
@@ -3100,6 +3230,29 @@ type UpdateFabricStateParams struct {
 
 func (q *Queries) UpdateFabricState(ctx context.Context, arg UpdateFabricStateParams) error {
 	_, err := q.db.ExecContext(ctx, updateFabricState, arg.State, arg.Diagnostics, arg.ID)
+	return err
+}
+
+const updateLaunchProfile = `-- name: UpdateLaunchProfile :exec
+UPDATE launch_profiles
+SET name = ?, variants = ?, parameters = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?
+`
+
+type UpdateLaunchProfileParams struct {
+	Name       string `json:"name"`
+	Variants   string `json:"variants"`
+	Parameters string `json:"parameters"`
+	ID         string `json:"id"`
+}
+
+func (q *Queries) UpdateLaunchProfile(ctx context.Context, arg UpdateLaunchProfileParams) error {
+	_, err := q.db.ExecContext(ctx, updateLaunchProfile,
+		arg.Name,
+		arg.Variants,
+		arg.Parameters,
+		arg.ID,
+	)
 	return err
 }
 

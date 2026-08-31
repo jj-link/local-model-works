@@ -45,11 +45,6 @@ function DeploymentRow({ d, sample }: { d: NodeDeploymentRow; sample?: ServingTe
         </span>
       </span>
       <span className="flex shrink-0 items-center gap-2">
-        {d.recipeDigest ? (
-          <Link to={`/library/recipes/${d.recipeDigest}`} className="font-mono text-[10px] text-faint hover:underline">
-            recipe →
-          </Link>
-        ) : null}
         {d.rankZero ? (
           <span className="tnum whitespace-nowrap font-mono text-[10px] text-muted">
             {identity}

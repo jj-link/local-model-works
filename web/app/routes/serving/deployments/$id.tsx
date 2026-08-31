@@ -128,7 +128,6 @@ export default function DeploymentDetailRoute() {
               {d.recipe_name ?? shortId(d.recipe_digest)}
               {d.recipe_version ? `@${d.recipe_version}` : ""}
             </span>
-            <span className="font-mono text-[11px] text-muted">profile {d.profile}</span>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
@@ -267,9 +266,7 @@ export default function DeploymentDetailRoute() {
             <div className="grid gap-1 font-mono text-xs">
               <p>
                 <span className="text-muted">recipe</span>{" "}
-                <Link to={`/library/recipes/${d.recipe_digest}`} className="control hover:text-foreground">
-                  {shortId(d.recipe_digest)}
-                </Link>
+                <span>{shortId(d.recipe_digest)}</span>
               </p>
               <p>
                 <span className="text-muted">id</span> <span>{d.id}</span>

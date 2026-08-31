@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-27b-radixark-nvfp4-dflash2-avt
-  version: 1.0.3
+  version: 1.0.4
   model: Qwen3.8-27B
   engine: sglang
   description: >-
@@ -25,20 +25,35 @@ compatibility:
 artifacts:
   - name: model
     kind: model
-    source:
-      type: huggingface
-      identity: hf://RadixArk/Qwen3.8-27B-NVFP4
-      revision: "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
+    defaultVariant: radixark_nvfp4
+    variants:
+      - name: radixark_nvfp4
+        label: RadixArk Qwen3.8 27B NVFP4
+        source:
+          type: huggingface
+          identity: hf://RadixArk/Qwen3.8-27B-NVFP4
+          revision: "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
     mount: /models/base
     validation: snapshot
   - name: drafter
     kind: model
-    source:
-      type: huggingface
-      identity: hf://z-lab/Qwen3.8-27B-DFlash2
-      revision: "50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
+    defaultVariant: zlab_dflash2
+    variants:
+      - name: zlab_dflash2
+        label: z-lab Qwen3.8 27B DFlash2
+        source:
+          type: huggingface
+          identity: hf://z-lab/Qwen3.8-27B-DFlash2
+          revision: "50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
     mount: /models/drafter
     validation: snapshot
+parameters:
+  - name: kv_cache_dtype
+    type: enum
+    default: fp8_e4m3
+    enum:
+      - fp8_e4m3
+    description: SGLang KV-cache quantization supported by this pinned runtime.
 assets:
   - assets/capabilities.json
   - assets/serve.sh
@@ -77,6 +92,7 @@ workloads:
       TORCH_EXTENSIONS_DIR: /tmp/torch-extensions
       TRITON_CACHE_DIR: /tmp/triton
       XDG_CACHE_HOME: /tmp/cache
+      KV_CACHE_DTYPE: "${setting.kv_cache_dtype}"
     devices:
       accelerator:
         all: true

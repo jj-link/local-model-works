@@ -36,23 +36,22 @@ const (
 	TemplFabricRDMADevice = "${fabric.rdma_device}"
 	TemplFabricGIDIndex   = "${fabric.gid_index}"
 	TemplArtifact         = "${artifact." // + <name> + ".path}"
-	TemplProfile          = "${profile."  // + <name> + "}"
+	TemplSetting          = "${setting."  // + <name> + "}"
 )
 
 // Manifest is the typed view of a validated recipe document. Field names
 // mirror the JSON Schema (camelCase on the wire).
 type Manifest struct {
-	APIVersion    string         `json:"apiVersion"`
-	Kind          string         `json:"kind"`
-	Metadata      Metadata       `json:"metadata"`
-	Compatibility Compatibility  `json:"compatibility"`
-	Artifacts     []Artifact     `json:"artifacts"`
-	Parameters    []Parameter    `json:"parameters,omitempty"`
-	Profiles      map[string]any `json:"profiles,omitempty"`
-	Workloads     []Workload     `json:"workloads"`
-	Assets        []string       `json:"assets,omitempty"`
-	Prepare       *Extension     `json:"prepare,omitempty"`
-	Verify        *Extension     `json:"verify,omitempty"`
+	APIVersion    string        `json:"apiVersion"`
+	Kind          string        `json:"kind"`
+	Metadata      Metadata      `json:"metadata"`
+	Compatibility Compatibility `json:"compatibility"`
+	Artifacts     []Artifact    `json:"artifacts"`
+	Parameters    []Parameter   `json:"parameters,omitempty"`
+	Workloads     []Workload    `json:"workloads"`
+	Assets        []string      `json:"assets,omitempty"`
+	Prepare       *Extension    `json:"prepare,omitempty"`
+	Verify        *Extension    `json:"verify,omitempty"`
 }
 
 type Metadata struct {
@@ -400,23 +399,6 @@ func TemplateVars(vals ...string) []string {
 	return out
 }
 
-// IsTemplateVar reports whether s is one of the declared template variables.
-func IsTemplateVar(s string) bool {
-	switch s {
-	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplFabricAddr,
-		TemplFabricNodeAddr, TemplFabricInterface, TemplFabricRDMADevice, TemplFabricGIDIndex:
-		return true
-	}
-	if strings.HasPrefix(s, TemplArtifact) && strings.HasSuffix(s, ".path}") {
-		name := strings.TrimSuffix(strings.TrimPrefix(s, TemplArtifact), ".path}")
-		return assetNamePattern.MatchString(name)
-	}
-	if strings.HasPrefix(s, TemplProfile) && strings.HasSuffix(s, "}") {
-		return true
-	}
-	return false
-}
-
 var assetNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,62}$`)
 
 // Render replaces declared template variables with concrete values.
@@ -447,7 +429,7 @@ type RenderContext struct {
 	FabricRDMADevice string
 	FabricGIDIndex   string
 	Artifacts        map[string]string // artifact name -> node-local path
-	Profiles         map[string]any
+	Settings         map[string]any
 }
 
 // Resolve returns the concrete value for a template variable.
@@ -475,15 +457,15 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		p, ok := c.Artifacts[name]
 		return p, ok
 	}
-	if strings.HasPrefix(v, TemplProfile) && strings.HasSuffix(v, "}") {
-		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplProfile), "}")
-		vv, ok := c.Profiles[name]
-		return formatProfileValue(vv), ok
+	if strings.HasPrefix(v, TemplSetting) && strings.HasSuffix(v, "}") {
+		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplSetting), "}")
+		vv, ok := c.Settings[name]
+		return formatSettingValue(vv), ok
 	}
 	return "", false
 }
 
-func formatProfileValue(v any) string {
+func formatSettingValue(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""
@@ -565,36 +547,25 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// ProfileValues returns the effective parameter values: schema defaults,
-// overridden by the named profile's validated values.
-func (m *Manifest) ProfileValues(profile string) (map[string]any, error) {
+// EffectiveSettings returns the effective parameter values: schema defaults
+// overridden by the operator's validated explicit overrides. Every override
+// must be a declared parameter with an in-range in-enum value; unknown keys
+// and malformed values are rejected before any planning happens.
+func (m *Manifest) EffectiveSettings(overrides map[string]any) (map[string]any, error) {
 	out := map[string]any{}
 	for _, p := range m.Parameters {
 		if p.Default != nil {
 			out[p.Name] = p.Default
 		}
 	}
-	if profile == "" {
-		return out, nil
-	}
-	pv, ok := m.Profiles[profile]
-	if !ok {
-		return nil, fmt.Errorf("profile %q not defined", profile)
-	}
-	obj, ok := pv.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("profile %q malformed", profile)
-	}
-	known := map[string]bool{}
-	for _, p := range m.Parameters {
-		known[p.Name] = true
-	}
-	for k := range obj {
-		if !known[k] {
-			return nil, fmt.Errorf("profile %q sets undeclared parameter %q", profile, k)
+	for k, v := range overrides {
+		p := m.ParameterByName(k)
+		if p == nil {
+			return nil, fmt.Errorf("setting %q is not declared by the recipe", k)
 		}
-	}
-	for k, v := range obj {
+		if d := checkParamValue(*p, v); d != "" {
+			return nil, fmt.Errorf("setting %q invalid: %s", k, d)
+		}
 		out[k] = v
 	}
 	return out, nil
@@ -610,7 +581,30 @@ func (m *Manifest) ArtifactByName(name string) *Artifact {
 	return nil
 }
 
+// ParameterByName returns the named parameter definition.
+func (m *Manifest) ParameterByName(name string) *Parameter {
+	for i := range m.Parameters {
+		if m.Parameters[i].Name == name {
+			return &m.Parameters[i]
+		}
+	}
+	return nil
+}
+
 // HasFabricRequirement reports whether the recipe demands a fabric.
 func (m *Manifest) HasFabricRequirement() bool {
 	return m.Compatibility.Fabric != nil
+}
+
+// VariantTable maps artifact name -> declared variant names.
+func (m *Manifest) VariantTable() map[string][]string {
+	out := map[string][]string{}
+	for i := range m.Artifacts {
+		names := make([]string, 0, len(m.Artifacts[i].Variants))
+		for _, v := range m.Artifacts[i].Variants {
+			names = append(names, v.Name)
+		}
+		out[m.Artifacts[i].Name] = names
+	}
+	return out
 }

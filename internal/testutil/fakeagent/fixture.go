@@ -36,7 +36,6 @@ type FixtureRecipe struct {
 	Profiles    map[string]any
 }
 
-// Manifest builds the recipe manifest for r.
 func (r FixtureRecipe) Manifest() recipe.Manifest {
 	// The recipe schema requires "artifacts" as an array (minItems 0); a nil
 	// slice would marshal to null and fail validation.
@@ -109,7 +108,6 @@ func (r FixtureRecipe) Manifest() recipe.Manifest {
 			Default:     "acme/test-model",
 			Description: "served model identity",
 		}},
-		Profiles:  r.Profiles,
 		Workloads: []recipe.Workload{w},
 	}
 	return m

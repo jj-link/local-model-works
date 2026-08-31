@@ -217,6 +217,35 @@ SELECT repository_id, recipe_digest, commit_sha, tree_sha, canonical, installed_
 FROM recipe_repository_versions
 WHERE recipe_digest = ?;
 
+-- ---------------------------------------------------------------- launch profiles
+
+-- name: CreateLaunchProfile :exec
+INSERT INTO launch_profiles (id, name, recipe_digest, variants, parameters)
+VALUES (?, ?, ?, ?, ?);
+
+-- name: ListLaunchProfilesByRecipe :many
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE recipe_digest = ? ORDER BY created_at DESC, name;
+
+-- name: GetLaunchProfile :one
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE id = ?;
+
+-- name: GetLaunchProfileByName :one
+SELECT id, name, recipe_digest, variants, parameters, created_at, updated_at
+FROM launch_profiles WHERE recipe_digest = ? AND name = ?;
+
+-- name: UpdateLaunchProfile :exec
+UPDATE launch_profiles
+SET name = ?, variants = ?, parameters = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ?;
+
+-- name: DeleteLaunchProfile :exec
+DELETE FROM launch_profiles WHERE id = ?;
+
+-- name: DeleteLaunchProfilesByDigestAndName :exec
+DELETE FROM launch_profiles WHERE recipe_digest = ? AND name = ?;
+
 -- name: UpsertRecipeRepository :exec
 INSERT INTO recipe_repositories (
     id, source_url, source_path, tracking_ref, created_at, updated_at
@@ -275,19 +304,19 @@ JOIN deployments d ON d.id = r.deployment_id
 WHERE d.recipe_digest = ?;
 
 -- name: CreateDeployment :exec
-INSERT INTO deployments (id, recipe_digest, profile, placement, fabric,
+INSERT INTO deployments (id, recipe_digest, parameters, placement, fabric,
                          desired_state, observed_state, run_id)
 VALUES (?, ?, ?, ?, ?, 'running', 'unknown', ?);
 
 -- name: GetDeployment :one
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE id = ?;
 
 -- name: ListDeployments :many
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
@@ -299,22 +328,22 @@ WHERE desired_state = 'running'
   AND observed_state IN ('healthy', 'degraded')
   AND endpoint IS NOT NULL AND endpoint != '';
 
--- name: GetDeploymentByRecipeProfilePlacement :one
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+-- name: GetDeploymentByRecipeParametersPlacement :one
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments
-WHERE recipe_digest = ? AND profile = ? AND placement = ?;
+WHERE recipe_digest = ? AND parameters = ? AND placement = ?;
 
 -- name: ListActiveDeployments :many
-SELECT id, recipe_digest, profile, placement, fabric, desired_state,
+SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,
        model_capabilities, diagnostics, run_id,
        dispatch, created_at, updated_at
 FROM deployments WHERE desired_state = 'running';
 -- name: ListRepositoryActiveDeployments :many
-SELECT d.id, d.recipe_digest, d.profile, d.placement, d.fabric,
+SELECT d.id, d.recipe_digest, d.parameters, d.placement, d.fabric,
        d.desired_state, d.observed_state, d.endpoint, d.endpoint_model,
        d.endpoint_path, d.model_capabilities, d.diagnostics, d.run_id,
        d.dispatch, d.created_at, d.updated_at

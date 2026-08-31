@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feature: replace deployment-plan internals with a compact recipe launcher, operator-owned digest-pinned launch profiles, validated model/runtime settings, and explicit installed, origin-download, or peer-copy preparation states.
 - Feature: complete the secure Go control plane and mTLS node agent, including ownership-scoped container lifecycle, artifact reconciliation and transfer, placement leases, and offline recovery.
 - Feature: add immutable OCI recipe packaging, full-commit Git import, authoring CLI, and the inspectable Library recipe builder.
 - Feature: add compile-time first-party backend and frontend modules, generated OpenAPI handlers, the Workshop topology surface, and behavioral browser coverage.

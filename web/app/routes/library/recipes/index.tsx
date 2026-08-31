@@ -28,6 +28,7 @@ export default function RecipesRoute() {
   const [planOpen, setPlanOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [selectedRecipeDigest, setSelectedRecipeDigest] = useState<string>();
+  const [importedRecipe, setImportedRecipe] = useState<Recipe>();
   const [selectedRepositoryId, setSelectedRepositoryId] = useState<string>();
 
   const visibleRepositories = useMemo(() => {
@@ -98,7 +99,14 @@ export default function RecipesRoute() {
           >
             {checkUpdates.isPending ? "Checking updates…" : "Check updates"}
           </button>
-          <button type="button" className="sample-a-import" onClick={() => setImportOpen(true)}>
+          <button
+            type="button"
+            className="sample-a-import"
+            onClick={() => {
+              setImportedRecipe(undefined);
+              setImportOpen(true);
+            }}
+          >
             Import recipe
           </button>
         </div>
@@ -166,9 +174,10 @@ export default function RecipesRoute() {
                     <button
                       type="button"
                       className="sample-a-card"
-                      aria-label={`Plan launch for ${recipe.name}`}
+                      aria-label={`Launch ${recipe.name}`}
                       onClick={() => {
                         setSelectedRecipeDigest(recipe.digest);
+                        setImportedRecipe(undefined);
                         setPlanOpen(true);
                       }}
                     >
@@ -200,7 +209,7 @@ export default function RecipesRoute() {
                       </span>
                       <span className="sample-a-compat">{compatibility}</span>
                       <span className="sample-a-updrow">
-                        <span className="sample-a-upd">Plan launch →</span>
+                        <span className="sample-a-upd">Launch →</span>
                       </span>
                       <span className="sample-a-meta">
                         {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
@@ -228,8 +237,10 @@ export default function RecipesRoute() {
 
       <ImportRecipeDialog
         open={importOpen}
+        readyRecipe={importedRecipe}
         onOpenChange={setImportOpen}
         onPlan={(recipe) => {
+          setImportedRecipe(recipe);
           setSelectedRecipeDigest(recipe.digest);
           setPlanOpen(true);
         }}
@@ -238,6 +249,12 @@ export default function RecipesRoute() {
         open={planOpen}
         onOpenChange={setPlanOpen}
         initialRecipeDigest={selectedRecipeDigest}
+        onBack={importedRecipe
+          ? () => {
+              setPlanOpen(false);
+              setImportOpen(true);
+            }
+          : undefined}
       />
       <RecipeUpdateDialog
         open={updateOpen}

@@ -138,6 +138,91 @@ func (m *Module) plan(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
+// listLaunchProfiles — GET /recipes/{digest}/launch-profiles: saved
+// profiles for the launch dialog.
+func (m *Module) listLaunchProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles, err := m.env.Deploy.ListLaunchProfiles(r.Context(), chi.URLParam(r, "digest"))
+	if err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, profiles)
+}
+
+// createLaunchProfile — POST /recipes/{digest}/launch-profiles: save an
+// operator-owned profile pinned to this recipe digest.
+func (m *Module) createLaunchProfile(w http.ResponseWriter, r *http.Request) {
+	var req LaunchProfileUpsert
+	if err := httpx.DecodeBody(r, &req); err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
+		return
+	}
+	digest := chi.URLParam(r, "digest")
+	profile, err := m.env.Deploy.CreateLaunchProfile(r.Context(), deploy.UpsertLaunchProfileRequest{
+		Name:         req.Name,
+		RecipeDigest: digest,
+		Variants:     derefProfileVariants(req.Variants),
+		Parameters:   derefProfileParameters(req.Parameters),
+	})
+	if err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, profile)
+}
+
+// updateLaunchProfile — PUT /launch-profiles/{id}: replace a saved
+// profile's values; the pinned digest is immutable.
+func (m *Module) updateLaunchProfile(w http.ResponseWriter, r *http.Request) {
+	var req LaunchProfileUpsert
+	if err := httpx.DecodeBody(r, &req); err != nil {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
+		return
+	}
+	profile, err := m.env.Deploy.UpdateLaunchProfile(r.Context(), chi.URLParam(r, "id"),
+		deploy.UpsertLaunchProfileRequest{
+			Name:         req.Name,
+			RecipeDigest: derefProfileRecipeDigest(req.RecipeDigest),
+			Variants:     derefProfileVariants(req.Variants),
+			Parameters:   derefProfileParameters(req.Parameters),
+		})
+	if err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, profile)
+}
+
+// deleteLaunchProfile — DELETE /launch-profiles/{id}.
+func (m *Module) deleteLaunchProfile(w http.ResponseWriter, r *http.Request) {
+	if err := m.env.Deploy.DeleteLaunchProfile(r.Context(), chi.URLParam(r, "id")); err != nil {
+		m.deployErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func derefProfileVariants(v *map[string]string) map[string]string {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func derefProfileParameters(v *map[string]interface{}) map[string]any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func derefProfileRecipeDigest(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
 // create — POST /deployments: validate the plan digest, commit the
 // deployment with its resource leases, and start dispatch.
 func (m *Module) create(w http.ResponseWriter, r *http.Request) {

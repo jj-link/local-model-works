@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -71,12 +70,13 @@ export function ImportRecipeDialog({
   open,
   onOpenChange,
   onPlan,
+  readyRecipe,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onPlan?: (recipe: Recipe) => void;
+  onPlan: (recipe: Recipe) => void;
+  readyRecipe?: Recipe;
 }) {
-  const navigate = useNavigate();
   const importRecipe = useImportRecipe();
   const [stage, setStage] = useState<Stage>("source");
   const [type, setType] = useState<RecipeSource["type"]>("git");
@@ -88,14 +88,14 @@ export function ImportRecipeDialog({
 
   useEffect(() => {
     if (!open) return;
-    setStage("source");
+    setStage(readyRecipe ? "ready" : "source");
     setType("git");
     setReference("");
     setRevision("");
     setLocalPath("");
-    setInstalled(undefined);
+    setInstalled(readyRecipe);
     importRecipe.reset();
-  }, [open]);
+  }, [open, readyRecipe]);
 
   const manifest = objectRecord(detail.data?.manifest);
   const artifacts = useMemo(() => {
@@ -173,11 +173,7 @@ export function ImportRecipeDialog({
   const plan = () => {
     if (!installed) return;
     onOpenChange(false);
-    if (onPlan) {
-      onPlan(installed);
-      return;
-    }
-    navigate(`/library/recipes/${installed.digest}?launch=1`);
+    onPlan(installed);
   };
 
   const sourcePlaceholder: Record<RecipeSource["type"], string> = {
@@ -334,19 +330,6 @@ export function ImportRecipeDialog({
         )}
 
         <DialogFooter className="sm:justify-between">
-          <div>
-            {installed ? (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  onOpenChange(false);
-                  navigate(`/library/recipes/${installed.digest}`);
-                }}
-              >
-                View full manifest
-              </Button>
-            ) : null}
-          </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {stage === "source" ? "Cancel" : "Close"}
@@ -362,7 +345,7 @@ export function ImportRecipeDialog({
                 {importRecipe.isPending ? "Resolving & compiling…" : "Resolve & review"}
               </Button>
             ) : (
-              <Button onClick={plan}>Plan launch</Button>
+              <Button onClick={plan}>Continue to launch</Button>
             )}
           </div>
         </DialogFooter>

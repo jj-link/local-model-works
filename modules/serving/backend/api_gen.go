@@ -104,6 +104,27 @@ func (e ImagePreviewAction) Valid() bool {
 	}
 }
 
+// Defines values for TransferPreviewAction.
+const (
+	DownloadOrigin TransferPreviewAction = "download-origin"
+	PeerCopy       TransferPreviewAction = "peer-copy"
+	ReconcileLocal TransferPreviewAction = "reconcile-local"
+)
+
+// Valid indicates whether the value is a known member of the TransferPreviewAction enum.
+func (e TransferPreviewAction) Valid() bool {
+	switch e {
+	case DownloadOrigin:
+		return true
+	case PeerCopy:
+		return true
+	case ReconcileLocal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetDeploymentTelemetryParamsResolution.
 const (
 	N1m GetDeploymentTelemetryParamsResolution = "1m"
@@ -138,14 +159,16 @@ type Deployment struct {
 	Id                openapi_types.UUID      `json:"id"`
 	ModelCapabilities *map[string]interface{} `json:"model_capabilities,omitempty"`
 	ObservedState     DeploymentObservedState `json:"observed_state"`
-	Placements        *[]struct {
+
+	// Parameters Launch settings resolved at create time
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+	Placements *[]struct {
 		AcceleratorIndex *int               `json:"accelerator_index,omitempty"`
 		Container        *string            `json:"container,omitempty"`
 		NodeId           openapi_types.UUID `json:"node_id"`
 		NodeName         *string            `json:"node_name,omitempty"`
 		Rank             int                `json:"rank"`
 	} `json:"placements,omitempty"`
-	Profile       string              `json:"profile"`
 	RecipeDigest  string              `json:"recipe_digest"`
 	RecipeName    *string             `json:"recipe_name,omitempty"`
 	RecipeVersion *string             `json:"recipe_version,omitempty"`
@@ -161,6 +184,11 @@ type DeploymentObservedState string
 
 // DeploymentCreateRequest defines model for DeploymentCreateRequest.
 type DeploymentCreateRequest struct {
+	// LaunchProfileId Saved profile to apply; mutually exclusive with variants/parameters
+	LaunchProfileId *string `json:"launch_profile_id,omitempty"`
+
+	// Parameters Optional parameter overrides; validated against the recipe manifest.
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 	Placements *[]struct {
 		NodeId openapi_types.UUID `json:"node_id"`
 		Rank   int                `json:"rank"`
@@ -168,7 +196,6 @@ type DeploymentCreateRequest struct {
 
 	// PlanDigest Distinguishes an unchanged plan from the one previewed
 	PlanDigest   *string `json:"plan_digest,omitempty"`
-	Profile      string  `json:"profile"`
 	RecipeDigest string  `json:"recipe_digest"`
 
 	// Variants Optional artifact name -> selected model variant. Must match the previewed plan.
@@ -192,7 +219,10 @@ type DeploymentPlan struct {
 	Fabric          *string                   `json:"fabric,omitempty"`
 	HostPreparation *[]HostPreparationPreview `json:"host_preparation,omitempty"`
 	Images          *[]ImagePreview           `json:"images,omitempty"`
-	Placements      []struct {
+
+	// Parameters Effective launch settings for this plan
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+	Placements []struct {
 		AcceleratorIndex int                `json:"accelerator_index"`
 		AcceleratorUuid  *string            `json:"accelerator_uuid,omitempty"`
 		NodeId           openapi_types.UUID `json:"node_id"`
@@ -209,7 +239,6 @@ type DeploymentPlan struct {
 		NodeName      *string            `json:"node_name,omitempty"`
 		Protocol      *string            `json:"protocol,omitempty"`
 	} `json:"ports,omitempty"`
-	Profile string `json:"profile"`
 
 	// Ready false when conflicts or unmet compatibility block creation
 	Ready         bool               `json:"ready"`
@@ -229,12 +258,17 @@ type DeploymentPlan struct {
 
 // DeploymentPlanRequest defines model for DeploymentPlanRequest.
 type DeploymentPlanRequest struct {
+	// LaunchProfileId Saved profile to apply; mutually exclusive with variants/parameters
+	LaunchProfileId *string `json:"launch_profile_id,omitempty"`
+
+	// Parameters Optional parameter overrides; validated against the recipe manifest.
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
 	// Placements Optional explicit node per rank; omit for automatic selection
 	Placements *[]struct {
 		NodeId openapi_types.UUID `json:"node_id"`
 		Rank   int                `json:"rank"`
 	} `json:"placements,omitempty"`
-	Profile      string `json:"profile"`
 	RecipeDigest string `json:"recipe_digest"`
 
 	// Variants Optional artifact name -> selected model variant. Omit for the recipe default.
@@ -284,6 +318,31 @@ type ImagePreview struct {
 // ImagePreviewAction defines model for ImagePreview.Action.
 type ImagePreviewAction string
 
+// LaunchProfile defines model for LaunchProfile.
+type LaunchProfile struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+	Name      string    `json:"name"`
+
+	// Parameters Optional parameter overrides (validated against the recipe)
+	Parameters   *map[string]interface{} `json:"parameters,omitempty"`
+	RecipeDigest string                  `json:"recipe_digest"`
+	UpdatedAt    time.Time               `json:"updated_at"`
+
+	// Variants Optional artifact name -> selected model variant
+	Variants *map[string]string `json:"variants,omitempty"`
+}
+
+// LaunchProfileUpsert defines model for LaunchProfileUpsert.
+type LaunchProfileUpsert struct {
+	Name       string                  `json:"name"`
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// RecipeDigest Immutable digest pin; only honored on create
+	RecipeDigest *string            `json:"recipe_digest,omitempty"`
+	Variants     *map[string]string `json:"variants,omitempty"`
+}
+
 // ServingPayload defines model for ServingPayload.
 type ServingPayload struct {
 	Available           *bool    `json:"available,omitempty"`
@@ -328,17 +387,23 @@ type StoragePreview struct {
 
 // TransferPreview defines model for TransferPreview.
 type TransferPreview struct {
-	ArtifactId openapi_types.UUID `json:"artifact_id"`
-	Bytes      int64              `json:"bytes"`
-	DestNode   string             `json:"dest_node"`
-	DestPath   string             `json:"dest_path"`
-	Identity   *string            `json:"identity,omitempty"`
+	Action     TransferPreviewAction `json:"action"`
+	ArtifactId string                `json:"artifact_id"`
+
+	// Bytes Known transfer bytes; omitted when the source size is unknown.
+	Bytes    *int64  `json:"bytes,omitempty"`
+	DestNode string  `json:"dest_node"`
+	DestPath string  `json:"dest_path"`
+	Identity *string `json:"identity,omitempty"`
 
 	// Network Network path, e.g. fabric spark-p2p (roce), tailnet, local
 	Network    *string `json:"network,omitempty"`
-	SourceNode string  `json:"source_node"`
+	SourceNode *string `json:"source_node,omitempty"`
 	SourcePath *string `json:"source_path,omitempty"`
 }
+
+// TransferPreviewAction defines model for TransferPreview.Action.
+type TransferPreviewAction string
 
 // ID defines model for ID.
 type ID = string
@@ -380,6 +445,12 @@ type CreateDeploymentJSONRequestBody = DeploymentCreateRequest
 // PlanDeploymentJSONRequestBody defines body for PlanDeployment for application/json ContentType.
 type PlanDeploymentJSONRequestBody = DeploymentPlanRequest
 
+// UpdateLaunchProfileJSONRequestBody defines body for UpdateLaunchProfile for application/json ContentType.
+type UpdateLaunchProfileJSONRequestBody = LaunchProfileUpsert
+
+// CreateLaunchProfileJSONRequestBody defines body for CreateLaunchProfile for application/json ContentType.
+type CreateLaunchProfileJSONRequestBody = LaunchProfileUpsert
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
@@ -415,6 +486,18 @@ type ServerInterface interface {
 	// VerifyDeployment Run the recipe's verification probes against the live workload
 	// (POST /deployments/{id}/verify)
 	VerifyDeployment(w http.ResponseWriter, r *http.Request, id ID)
+	// DeleteLaunchProfile Delete an operator-owned launch profile
+	// (DELETE /launch-profiles/{id})
+	DeleteLaunchProfile(w http.ResponseWriter, r *http.Request, id string)
+	// UpdateLaunchProfile Replace an operator-owned launch profile (digest pinned)
+	// (PUT /launch-profiles/{id})
+	UpdateLaunchProfile(w http.ResponseWriter, r *http.Request, id string)
+	// ListLaunchProfiles Saved launch profiles for one recipe digest
+	// (GET /recipes/{digest}/launch-profiles)
+	ListLaunchProfiles(w http.ResponseWriter, r *http.Request, digest string)
+	// CreateLaunchProfile Save an operator-owned launch profile for this recipe digest
+	// (POST /recipes/{digest}/launch-profiles)
+	CreateLaunchProfile(w http.ResponseWriter, r *http.Request, digest string)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -482,6 +565,30 @@ func (_ Unimplemented) GetDeploymentTelemetry(w http.ResponseWriter, r *http.Req
 // VerifyDeployment Run the recipe's verification probes against the live workload
 // (POST /deployments/{id}/verify)
 func (_ Unimplemented) VerifyDeployment(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteLaunchProfile Delete an operator-owned launch profile
+// (DELETE /launch-profiles/{id})
+func (_ Unimplemented) DeleteLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateLaunchProfile Replace an operator-owned launch profile (digest pinned)
+// (PUT /launch-profiles/{id})
+func (_ Unimplemented) UpdateLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListLaunchProfiles Saved launch profiles for one recipe digest
+// (GET /recipes/{digest}/launch-profiles)
+func (_ Unimplemented) ListLaunchProfiles(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateLaunchProfile Save an operator-owned launch profile for this recipe digest
+// (POST /recipes/{digest}/launch-profiles)
+func (_ Unimplemented) CreateLaunchProfile(w http.ResponseWriter, r *http.Request, digest string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -803,6 +910,110 @@ func (siw *ServerInterfaceWrapper) VerifyDeployment(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteLaunchProfile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteLaunchProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteLaunchProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateLaunchProfile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateLaunchProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateLaunchProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLaunchProfiles operation middleware
+func (siw *ServerInterfaceWrapper) ListLaunchProfiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLaunchProfiles(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateLaunchProfile operation middleware
+func (siw *ServerInterfaceWrapper) CreateLaunchProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateLaunchProfile(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -948,6 +1159,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/deployments/telemetry", wrapper.ListDeploymentTelemetry)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/launch-profiles/{id}", wrapper.DeleteLaunchProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/launch-profiles/{id}", wrapper.UpdateLaunchProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipes/{digest}/launch-profiles", wrapper.ListLaunchProfiles)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/launch-profiles", wrapper.CreateLaunchProfile)
 	})
 
 	return r

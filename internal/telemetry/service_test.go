@@ -174,7 +174,7 @@ func TestIngestServingHistoryAndAggregation(t *testing.T) {
 	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, manifest) VALUES (?,?,?,?)`, "r1", "r", "1", "{}"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, profile, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-1", "r1", "p", "{}", "stopped", "stopped"); err != nil {
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, parameters, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-1", "r1", "p", "{}", "stopped", "stopped"); err != nil {
 		t.Fatal(err)
 	}
 	at := int64(1_800_000_005)
@@ -226,7 +226,7 @@ func TestHistoryLimitBounds(t *testing.T) {
 	if _, err := svc.db.ExecContext(ctx, `INSERT INTO recipes (digest, name, version, manifest) VALUES (?,?,?,?)`, "r-limit", "r", "1", "{}"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, profile, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-limit", "r-limit", "p", "{}", "stopped", "stopped"); err != nil {
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO deployments (id, recipe_digest, parameters, placement, desired_state, observed_state) VALUES (?,?,?,?,?,?)`, "dep-limit", "r-limit", "p", "{}", "stopped", "stopped"); err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1_800_000_000, 0)

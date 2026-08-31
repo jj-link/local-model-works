@@ -94,7 +94,7 @@ export function CommandPalette({
       logItems.push({
         id: `log-dep-${d.id}`,
         label: `Open logs — ${d.recipe_name}`,
-        hint: d.profile,
+        hint: d.endpoint?.model ?? d.engine,
         icon: FileText,
         group: "logs",
         tone: TONE_TEXT[stateInfo(d.observed_state).tone],

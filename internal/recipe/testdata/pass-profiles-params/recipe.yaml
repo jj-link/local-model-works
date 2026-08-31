@@ -19,8 +19,8 @@ workloads:
     command:
       - serve
     args:
-      - --profile
-      - ${profile.fast}
+      - --mode
+      - ${setting.mode}
     resources:
       cpu: 1
       memoryBytes: 16777216
@@ -36,10 +36,3 @@ parameters:
     enum:
       - fast
       - safe
-profiles:
-  fast:
-    gpu_util: 90
-    mode: fast
-  safe:
-    gpu_util: 10
-    mode: safe

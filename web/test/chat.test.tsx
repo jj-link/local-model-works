@@ -15,7 +15,7 @@ const readyDeployment = {
   recipe_digest: "sha256:ready",
   recipe_name: "deepseek-recipe",
   engine: "vllm",
-  profile: "",
+  parameters: {},
   placements: [{ node_id: "node-1", node_name: "spark1", rank: 0 }],
   desired_state: "running",
   observed_state: "healthy",
