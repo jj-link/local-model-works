@@ -62,7 +62,7 @@ type BrowserLoginToken struct {
 type Deployment struct {
 	ID                string         `json:"id"`
 	RecipeDigest      string         `json:"recipe_digest"`
-	Profile           string         `json:"profile"`
+	Parameters        string         `json:"parameters"`
 	Placement         string         `json:"placement"`
 	Fabric            sql.NullString `json:"fabric"`
 	DesiredState      string         `json:"desired_state"`
@@ -110,6 +110,16 @@ type Fabric struct {
 	CreatedAt     string         `json:"created_at"`
 	UpdatedAt     string         `json:"updated_at"`
 	Bindings      string         `json:"bindings"`
+}
+
+type LaunchProfile struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	RecipeDigest string `json:"recipe_digest"`
+	Variants     string `json:"variants"`
+	Parameters   string `json:"parameters"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type Lease struct {

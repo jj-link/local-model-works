@@ -30,6 +30,7 @@ export const qk = {
   fabric: (id: string) => ["fabrics", id] as const,
   recipes: ["recipes"] as const,
   recipe: (digest: string) => ["recipes", digest] as const,
+  launchProfiles: (digest: string) => ["recipes", digest, "launch-profiles"] as const,
   recipeRepositories: ["recipes", "repositories"] as const,
   recipeRepository: (id: string) => ["recipes", "repositories", id] as const,
   artifacts: ["artifacts"] as const,
@@ -115,6 +116,15 @@ export function useRecipe(digest: string | undefined) {
     queryKey: qk.recipe(digest ?? ""),
     enabled: !!digest,
     queryFn: ({ signal }) => api.getRecipe(digest as string, { signal }),
+    staleTime: CATALOG,
+  });
+}
+
+export function useLaunchProfiles(digest: string | undefined) {
+  return useQuery({
+    queryKey: qk.launchProfiles(digest ?? ""),
+    enabled: !!digest,
+    queryFn: ({ signal }) => api.listLaunchProfiles(digest as string, { signal }),
     staleTime: CATALOG,
   });
 }
@@ -424,6 +434,33 @@ export function useCancelTransfer() {
 export function usePlanDeployment() {
   return useMutation({
     mutationFn: (body: api.DeploymentPlanRequest) => api.planDeployment(body),
+  });
+}
+
+export function useCreateLaunchProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ recipeDigest, body }: { recipeDigest: string; body: api.LaunchProfileUpsert }) =>
+      api.createLaunchProfile(recipeDigest, body),
+    onSuccess: (profile) => invalidates(qk.launchProfiles(profile.recipe_digest))(qc),
+  });
+}
+
+export function useUpdateLaunchProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: api.LaunchProfileUpsert }) =>
+      api.updateLaunchProfile(id, body),
+    onSuccess: (profile) => invalidates(qk.launchProfiles(profile.recipe_digest))(qc),
+  });
+}
+
+export function useDeleteLaunchProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, recipeDigest }: { id: string; recipeDigest: string }) =>
+      api.deleteLaunchProfile(id).then(() => recipeDigest),
+    onSuccess: (recipeDigest) => invalidates(qk.launchProfiles(recipeDigest))(qc),
   });
 }
 

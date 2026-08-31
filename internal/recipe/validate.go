@@ -200,42 +200,18 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 			}
 		}
 	}
-
-	// Profiles: only declared parameters, values within ranges.
-	profileNames := make([]string, 0, len(m.Profiles))
-	for name, pv := range m.Profiles {
-		profileNames = append(profileNames, name)
-		px := fmt.Sprintf("profiles[%s]", name)
-		obj, ok := pv.(map[string]any)
-		if !ok {
-			add("recipe.profile-shape", "profile must be an object", px)
-			continue
-		}
-		for k, val := range obj {
-			p := findParam(m.Parameters, k)
-			if p == nil {
-				add("recipe.profile-undeclared", fmt.Sprintf("profile sets undeclared parameter %q", k), px+"."+k)
-				continue
-			}
-			if d := checkParamValue(*p, val); d != "" {
-				add("recipe.profile-value", d, px+"."+k)
-			}
-		}
-	}
-	sort.Strings(profileNames)
-
 	// Templates: every ${...} used must be declared and resolvable.
 	checkTempl := func(vals []string, path string, env map[string]string) {
 		for _, s := range vals {
 			for _, tv := range TemplateVars(s) {
-				if err := checkTemplateVar(tv, m, profileNames); err != nil {
+				if err := checkTemplateVar(tv, m); err != nil {
 					add("recipe.template", fmt.Sprintf("%s in %s", err.Error(), tv), path)
 				}
 			}
 		}
 		for k, v := range env {
 			for _, tv := range TemplateVars(v) {
-				if err := checkTemplateVar(tv, m, profileNames); err != nil {
+				if err := checkTemplateVar(tv, m); err != nil {
 					add("recipe.template", fmt.Sprintf("%s in %s", err.Error(), tv), path+".env."+k)
 				}
 			}
@@ -414,7 +390,7 @@ func asNumber(v any) (float64, bool) {
 	return 0, false
 }
 
-func checkTemplateVar(tv string, m *Manifest, profileNames []string) error {
+func checkTemplateVar(tv string, m *Manifest) error {
 	switch tv {
 	case TemplNodeID, TemplNodeRank, TemplNodeAddress:
 		return nil
@@ -434,14 +410,12 @@ func checkTemplateVar(tv string, m *Manifest, profileNames []string) error {
 		}
 		return nil
 	}
-	if strings.HasPrefix(tv, TemplProfile) && strings.HasSuffix(tv, "}") {
-		name := strings.TrimSuffix(strings.TrimPrefix(tv, TemplProfile), "}")
-		for _, p := range profileNames {
-			if p == name {
-				return nil
-			}
+	if strings.HasPrefix(tv, TemplSetting) && strings.HasSuffix(tv, "}") {
+		name := strings.TrimSuffix(strings.TrimPrefix(tv, TemplSetting), "}")
+		if m.ParameterByName(name) == nil {
+			return fmt.Errorf("template references undeclared setting %q", name)
 		}
-		return fmt.Errorf("template references undeclared profile %q", name)
+		return nil
 	}
 	return fmt.Errorf("undeclared template variable %s", tv)
 }

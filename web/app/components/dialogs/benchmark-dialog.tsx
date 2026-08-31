@@ -111,7 +111,7 @@ export function BenchmarkDialog({
                 {healthy.map((d) => (
                   <SelectItem key={d.id} value={d.id}>
                     <span className="flex items-baseline gap-2">
-                      <span>{d.recipe_name}@{d.profile}</span>
+                      <span>{d.recipe_name}</span>
                       {d.endpoint ? (
                         <span className="font-mono text-[11px] text-muted-foreground">
                           {d.endpoint.host}:{d.endpoint.port}

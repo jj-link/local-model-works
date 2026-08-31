@@ -7,6 +7,100 @@ info:
 tags:
   - name: deployments
 paths:
+  /recipes/{digest}/launch-profiles:
+    get:
+      tags: [deployments]
+      operationId: listLaunchProfiles
+      summary: Saved launch profiles for one recipe digest
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Launch profiles (oldest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LaunchProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [deployments]
+      operationId: createLaunchProfile
+      summary: Save an operator-owned launch profile for this recipe digest
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaunchProfileUpsert'
+      responses:
+        '201':
+          description: Profile saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /launch-profiles/{id}:
+    put:
+      tags: [deployments]
+      operationId: updateLaunchProfile
+      summary: Replace an operator-owned launch profile (digest pinned)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaunchProfileUpsert'
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [deployments]
+      operationId: deleteLaunchProfile
+      summary: Delete an operator-owned launch profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Profile deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /deployments/plan:
     post:
       tags: [deployments]
@@ -253,14 +347,48 @@ paths:
 
 components:
   schemas:
+    LaunchProfile:
+      type: object
+      required: [id, name, recipe_digest, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string, minLength: 1 }
+        recipe_digest: { type: string }
+        variants:
+          type: object
+          additionalProperties: { type: string }
+          description: Optional artifact name -> selected model variant
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Optional parameter overrides (validated against the recipe)
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    LaunchProfileUpsert:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        recipe_digest:
+          type: string
+          description: Immutable digest pin; only honored on create
+        variants:
+          type: object
+          additionalProperties: { type: string }
+        parameters:
+          type: object
+          additionalProperties: true
+
     DeploymentPlanRequest:
       type: object
-      required: [recipe_digest, profile]
+      required: [recipe_digest]
       properties:
         recipe_digest:
           type: string
-        profile:
+        launch_profile_id:
           type: string
+          description: Saved profile to apply; mutually exclusive with variants/parameters
         placements:
           type: array
           description: Optional explicit node per rank; omit for automatic selection
@@ -278,16 +406,22 @@ components:
           additionalProperties:
             type: string
           description: "Optional artifact name -> selected model variant. Omit for the recipe default."
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Optional parameter overrides; validated against the recipe manifest.
 
     TransferPreview:
       type: object
-      required: [artifact_id, source_node, dest_node, dest_path, bytes]
+      required: [artifact_id, action, dest_node, dest_path]
       properties:
         artifact_id:
           type: string
-          format: uuid
         identity:
           type: string
+        action:
+          type: string
+          enum: [reconcile-local, download-origin, peer-copy]
         source_node:
           type: string
         source_path:
@@ -299,6 +433,8 @@ components:
         bytes:
           type: integer
           format: int64
+          minimum: 0
+          description: Known transfer bytes; omitted when the source size is unknown.
         network:
           type: string
           description: Network path, e.g. fabric spark-p2p (roce), tailnet, local
@@ -343,7 +479,7 @@ components:
 
     DeploymentPlan:
       type: object
-      required: [recipe_digest, profile, placements, ready]
+      required: [recipe_digest, placements, ready]
       properties:
         plan_digest:
           type: string
@@ -363,8 +499,11 @@ components:
           type: string
         recipe_version:
           type: string
-        profile:
-          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Effective launch settings for this plan
         placements:
           type: array
           items:
@@ -452,15 +591,15 @@ components:
         ready:
           type: boolean
           description: false when conflicts or unmet compatibility block creation
-
     DeploymentCreateRequest:
       type: object
-      required: [recipe_digest, profile]
+      required: [recipe_digest]
       properties:
         recipe_digest:
           type: string
-        profile:
+        launch_profile_id:
           type: string
+          description: Saved profile to apply; mutually exclusive with variants/parameters
         placements:
           type: array
           items:
@@ -480,10 +619,14 @@ components:
           additionalProperties:
             type: string
           description: "Optional artifact name -> selected model variant. Must match the previewed plan."
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Optional parameter overrides; validated against the recipe manifest.
 
     Deployment:
       type: object
-      required: [id, recipe_digest, profile, desired_state, observed_state]
+      required: [id, recipe_digest, desired_state, observed_state]
       properties:
         id:
           type: string
@@ -496,8 +639,11 @@ components:
           type: string
         engine:
           type: string
-        profile:
-          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Launch settings resolved at create time
         placements:
           type: array
           items:

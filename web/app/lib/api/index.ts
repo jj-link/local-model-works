@@ -41,6 +41,8 @@ export type Deployment = Schemas["Deployment"];
 export type DeploymentPlan = Schemas["DeploymentPlan"];
 export type DeploymentPlanRequest = Schemas["DeploymentPlanRequest"];
 export type DeploymentCreateRequest = Schemas["DeploymentCreateRequest"];
+export type LaunchProfile = Schemas["LaunchProfile"];
+export type LaunchProfileUpsert = Schemas["LaunchProfileUpsert"];
 export type ChatRequest = Schemas["ChatCompletionRequest"];
 export type ChatResponse = Schemas["ChatCompletionResponse"];
 export type NodeTelemetrySample = Schemas["NodeTelemetrySample"];
@@ -231,6 +233,24 @@ export const planDeployment = (body: DeploymentPlanRequest) =>
 
 export const createDeployment = (body: DeploymentCreateRequest) =>
   http.post<Deployment>("/deployments", body);
+
+export const listLaunchProfiles = (recipeDigest: string, { signal }: Sig = {}) =>
+  http.get<LaunchProfile[]>(
+    `/recipes/${encodeURIComponent(recipeDigest)}/launch-profiles`,
+    { signal },
+  );
+
+export const createLaunchProfile = (recipeDigest: string, body: LaunchProfileUpsert) =>
+  http.post<LaunchProfile>(
+    `/recipes/${encodeURIComponent(recipeDigest)}/launch-profiles`,
+    body,
+  );
+
+export const updateLaunchProfile = (id: string, body: LaunchProfileUpsert) =>
+  http.put<LaunchProfile>(`/launch-profiles/${encodeURIComponent(id)}`, body);
+
+export const deleteLaunchProfile = (id: string) =>
+  http.del<void>(`/launch-profiles/${encodeURIComponent(id)}`);
 
 export const verifyDeployment = (id: string) =>
   http.post<Deployment>(`/deployments/${id}/verify`);

@@ -1,5 +1,5 @@
 {
   "outcome": "pass",
   "kind": "validator",
-  "note": "Parameters with ranges/enums plus named profiles whose values stay in range; profile template declared."
+  "note": "Parameters with ranges/enums plus a declared ${setting.*} template; profiles are gone and operator launch settings live in the controller database."
 }

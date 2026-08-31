@@ -341,6 +341,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/launch-profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace an operator-owned launch profile (digest pinned) */
+        put: operations["updateLaunchProfile"];
+        post?: never;
+        /** Delete an operator-owned launch profile */
+        delete: operations["deleteLaunchProfile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/login": {
         parameters: {
             query?: never;
@@ -721,6 +739,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipes/{digest}/launch-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Saved launch profiles for one recipe digest */
+        get: operations["listLaunchProfiles"];
+        put?: never;
+        /** Save an operator-owned launch profile for this recipe digest */
+        post: operations["createLaunchProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipes/check-updates": {
         parameters: {
             query?: never;
@@ -1091,6 +1127,10 @@ export interface components {
             } | null;
             /** @enum {string} */
             observed_state: "unknown" | "preparing" | "starting" | "healthy" | "degraded" | "stopping" | "stopped" | "failed";
+            /** @description Launch settings resolved at create time */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
             placements?: {
                 accelerator_index?: number;
                 container?: string | null;
@@ -1099,7 +1139,6 @@ export interface components {
                 node_name?: string;
                 rank: number;
             }[];
-            profile: string;
             recipe_digest: string;
             recipe_name?: string;
             recipe_version?: string;
@@ -1109,6 +1148,12 @@ export interface components {
             updated_at?: string;
         };
         DeploymentCreateRequest: {
+            /** @description Saved profile to apply; mutually exclusive with variants/parameters */
+            launch_profile_id?: string;
+            /** @description Optional parameter overrides; validated against the recipe manifest. */
+            parameters?: {
+                [key: string]: unknown;
+            };
             placements?: {
                 /** Format: uuid */
                 node_id: string;
@@ -1116,7 +1161,6 @@ export interface components {
             }[];
             /** @description Distinguishes an unchanged plan from the one previewed */
             plan_digest?: string;
-            profile: string;
             recipe_digest: string;
             /** @description Optional artifact name -> selected model variant. Must match the previewed plan. */
             variants?: {
@@ -1140,6 +1184,10 @@ export interface components {
             fabric?: string | null;
             host_preparation?: components["schemas"]["HostPreparationPreview"][];
             images?: components["schemas"]["ImagePreview"][];
+            /** @description Effective launch settings for this plan */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
             placements: {
                 accelerator_index: number;
                 accelerator_uuid?: string;
@@ -1158,7 +1206,6 @@ export interface components {
                 node_name?: string;
                 protocol?: string;
             }[];
-            profile: string;
             /** @description false when conflicts or unmet compatibility block creation */
             ready: boolean;
             recipe_digest: string;
@@ -1175,13 +1222,18 @@ export interface components {
             workload_index?: number | null;
         };
         DeploymentPlanRequest: {
+            /** @description Saved profile to apply; mutually exclusive with variants/parameters */
+            launch_profile_id?: string;
+            /** @description Optional parameter overrides; validated against the recipe manifest. */
+            parameters?: {
+                [key: string]: unknown;
+            };
             /** @description Optional explicit node per rank; omit for automatic selection */
             placements?: {
                 /** Format: uuid */
                 node_id: string;
                 rank: number;
             }[];
-            profile: string;
             recipe_digest: string;
             /** @description Optional artifact name -> selected model variant. Omit for the recipe default. */
             variants?: {
@@ -1274,6 +1326,34 @@ export interface components {
             os: string;
             peer_listen?: string;
             rdma_devices?: components["schemas"]["RdmaDevice"][];
+        };
+        LaunchProfile: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            name: string;
+            /** @description Optional parameter overrides (validated against the recipe) */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            recipe_digest: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Optional artifact name -> selected model variant */
+            variants?: {
+                [key: string]: string;
+            };
+        };
+        LaunchProfileUpsert: {
+            name: string;
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /** @description Immutable digest pin; only honored on create */
+            recipe_digest?: string;
+            variants?: {
+                [key: string]: string;
+            };
         };
         LoginRequest: {
             /** Format: password */
@@ -1806,16 +1886,20 @@ export interface components {
             state: "pending" | "transferring" | "validating" | "complete" | "failed" | "cancelled";
         };
         TransferPreview: {
-            /** Format: uuid */
+            /** @enum {string} */
+            action: "reconcile-local" | "download-origin" | "peer-copy";
             artifact_id: string;
-            /** Format: int64 */
-            bytes: number;
+            /**
+             * Format: int64
+             * @description Known transfer bytes; omitted when the source size is unknown.
+             */
+            bytes?: number;
             dest_node: string;
             dest_path: string;
             identity?: string;
             /** @description Network path, e.g. fabric spark-p2p (roce), tailnet, local */
             network?: string;
-            source_node: string;
+            source_node?: string;
             source_path?: string;
         };
         TransferRequest: {
@@ -2583,6 +2667,57 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    updateLaunchProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LaunchProfileUpsert"];
+            };
+        };
+        responses: {
+            /** @description Profile updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LaunchProfile"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    deleteLaunchProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -3282,6 +3417,57 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listLaunchProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Launch profiles (oldest first) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LaunchProfile"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createLaunchProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LaunchProfileUpsert"];
+            };
+        };
+        responses: {
+            /** @description Profile saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LaunchProfile"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["Unprocessable"];
         };
     };
     checkRecipeUpdates: {

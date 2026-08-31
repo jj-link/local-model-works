@@ -73,15 +73,24 @@ type Conflict struct {
 	DeploymentID string `json:"deployment_id,omitempty"`
 }
 
-// TransferPreview previews one artifact move (openapi).
+// Preparation actions are explicit so clients never infer reconciliation,
+// downloads, or peer copies from byte counts or source-node sentinels.
+const (
+	PreparationReconcileLocal = "reconcile-local"
+	PreparationDownloadOrigin = "download-origin"
+	PreparationPeerCopy       = "peer-copy"
+)
+
+// TransferPreview previews one artifact preparation operation (openapi).
 type TransferPreview struct {
 	ArtifactID string `json:"artifact_id"`
 	Identity   string `json:"identity,omitempty"`
-	SourceNode string `json:"source_node"`
+	Action     string `json:"action"`
+	SourceNode string `json:"source_node,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
 	DestNode   string `json:"dest_node"`
 	DestPath   string `json:"dest_path"`
-	Bytes      int64  `json:"bytes"`
+	Bytes      int64  `json:"bytes,omitempty"`
 	Network    string `json:"network,omitempty"`
 }
 
@@ -125,7 +134,7 @@ type Plan struct {
 	RecipeDigest    string                   `json:"recipe_digest"`
 	RecipeName      string                   `json:"recipe_name,omitempty"`
 	RecipeVersion   string                   `json:"recipe_version,omitempty"`
-	Profile         string                   `json:"profile"`
+	Settings        map[string]any           `json:"settings,omitempty"`
 	Variants        map[string]string        `json:"variants,omitempty"`
 	WorkloadIndex   int                      `json:"workload_index"`
 	Placements      []Placement              `json:"placements"`
@@ -146,21 +155,22 @@ type Plan struct {
 // PlanRequest previews a deployment (openapi DeploymentPlanRequest).
 type PlanRequest struct {
 	RecipeDigest string              `json:"recipe_digest"`
-	Profile      string              `json:"profile"`
 	Placements   []PlacementOverride `json:"placements,omitempty"`
-	// Variants maps artifact name -> selected variant name. When an artifact
-	// declares variants, the chosen variant's source identity is used for
-	// placement planning. Empty selects the artifact's defaultVariant.
-	Variants map[string]string `json:"variants,omitempty"`
+	// LaunchProfileID selects a saved profile. Mutually exclusive with
+	// explicit Variants/Parameters.
+	LaunchProfileID string            `json:"launch_profile_id,omitempty"`
+	Variants        map[string]string `json:"variants,omitempty"`
+	Parameters      map[string]any    `json:"parameters,omitempty"`
 }
 
 // CreateRequest creates from a validated plan (openapi).
 type CreateRequest struct {
-	RecipeDigest string              `json:"recipe_digest"`
-	Profile      string              `json:"profile"`
-	Placements   []PlacementOverride `json:"placements,omitempty"`
-	PlanDigest   string              `json:"plan_digest,omitempty"`
-	Variants     map[string]string   `json:"variants,omitempty"`
+	RecipeDigest    string              `json:"recipe_digest"`
+	Placements      []PlacementOverride `json:"placements,omitempty"`
+	LaunchProfileID string              `json:"launch_profile_id,omitempty"`
+	Variants        map[string]string   `json:"variants,omitempty"`
+	Parameters      map[string]any      `json:"parameters,omitempty"`
+	PlanDigest      string              `json:"plan_digest,omitempty"`
 }
 
 // dispatchPhase is one rank's completed dispatch step.
@@ -205,17 +215,18 @@ func ParseDispatch(raw string) dispatchPhases {
 func (p *Plan) PlanDigest() string {
 	contract := struct {
 		RecipeDigest  string            `json:"recipe_digest"`
-		Profile       string            `json:"profile"`
+		RecipeName    string            `json:"name,omitempty"`
 		Variants      map[string]string `json:"variants,omitempty"`
+		Settings      map[string]any    `json:"settings,omitempty"`
 		WorkloadIndex int               `json:"workload_index"`
 		Placements    []Placement       `json:"placements"`
 		Fabric        *string           `json:"fabric,omitempty"`
 		Ports         []PortPreview     `json:"ports,omitempty"`
 		Endpoint      Endpoint          `json:"endpoint,omitempty"`
 	}{
-		RecipeDigest: p.RecipeDigest, Profile: p.Profile, Variants: p.Variants,
-		WorkloadIndex: p.WorkloadIndex, Placements: p.Placements, Fabric: p.Fabric,
-		Ports: p.Ports, Endpoint: p.Endpoint,
+		RecipeDigest: p.RecipeDigest, RecipeName: p.RecipeName, Variants: p.Variants,
+		Settings: p.Settings, WorkloadIndex: p.WorkloadIndex, Placements: p.Placements,
+		Fabric: p.Fabric, Ports: p.Ports, Endpoint: p.Endpoint,
 	}
 	b, err := cjson.Marshal(contract)
 	if err != nil {

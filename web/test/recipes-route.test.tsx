@@ -3,11 +3,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import RecipesRoute from "~/routes/library/recipes/index";
-import RecipeDetailRoute from "~/routes/library/recipes/$id";
 import { server } from "../msw/server";
 
 const alphaDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -93,7 +92,7 @@ const deployments = [
   {
     id: "11111111-1111-4111-8111-111111111111",
     recipe_digest: alphaDigest,
-    profile: "",
+    parameters: {},
     placements: [
       { node_id: "node-1", node_name: "spark1", rank: 0 },
       { node_id: "node-2", node_name: "spark2", rank: 1 },
@@ -137,20 +136,6 @@ function renderCatalog() {
   );
 }
 
-function renderRecipeDetail() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/library/recipes/${alphaDigest}`]}>
-        <Routes>
-          <Route path="/library/recipes/:id" element={<RecipeDetailRoute />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-}
 
 function installCatalogHandlers(rows: readonly unknown[] = repositories) {
   server.use(
@@ -162,6 +147,7 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
     http.get(`*/api/v1/recipes/${alphaDigest}`, () =>
       HttpResponse.json({ ...recipes[0], manifest: { artifacts: [], workloads: [] } }),
     ),
+    http.get("*/api/v1/recipes/:digest/launch-profiles", () => HttpResponse.json([])),
     http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
     http.get("*/api/v1/nodes", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
@@ -169,7 +155,6 @@ function installCatalogHandlers(rows: readonly unknown[] = repositories) {
       recipe_digest: alphaDigest,
       recipe_name: "alpha-recipe",
       recipe_version: "2.0.0",
-      profile: "",
       placements: [],
       ready: false,
       plan_digest: "sha256:blocked",
@@ -200,23 +185,23 @@ describe("RecipesRoute repository catalog", () => {
     expect(await screen.findByRole("heading", { name: "All recipes" })).toBeInTheDocument();
 
     const alphaCard = screen.getByRole("button", {
-      name: "Plan launch for MiaAI-Lab/alpha-recipe",
+      name: "Launch MiaAI-Lab/alpha-recipe",
     });
     expect(within(alphaCard).getByText("MiaAI-Lab/alpha-recipe")).toBeInTheDocument();
     expect(within(alphaCard).getByText("A verified two-node recipe.")).toBeInTheDocument();
     expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Recipe ready on 2 nodes")).toBeInTheDocument();
-    expect(within(alphaCard).getByText("Plan launch →")).toBeInTheDocument();
+    expect(within(alphaCard).getByText("Launch →")).toBeInTheDocument();
     expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
-    expect(screen.getAllByRole("button", { name: /Plan launch for/ })).toHaveLength(3);
-    const gammaCard = screen.getByRole("button", { name: "Plan launch for MiaAI-Lab/gamma-recipe" });
+    expect(screen.getAllByRole("button", { name: /^Launch MiaAI-Lab/ })).toHaveLength(3);
+    const gammaCard = screen.getByRole("button", { name: "Launch MiaAI-Lab/gamma-recipe" });
     expect(within(gammaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), gammaDigest);
-    expect(screen.getByRole("button", { name: "Plan launch for MiaAI-Lab/gamma-recipe" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Plan launch for MiaAI-Lab/alpha-recipe" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Launch MiaAI-Lab/gamma-recipe" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Launch MiaAI-Lab/alpha-recipe" })).not.toBeInTheDocument();
   });
 
   it("offers updates only for recipes with valid device placements", async () => {
@@ -226,19 +211,78 @@ describe("RecipesRoute repository catalog", () => {
     renderCatalog();
 
     const alphaCard = await screen.findByRole("button", {
-      name: "Plan launch for MiaAI-Lab/alpha-recipe",
+      name: "Launch MiaAI-Lab/alpha-recipe",
     });
     expect(within(alphaCard).getByText("Recipe package not cached")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
   });
 
-  it("opens the hardware chooser from the unchanged card button", async () => {
+  it("opens a compact installed launcher and auto-plans the recipe defaults", async () => {
     installCatalogHandlers();
+    const planBodies: Record<string, unknown>[] = [];
+    server.use(
+      http.get(`*/api/v1/recipes/${betaDigest}`, () => HttpResponse.json({
+        ...recipes[1],
+        manifest: {
+          artifacts: [
+            {
+              name: "model",
+              defaultVariant: "managed",
+              variants: [{ name: "managed", label: "Managed model" }],
+            },
+          ],
+          parameters: [
+            {
+              name: "kv_cache_dtype",
+              type: "enum",
+              default: "fp8_e4m3",
+              enum: ["fp8_e4m3"],
+            },
+          ],
+          workloads: [],
+        },
+      })),
+      http.get("*/api/v1/nodes", () => HttpResponse.json([{
+        id: "node-1",
+        display_name: "spark1",
+        status: "online",
+        inventory: { accelerators: [] },
+      }])),
+      http.post("*/api/v1/deployments/plan", async ({ request }) => {
+        planBodies.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({
+          recipe_digest: betaDigest,
+          recipe_name: recipes[1].name,
+          recipe_version: recipes[1].version,
+          placements: [{ node_id: "node-1", node_name: "spark1", rank: 0, accelerator_index: 0 }],
+          endpoint: { host: "spark1", port: 8000, path: "/v1" },
+          transfers: [{
+            artifact: "model",
+            node_id: "node-1",
+            action: "reconcile-local",
+          }],
+          ready: true,
+          plan_digest: "sha256:ready",
+          diagnostics: [],
+        });
+      }),
+    );
     const user = userEvent.setup();
     renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Plan launch for MiaAI-Lab/alpha-recipe" }));
-    expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByLabelText("Recipe")).toHaveValue(alphaDigest));
+    await user.click(await screen.findByRole("button", { name: "Launch MiaAI-Lab/beta-recipe" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Launch MiaAI-Lab/beta-recipe" });
+    expect(within(dialog).getByText("Target")).toBeInTheDocument();
+    expect(within(dialog).getByText("spark1:8000/v1")).toBeInTheDocument();
+    expect(within(dialog).getByText("Installed")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Launch" })).toBeEnabled();
+    expect(within(dialog).queryByText(/^Settings/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/fabric|images|storage|risk|transfer/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(planBodies.at(-1)).toMatchObject({
+      recipe_digest: betaDigest,
+      variants: { model: "managed" },
+      parameters: { kv_cache_dtype: "fp8_e4m3" },
+    }));
   });
 
   it("resolves a GitHub URL and exposes its immutable contract for launch", async () => {
@@ -300,7 +344,13 @@ describe("RecipesRoute repository catalog", () => {
 
     expect(await within(dialog).findByText("compiled · launchable")).toBeInTheDocument();
     expect(within(dialog).getByText(/Permissions:/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Plan launch" })).toBeEnabled();
+    const continueButton = within(dialog).getByRole("button", { name: "Continue to launch" });
+    expect(continueButton).toBeEnabled();
+    await user.click(continueButton);
+    const launcher = await screen.findByRole("dialog", { name: "Launch MiaAI-Lab/GLM" });
+    await user.click(within(launcher).getByRole("button", { name: "Back" }));
+    const resumedImport = await screen.findByRole("dialog", { name: "Add a model recipe" });
+    expect(within(resumedImport).getByText("compiled · launchable")).toBeInTheDocument();
   });
   it("shows installed devices and confirms an update without running deployments", async () => {
     installCatalogHandlers();
@@ -435,24 +485,6 @@ describe("RecipesRoute repository catalog", () => {
     expect(screen.queryByRole("heading", { name: "Update complete" })).not.toBeInTheDocument();
   });
 
-  it("refreshes cached update status and removes the Recipe Builder update action", async () => {
-    installCatalogHandlers();
-    let checks = 0;
-    server.use(
-      http.post("*/api/v1/recipes/check-updates", () => {
-        checks += 1;
-        return HttpResponse.json([recipes[0].update]);
-      }),
-    );
-    const user = userEvent.setup();
-    renderCatalog();
-    await user.click(await screen.findByRole("button", { name: "Check updates" }));
-    await waitFor(() => expect(checks).toBe(1));
-
-    renderRecipeDetail();
-    expect(await screen.findByText("Update available")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Inspect update in builder" })).not.toBeInTheDocument();
-  });
 
   it("distinguishes loading, API-empty, and retryable error states", async () => {
     let release: (() => void) | undefined;

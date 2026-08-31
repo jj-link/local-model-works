@@ -103,7 +103,7 @@ exec python3 -m sglang.launch_server \
   --attention-backend flashinfer \
   --chunked-prefill-size 4096 \
   --max-prefill-tokens 4096 \
-  --kv-cache-dtype fp8_e4m3 \
+  --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
   --context-length 262144 \
   --mm-feature-transport cpu \
   --max-running-requests 8 \

@@ -62,7 +62,6 @@ type Recipe struct {
 	Permissions   []string        `json:"permissions,omitempty"`
 	Compatibility json.RawMessage `json:"compatibility,omitempty"`
 	ArtifactCount int             `json:"artifact_count"`
-	ProfileCount  int             `json:"profile_count"`
 	VariantCount  int             `json:"variant_count"`
 	HighRisk      []string        `json:"high_risk,omitempty"`
 	InstalledAt   string          `json:"installed_at"`
@@ -699,9 +698,6 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 	comp, err := json.Marshal(m.Compatibility)
 	if err == nil && string(comp) != "null" {
 		v.Compatibility = comp
-	}
-	if m.Profiles != nil {
-		v.ProfileCount = len(m.Profiles)
 	}
 	v.VariantCount = len(m.Workloads)
 	return v, nil

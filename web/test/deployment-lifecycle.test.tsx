@@ -18,7 +18,7 @@ const baseDeployment = {
   recipe_digest: "sha256:recipe",
   recipe_name: "Qwen",
   recipe_version: "1.0.0",
-  profile: "default",
+  parameters: {},
   run_id: "run-1",
   desired_state: "running",
   observed_state: "healthy",

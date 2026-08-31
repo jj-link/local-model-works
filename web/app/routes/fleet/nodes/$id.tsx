@@ -263,7 +263,6 @@ export default function NodeDetailRoute() {
                     <div className="flex flex-wrap items-center gap-x-3">
                       <span className="text-foreground">{root.path}</span>
                       <span>{root.backend || "filesystem"}</span>
-                      {root.size_bytes ? <span>{bytes(root.size_bytes)}</span> : null}
                     </div>
                     {root.repositories?.length ? (
                       <p className="mt-1 text-[10px] text-faint">

@@ -638,6 +638,55 @@ paths:
           $ref: '#/components/responses/Unprocessable'
       tags:
         - fabrics
+  /launch-profiles/{id}:
+    delete:
+      operationId: deleteLaunchProfile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Profile deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Delete an operator-owned launch profile
+      tags:
+        - deployments
+    put:
+      operationId: updateLaunchProfile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaunchProfileUpsert'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchProfile'
+          description: Profile updated
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Replace an operator-owned launch profile (digest pinned)
+      tags:
+        - deployments
   /login:
     post:
       operationId: login
@@ -1242,6 +1291,57 @@ paths:
           $ref: '#/components/responses/NotFound'
       tags:
         - recipes
+  /recipes/{digest}/launch-profiles:
+    get:
+      operationId: listLaunchProfiles
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/LaunchProfile'
+                type: array
+          description: Launch profiles (oldest first)
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Saved launch profiles for one recipe digest
+      tags:
+        - deployments
+    post:
+      operationId: createLaunchProfile
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaunchProfileUpsert'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchProfile'
+          description: Profile saved
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Save an operator-owned launch profile for this recipe digest
+      tags:
+        - deployments
   /recipes/check-updates:
     post:
       operationId: checkRecipeUpdates
@@ -1966,6 +2066,11 @@ components:
             - stopped
             - failed
           type: string
+        parameters:
+          additionalProperties: true
+          description: Launch settings resolved at create time
+          nullable: true
+          type: object
         placements:
           items:
             properties:
@@ -1986,8 +2091,6 @@ components:
               - rank
             type: object
           type: array
-        profile:
-          type: string
         recipe_digest:
           type: string
         recipe_name:
@@ -2004,12 +2107,18 @@ components:
       required:
         - id
         - recipe_digest
-        - profile
         - desired_state
         - observed_state
       type: object
     DeploymentCreateRequest:
       properties:
+        launch_profile_id:
+          description: Saved profile to apply; mutually exclusive with variants/parameters
+          type: string
+        parameters:
+          additionalProperties: true
+          description: Optional parameter overrides; validated against the recipe manifest.
+          type: object
         placements:
           items:
             properties:
@@ -2026,8 +2135,6 @@ components:
         plan_digest:
           description: Distinguishes an unchanged plan from the one previewed
           type: string
-        profile:
-          type: string
         recipe_digest:
           type: string
         variants:
@@ -2037,7 +2144,6 @@ components:
           type: object
       required:
         - recipe_digest
-        - profile
       type: object
     DeploymentPlan:
       properties:
@@ -2079,6 +2185,11 @@ components:
           items:
             $ref: '#/components/schemas/ImagePreview'
           type: array
+        parameters:
+          additionalProperties: true
+          description: Effective launch settings for this plan
+          nullable: true
+          type: object
         placements:
           items:
             properties:
@@ -2122,8 +2233,6 @@ components:
               - container_port
             type: object
           type: array
-        profile:
-          type: string
         ready:
           description: false when conflicts or unmet compatibility block creation
           type: boolean
@@ -2156,12 +2265,18 @@ components:
           type: integer
       required:
         - recipe_digest
-        - profile
         - placements
         - ready
       type: object
     DeploymentPlanRequest:
       properties:
+        launch_profile_id:
+          description: Saved profile to apply; mutually exclusive with variants/parameters
+          type: string
+        parameters:
+          additionalProperties: true
+          description: Optional parameter overrides; validated against the recipe manifest.
+          type: object
         placements:
           description: Optional explicit node per rank; omit for automatic selection
           items:
@@ -2176,8 +2291,6 @@ components:
               - rank
             type: object
           type: array
-        profile:
-          type: string
         recipe_digest:
           type: string
         variants:
@@ -2187,7 +2300,6 @@ components:
           type: object
       required:
         - recipe_digest
-        - profile
       type: object
     Diagnostic:
       properties:
@@ -2400,6 +2512,55 @@ components:
         - os
         - arch
         - docker
+      type: object
+    LaunchProfile:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        name:
+          minLength: 1
+          type: string
+        parameters:
+          additionalProperties: true
+          description: Optional parameter overrides (validated against the recipe)
+          type: object
+        recipe_digest:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        variants:
+          additionalProperties:
+            type: string
+          description: Optional artifact name -> selected model variant
+          type: object
+      required:
+        - id
+        - name
+        - recipe_digest
+        - created_at
+        - updated_at
+      type: object
+    LaunchProfileUpsert:
+      properties:
+        name:
+          minLength: 1
+          type: string
+        parameters:
+          additionalProperties: true
+          type: object
+        recipe_digest:
+          description: Immutable digest pin; only honored on create
+          type: string
+        variants:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - name
       type: object
     LoginRequest:
       properties:
@@ -3640,11 +3801,18 @@ components:
       type: object
     TransferPreview:
       properties:
+        action:
+          enum:
+            - reconcile-local
+            - download-origin
+            - peer-copy
+          type: string
         artifact_id:
-          format: uuid
           type: string
         bytes:
+          description: Known transfer bytes; omitted when the source size is unknown.
           format: int64
+          minimum: 0
           type: integer
         dest_node:
           type: string
@@ -3661,10 +3829,9 @@ components:
           type: string
       required:
         - artifact_id
-        - source_node
+        - action
         - dest_node
         - dest_path
-        - bytes
       type: object
     TransferRequest:
       properties:

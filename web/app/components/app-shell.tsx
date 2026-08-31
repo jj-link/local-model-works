@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import { Command as CommandIcon, FileText, LogOut, Menu } from "lucide-react";
 import { logout, type Session } from "~/lib/api/session";
+import type { Recipe } from "~/lib/api";
 import { useModules, useSystemInfo } from "~/lib/queries";
 import { shortId } from "~/lib/format";
 import { TooltipProvider } from "~/components/ui/tooltip";
@@ -41,6 +42,7 @@ import {
 export function AppShell({ session }: { session: Session | null }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogId | null>(null);
+  const [importedRecipe, setImportedRecipe] = useState<Recipe>();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { data: modules } = useModules();
   const { data: sys } = useSystemInfo();
@@ -76,7 +78,10 @@ export function AppShell({ session }: { session: Session | null }) {
   }, [onKey]);
 
   const closeDialog = () => setDialog(null);
-  const openDialog = useCallback((id: DialogId) => setDialog(id), []);
+  const openDialog = useCallback((id: DialogId) => {
+    setImportedRecipe(undefined);
+    setDialog(id);
+  }, []);
 
   const signOut = async () => {
     await logout();
@@ -253,10 +258,23 @@ export function AppShell({ session }: { session: Session | null }) {
 
         {dialog === "enroll" ? <EnrollDialog open onOpenChange={(open) => !open && closeDialog()} /> : null}
         {dialog === "import-recipe" ? (
-          <ImportRecipeDialog open onOpenChange={(open) => !open && closeDialog()} />
+          <ImportRecipeDialog
+            open
+            readyRecipe={importedRecipe}
+            onOpenChange={(open) => !open && closeDialog()}
+            onPlan={(recipe) => {
+              setImportedRecipe(recipe);
+              setDialog("plan-deployment");
+            }}
+          />
         ) : null}
         {dialog === "plan-deployment" ? (
-          <PlanDeploymentDialog open onOpenChange={(open) => !open && closeDialog()} />
+          <PlanDeploymentDialog
+            open
+            initialRecipeDigest={importedRecipe?.digest}
+            onOpenChange={(open) => !open && closeDialog()}
+            onBack={importedRecipe ? () => setDialog("import-recipe") : undefined}
+          />
         ) : null}
         {dialog === "benchmark" ? (
           <BenchmarkDialog open onOpenChange={(open) => !open && closeDialog()} />

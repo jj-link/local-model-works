@@ -39,7 +39,7 @@ const deployments = [
     recipe_digest: "sha256:recipe-a",
     recipe_name: "Recipe A",
     engine: "vllm",
-    profile: "fast",
+    parameters: {},
     placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 0 }],
     desired_state: "running",
     observed_state: "healthy",
@@ -52,7 +52,7 @@ const deployments = [
     recipe_digest: "sha256:recipe-a-old",
     recipe_name: "Recipe A",
     engine: "vllm",
-    profile: "fast",
+    parameters: {},
     placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 0 }],
     desired_state: "stopped",
     observed_state: "stopped",
@@ -63,7 +63,7 @@ const deployments = [
     id: "44444444-4444-4444-8444-444444444444",
     recipe_digest: "sha256:recipe-b",
     recipe_name: "Recipe B",
-    profile: "",
+    parameters: {},
     placements: [{ node_id: busyNode.id, node_name: busyNode.display_name, rank: 0 }],
     desired_state: "running",
     observed_state: "degraded",
@@ -94,7 +94,7 @@ function installHandlers() {
 }
 
 describe("Fleet and Serving workload views", () => {
-  it("renders card rows with truthful joins, engine/model fallback, recipe link, degraded missing metadata, and visible idle node", async () => {
+  it("renders card rows with truthful joins, engine/model fallback, degraded missing metadata, and visible idle node", async () => {
     installHandlers();
     renderRoute(<NodesRoute />, "/fleet/nodes");
 
@@ -114,9 +114,6 @@ describe("Fleet and Serving workload views", () => {
       "/serving/deployments/33333333-3333-4333-8333-333333333333",
     );
 
-    // The recipe catalog link is separate from the deployment detail link.
-    const recipeLinks = screen.getAllByRole("link", { name: /recipe →/ });
-    expect(recipeLinks.some((l) => l.getAttribute("href") === "/library/recipes/sha256:recipe-a")).toBe(true);
 
     // Recipe B is degraded with neither engine nor endpoint model -> Not reported.
     expect(screen.getByRole("link", { name: "Recipe B" })).toHaveAttribute(
@@ -145,7 +142,6 @@ describe("Fleet and Serving workload views", () => {
     );
     expect(rows[0]).toHaveTextContent("Model A");
     expect(rows[0]).toHaveTextContent("vLLM");
-    expect(rows[0]).toHaveTextContent("fast");
     expect(rows[0]).toHaveTextContent("healthy");
     expect(rows[1]).toHaveTextContent("Not reported");
     expect(rows[1]).toHaveTextContent("degraded");

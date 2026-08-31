@@ -299,7 +299,7 @@ const artifactManifest = `{
 func TestDeploymentModelAndEngineViews(t *testing.T) {
 	tests := []struct {
 		name          string
-		profile       string
+		parameters    map[string]any
 		manifest      string
 		expectedModel string
 	}{
@@ -314,8 +314,8 @@ func TestDeploymentModelAndEngineViews(t *testing.T) {
 			expectedModel: "metadata-model",
 		},
 		{
-			name:    "profile override",
-			profile: "fast",
+			name:       "setting override",
+			parameters: map[string]any{"model": "profile-model"},
 			manifest: strings.Replace(
 				strings.Replace(
 					noArtifactManifest,
@@ -324,7 +324,7 @@ func TestDeploymentModelAndEngineViews(t *testing.T) {
 					1,
 				),
 				`"workloads":`,
-				`"parameters": [{"name": "model", "type": "string"}], "profiles": {"fast": {"model": "profile-model"}}, "workloads":`,
+				`"parameters": [{"name": "model", "type": "string"}], "workloads":`,
 				1,
 			),
 			expectedModel: "profile-model",
@@ -339,7 +339,7 @@ func TestDeploymentModelAndEngineViews(t *testing.T) {
 
 			plan, err := h.svc.Plan(context.Background(), PlanRequest{
 				RecipeDigest: "recipe-model",
-				Profile:      tt.profile,
+				Parameters:   tt.parameters,
 			})
 			if err != nil {
 				t.Fatalf("plan: %v", err)
@@ -350,7 +350,7 @@ func TestDeploymentModelAndEngineViews(t *testing.T) {
 
 			deployment, err := h.svc.Create(context.Background(), CreateRequest{
 				RecipeDigest: "recipe-model",
-				Profile:      tt.profile,
+				Parameters:   tt.parameters,
 			})
 			if err != nil {
 				t.Fatalf("create: %v", err)
@@ -378,7 +378,6 @@ const endpointManifest = `{
 	"kind": "Recipe",
 	"metadata": {"name": "endpoint-serve", "version": "1"},
 	"parameters": [{"name": "model", "type": "string", "default": "qwen-7b"}],
-	"profiles": {"default": {"model": "qwen-7b"}},
 	"workloads": [{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
@@ -396,7 +395,7 @@ func TestDeploymentEndpointMetadataSurvivesRead(t *testing.T) {
 	h := newHarness(t)
 	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
 	h.seedRecipe(t, "endpoint-serve", endpointManifest)
-	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Profile: "default", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
+	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -415,12 +414,12 @@ func TestDeploymentEndpointMetadataSurvivesRead(t *testing.T) {
 
 // TestDeploymentLegacyEndpointFallsBackToRecipe proves a deployment whose
 // persisted endpoint_model is null (a pre-migration row) still resolves its
-// model from the profile/metadata fallback when the view is read back.
+// model from the setting/metadata fallback when the view is read back.
 func TestDeploymentLegacyEndpointFallsBackToRecipe(t *testing.T) {
 	h := newHarness(t)
 	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
 	h.seedRecipe(t, "endpoint-serve", endpointManifest)
-	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Profile: "default", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
+	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -1034,7 +1033,6 @@ func TestPlanDigestIgnoresLivePreflightTelemetry(t *testing.T) {
 	fabric := "spark-p2p"
 	plan := Plan{
 		RecipeDigest:  "sha256:recipe",
-		Profile:       "default",
 		Variants:      map[string]string{"model": "stable"},
 		WorkloadIndex: 0,
 		Placements: []Placement{
@@ -2100,8 +2098,8 @@ func TestStartPersistsReplannedPlacementAndRetainsFailedRun(t *testing.T) {
 	if len(replanned.Entries) != 1 || replanned.Entries[0].AcceleratorUUID != "GPU-new" {
 		t.Fatalf("persisted placement = %+v, want GPU-new", replanned.Entries)
 	}
-	if row.Profile != original.Profile {
-		t.Fatalf("profile changed from %q to %q", original.Profile, row.Profile)
+	if row.Parameters != original.Parameters {
+		t.Fatalf("parameters changed from %q to %q", original.Parameters, row.Parameters)
 	}
 	if row.DesiredState != "running" || row.ObservedState != "unknown" {
 		t.Fatalf("state = %s/%s, want running/unknown", row.DesiredState, row.ObservedState)
@@ -2179,5 +2177,226 @@ func TestPlanNamesDeploymentOccupyingCompatibleGPU(t *testing.T) {
 	if !ready.Ready || len(ready.Placements) != 1 {
 		t.Fatalf("plan after stop = ready %t placements %+v diagnostics %+v conflicts %+v",
 			ready.Ready, ready.Placements, ready.Diagnostics, ready.Conflicts)
+	}
+}
+
+func TestExactSnapshotPreparationClassification(t *testing.T) {
+	revision := strings.Repeat("e", 40)
+	identity := "hf://Acme/Model@" + revision
+	manifest := strings.ReplaceAll(
+		artifactManifest,
+		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
+	)
+
+	t.Run("manifest missing reconciles locally", func(t *testing.T) {
+		h := newHarness(t)
+		h.seedNode(t, "dest", gpuAccs("d"), "")
+		h.seedArtifact(t, "hf-reconcile", identity)
+		if err := h.q.UpsertPlacement(context.Background(), db.UpsertPlacementParams{
+			ArtifactID: "hf-reconcile", NodeID: "dest",
+			Path: "/var/lib/lmw/artifacts/model", State: "invalid",
+			Diagnostics: diag.Encode([]diag.Diagnostic{{
+				Code: "artifact.snapshot_manifest_missing", Severity: "error",
+				Message: "snapshot completion manifest is missing",
+			}}),
+			SizeBytes: 123,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h.seedRecipe(t, "recipe-reconcile", manifest)
+
+		plan, err := h.svc.Plan(context.Background(), PlanRequest{
+			RecipeDigest: "recipe-reconcile",
+			Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !plan.Ready || len(plan.Transfers) != 1 {
+			t.Fatalf("reconcile plan = %+v", plan)
+		}
+		preparation := plan.Transfers[0]
+		if preparation.Action != PreparationReconcileLocal || preparation.Bytes != 0 {
+			t.Fatalf("preparation = %+v, want zero-byte local reconciliation", preparation)
+		}
+		if len(plan.Storage) != 0 {
+			t.Fatalf("storage previews = %+v, want none for local reconciliation", plan.Storage)
+		}
+		for _, risk := range plan.Risks {
+			if risk == "artifact:model:origin_download" {
+				t.Fatalf("reconciliation exposed origin-download risk: %+v", plan.Risks)
+			}
+		}
+
+		h.createDeployment(t, "recipe-reconcile", PlacementOverride{NodeID: "dest", Rank: 0})
+		commands := h.nodes.artifactCommands()
+		if len(commands) != 1 || commands[0].nodeID != "dest" ||
+			commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
+			t.Fatalf("reconciliation commands = %+v", commands)
+		}
+	})
+
+	t.Run("corrupt placement downloads origin", func(t *testing.T) {
+		h := newHarness(t)
+		h.seedNode(t, "dest", gpuAccs("d"), "")
+		h.seedArtifact(t, "hf-corrupt", identity)
+		if err := h.q.UpsertPlacement(context.Background(), db.UpsertPlacementParams{
+			ArtifactID: "hf-corrupt", NodeID: "dest",
+			Path: "/var/lib/lmw/artifacts/model", State: "invalid",
+			Diagnostics: diag.Encode([]diag.Diagnostic{{
+				Code: "artifact.digest_mismatch", Severity: "error",
+				Message: "snapshot shard is corrupt",
+			}}),
+			SizeBytes: 123,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h.seedRecipe(t, "recipe-corrupt", manifest)
+
+		plan, err := h.svc.Plan(context.Background(), PlanRequest{
+			RecipeDigest: "recipe-corrupt",
+			Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(plan.Transfers) != 1 || plan.Transfers[0].Action != PreparationDownloadOrigin {
+			t.Fatalf("corrupt preparation = %+v, want origin download", plan.Transfers)
+		}
+	})
+}
+
+func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
+	const manifest = `{
+		"apiVersion": "lmw.dev/v1",
+		"kind": "Recipe",
+		"metadata": {"name": "settings", "version": "1"},
+		"artifacts": [
+			{
+				"name": "model", "kind": "model", "defaultVariant": "small",
+				"variants": [
+					{"name": "small", "source": {"type": "huggingface", "identity": "hf://Acme/Small", "revision": "1111111111111111111111111111111111111111"}},
+					{"name": "large", "source": {"type": "huggingface", "identity": "hf://Acme/Large", "revision": "2222222222222222222222222222222222222222"}}
+				],
+				"mount": "/models/model"
+			},
+			{
+				"name": "drafter", "kind": "model", "defaultVariant": "tiny",
+				"variants": [
+					{"name": "tiny", "source": {"type": "huggingface", "identity": "hf://Acme/Tiny", "revision": "3333333333333333333333333333333333333333"}},
+					{"name": "full", "source": {"type": "huggingface", "identity": "hf://Acme/Full", "revision": "4444444444444444444444444444444444444444"}}
+				],
+				"mount": "/models/drafter"
+			}
+		],
+		"parameters": [
+			{"name": "kv_cache", "type": "enum", "default": "fp8", "enum": ["fp8", "bf16"]}
+		],
+		"workloads": [{
+			"image": {"reference": "test-serve:latest"},
+			"command": ["serve"],
+			"args": ["--kv-cache", "${setting.kv_cache}"],
+			"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+			"ports": [{"container": 8000}]
+		}]
+	}`
+
+	h := newHarness(t)
+	h.seedNode(t, "dest", nil, "")
+	h.seedRecipe(t, "settings-v1", manifest)
+	h.seedRecipe(t, "settings-v2", manifest)
+	ctx := context.Background()
+
+	profile, err := h.svc.CreateLaunchProfile(ctx, UpsertLaunchProfileRequest{
+		Name: "fast", RecipeDigest: "settings-v1",
+		Variants:   map[string]string{"model": "small", "drafter": "tiny"},
+		Parameters: map[string]any{"kv_cache": "fp8"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Name != "fast" || profile.RecipeDigest != "settings-v1" {
+		t.Fatalf("created profile = %+v", profile)
+	}
+	listed, err := h.svc.ListLaunchProfiles(ctx, "settings-v1")
+	if err != nil || len(listed) != 1 || listed[0].ID != profile.ID {
+		t.Fatalf("listed profiles = %+v, err=%v", listed, err)
+	}
+
+	first, err := h.svc.Plan(ctx, PlanRequest{
+		RecipeDigest: "settings-v1", LaunchProfileID: profile.ID,
+		Placements: []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Variants["model"] != "small" || first.Variants["drafter"] != "tiny" ||
+		first.Settings["kv_cache"] != "fp8" {
+		t.Fatalf("applied settings = variants:%+v parameters:%+v", first.Variants, first.Settings)
+	}
+
+	updated, err := h.svc.UpdateLaunchProfile(ctx, profile.ID, UpsertLaunchProfileRequest{
+		Name:       "quality",
+		Variants:   map[string]string{"model": "large", "drafter": "full"},
+		Parameters: map[string]any{"kv_cache": "bf16"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "quality" || updated.Variants["model"] != "large" {
+		t.Fatalf("updated profile = %+v", updated)
+	}
+	second, err := h.svc.Plan(ctx, PlanRequest{
+		RecipeDigest: "settings-v1", LaunchProfileID: profile.ID,
+		Placements: []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Digest == first.Digest || second.Variants["model"] != "large" ||
+		second.Settings["kv_cache"] != "bf16" {
+		t.Fatalf("updated plan = %+v; first digest = %s", second, first.Digest)
+	}
+
+	if _, err := h.svc.CreateLaunchProfile(ctx, UpsertLaunchProfileRequest{
+		Name: "unknown-variant", RecipeDigest: "settings-v1",
+		Variants: map[string]string{"model": "missing"},
+	}); err == nil || !strings.Contains(err.Error(), "has no variant") {
+		t.Fatalf("unknown variant error = %v", err)
+	}
+	if _, err := h.svc.CreateLaunchProfile(ctx, UpsertLaunchProfileRequest{
+		Name: "bad-enum", RecipeDigest: "settings-v1",
+		Parameters: map[string]any{"kv_cache": "int4"},
+	}); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("enum validation error = %v", err)
+	}
+	other, err := h.svc.CreateLaunchProfile(ctx, UpsertLaunchProfileRequest{
+		Name: "other", RecipeDigest: "settings-v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Plan(ctx, PlanRequest{
+		RecipeDigest: "settings-v1", LaunchProfileID: other.ID,
+		Placements: []PlacementOverride{{NodeID: "dest", Rank: 0}},
+	}); err == nil || !strings.Contains(err.Error(), "different recipe digest") {
+		t.Fatalf("cross-digest profile error = %v", err)
+	}
+	if _, err := h.svc.Plan(ctx, PlanRequest{
+		RecipeDigest: "settings-v1", LaunchProfileID: profile.ID,
+		Variants: map[string]string{"model": "small"},
+	}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("profile/override exclusivity error = %v", err)
+	}
+
+	if err := h.svc.DeleteLaunchProfile(ctx, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.GetLaunchProfile(ctx, profile.ID); err == nil {
+		t.Fatal("deleted profile remained readable")
+	}
+	if err := h.svc.DeleteLaunchProfile(ctx, profile.ID); err == nil {
+		t.Fatal("deleting an unknown profile succeeded")
 	}
 }

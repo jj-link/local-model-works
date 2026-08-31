@@ -64,7 +64,7 @@ type RepositoryUpdateTarget struct {
 type RepositoryUpdateDeployment struct {
 	SourceDeploymentID string            `json:"source_deployment_id"`
 	SourceDigest       string            `json:"source_digest"`
-	Profile            string            `json:"profile"`
+	Parameters         map[string]any    `json:"parameters,omitempty"`
 	Placement          string            `json:"placement"`
 	Fabric             string            `json:"fabric,omitempty"`
 	WorkloadIndex      int               `json:"workload_index"`
@@ -165,7 +165,7 @@ func (s *Service) repositoryUpdatePermissions(
 	return current, target, added, removed, nil
 }
 
-// PlanRepositoryUpdate preserves placements, profile, variants, workload,
+// PlanRepositoryUpdate preserves placements, parameters, variants, workload,
 // fabric, endpoint intent, and ignores only the source deployment's leases.
 func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, targetDigest string) (*RepositoryUpdatePlan, error) {
 	targetVersion, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, targetDigest)
@@ -243,7 +243,7 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 			overrides = append(overrides, PlacementOverride{NodeID: placement.NodeID, Rank: placement.Rank})
 		}
 		deploymentPlan, planErr := s.planWithRecipe(ctx, PlanRequest{
-			RecipeDigest: targetDigest, Profile: row.Profile,
+			RecipeDigest: targetDigest, Parameters: parametersForValue(row.Parameters),
 			Placements: overrides, Variants: placementSet.Variants,
 		}, map[string]bool{row.ID: true}, candidate)
 		if planErr != nil {
@@ -281,7 +281,7 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 		}
 		deploymentPlan.Digest = deploymentPlan.PlanDigest()
 		plan.Deployments = append(plan.Deployments, RepositoryUpdateDeployment{
-			SourceDeploymentID: row.ID, SourceDigest: row.RecipeDigest, Profile: row.Profile,
+			SourceDeploymentID: row.ID, SourceDigest: row.RecipeDigest, Parameters: parametersForValue(row.Parameters),
 			Placement: row.Placement, Fabric: fabric, WorkloadIndex: workloadIndex,
 			Variants: cloneVariants(placementSet.Variants), DeploymentPlan: *deploymentPlan,
 		})
@@ -739,8 +739,8 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 	for _, entry := range expectedPlacement.Entries {
 		expectedPlacement.Ranks[entry.NodeID] = int(entry.Rank)
 	}
-	existing, existingErr := s.q.GetDeploymentByRecipeProfilePlacement(ctx, db.GetDeploymentByRecipeProfilePlacementParams{
-		RecipeDigest: targetDigest, Profile: deployment.Profile, Placement: expectedPlacement.Marshal(),
+	existing, existingErr := s.q.GetDeploymentByRecipeParametersPlacement(ctx, db.GetDeploymentByRecipeParametersPlacementParams{
+		RecipeDigest: targetDigest, Parameters: marshalParameters(deployment.Parameters), Placement: expectedPlacement.Marshal(),
 	})
 	var replacementID string
 	if existingErr == nil {
@@ -754,7 +754,7 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 		return "", existingErr
 	} else {
 		fresh, err := s.plan(ctx, PlanRequest{
-			RecipeDigest: targetDigest, Profile: deployment.Profile,
+			RecipeDigest: targetDigest, Parameters: deployment.Parameters,
 			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.Variants,
 		}, nil)
 		if err != nil {
