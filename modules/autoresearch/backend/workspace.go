@@ -32,6 +32,7 @@ func initializeProjectRoot(root string) error {
 	origin := filepath.Join(root, "origin.git")
 	for _, directory := range []string{
 		filepath.Join(root, ".lmw", "sources"), filepath.Join(root, "scratch"),
+		filepath.Join(root, ".lmw", "arxiv-cache"), filepath.Join(root, ".lmw", "arxiv-wiki"),
 		filepath.Join(artifacts, "ideas"), filepath.Join(artifacts, "topics"), filepath.Join(artifacts, "workspace"),
 	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {

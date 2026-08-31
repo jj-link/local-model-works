@@ -923,12 +923,52 @@ func TestWorkerSpecIsolation(t *testing.T) {
 	if len(spec.Mounts) != 3 || spec.Mounts[0].ReadOnly || spec.Mounts[1].ReadOnly || !spec.Mounts[2].ReadOnly {
 		t.Fatalf("mounts = %+v", spec.Mounts)
 	}
+	environment := strings.Join(spec.Env, "\n")
+	for _, expected := range []string{
+		"ARXIV_CACHE_DIR=/project/.lmw/arxiv-cache",
+		"ARXIV_WIKI_DIR=/project/.lmw/arxiv-wiki",
+	} {
+		if !strings.Contains(environment, expected) {
+			t.Fatalf("worker environment missing %q: %v", expected, spec.Env)
+		}
+	}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(encoded, []byte("docker.sock")) {
 		t.Fatalf("Docker socket leaked into spec: %s", encoded)
+	}
+}
+
+func TestProjectArxivStorageIsPersistentAndIsolated(t *testing.T) {
+	root := t.TempDir()
+	projectA := filepath.Join(root, "project-a")
+	projectB := filepath.Join(root, "project-b")
+	for _, projectRoot := range []string{projectA, projectB} {
+		if err := initializeProjectRoot(projectRoot); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"arxiv-cache", "arxiv-wiki"} {
+			directory := filepath.Join(projectRoot, ".lmw", name)
+			info, err := os.Stat(directory)
+			if err != nil || !info.IsDir() {
+				t.Fatalf("%s directory = %v, %v", name, info, err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "probe"), []byte("writable"), 0o600); err != nil {
+				t.Fatalf("%s is not writable: %v", directory, err)
+			}
+		}
+	}
+
+	specA1 := workerSpec("run-a1", "local/agon", "sha256:"+strings.Repeat("a", 64), projectA, filepath.Join(projectA, "scratch", "run-a1"), "", "1000:1000", []string{"preflight"})
+	specA2 := workerSpec("run-a2", "local/agon", "sha256:"+strings.Repeat("a", 64), projectA, filepath.Join(projectA, "scratch", "run-a2"), "", "1000:1000", []string{"preflight"})
+	specB := workerSpec("run-b", "local/agon", "sha256:"+strings.Repeat("a", 64), projectB, filepath.Join(projectB, "scratch", "run-b"), "", "1000:1000", []string{"preflight"})
+	if specA1.Mounts[0].Source != specA2.Mounts[0].Source {
+		t.Fatalf("same project uses different storage: %q != %q", specA1.Mounts[0].Source, specA2.Mounts[0].Source)
+	}
+	if specA1.Mounts[0].Source == specB.Mounts[0].Source {
+		t.Fatalf("different projects share storage: %q", specA1.Mounts[0].Source)
 	}
 }
 

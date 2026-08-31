@@ -244,6 +244,7 @@ func workerSpec(runID, imageRef, imageDigest, projectRoot, scratch, credentials,
 		Labels: runtime.ManagedLabels("", runID, imageDigest, "1", 0, descriptor.ID),
 		Env: []string{
 			"HOME=/scratch/home", "CLAUDE_PLUGIN_ROOT=/opt/agon", "AGON_RUNNER=/usr/local/bin/lmw-agon-runner",
+			"ARXIV_CACHE_DIR=/project/.lmw/arxiv-cache", "ARXIV_WIKI_DIR=/project/.lmw/arxiv-wiki",
 			"LMW_CREDENTIAL_DIR=/run/lmw-credentials", "TMPDIR=/scratch/tmp",
 		},
 	}
