@@ -60,6 +60,7 @@ func toProtoInventory(inv hardware.Inventory) *agentv1.Inventory {
 			Backend:      c.Backend,
 			SizeBytes:    uint64(c.SizeBytes),
 			Repositories: c.Repositories,
+			Writable:     c.Writable,
 		})
 	}
 	return out

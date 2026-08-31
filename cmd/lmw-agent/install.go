@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/config"
@@ -120,6 +121,21 @@ func install(args []string, stdout io.Writer) error {
 	}
 	if err := os.WriteFile(filepath.Join(dropIn, "10-run-as.conf"), []byte("[Service]\nUser="+*runAs+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write agent user drop-in: %w", err)
+	}
+	cacheDropIn := filepath.Join(dropIn, "20-cache-roots.conf")
+	if len(roots) == 0 {
+		if err := os.Remove(cacheDropIn); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove cache-root drop-in: %w", err)
+		}
+	} else {
+		var cachePaths strings.Builder
+		cachePaths.WriteString("[Service]\n")
+		for _, root := range roots {
+			fmt.Fprintf(&cachePaths, "ReadWritePaths=%s\n", strconv.Quote(root))
+		}
+		if err := os.WriteFile(cacheDropIn, []byte(cachePaths.String()), 0o644); err != nil {
+			return fmt.Errorf("write cache-root drop-in: %w", err)
+		}
 	}
 	fmt.Fprintf(stdout, "installed local-model-works-agent.service for %s\n", *runAs)
 	return nil

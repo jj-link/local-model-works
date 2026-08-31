@@ -165,6 +165,9 @@ message CacheRoot {
   string backend = 2; // e.g. huggingface, modelscope, local
   uint64 size_bytes = 3;
   repeated string repositories = 4;
+  // writable is probed by the agent through its own mount namespace at
+  // inventory time; false means artifact fetches into this root will fail.
+  bool writable = 5;
 }
 
 message Telemetry {

@@ -150,7 +150,9 @@ type CacheRoot struct {
 	Backend      string    `json:"backend"`
 	Path         string    `json:"path"`
 	Repositories *[]string `json:"repositories,omitempty"`
-	SizeBytes    *int64    `json:"size_bytes,omitempty"`
+
+	// Writable Probed by the node agent through its own mount namespace. False means artifact fetches into this root will fail until the root is added to the agent service ReadWritePaths.
+	Writable *bool `json:"writable,omitempty"`
 }
 
 // CertificateInfo defines model for CertificateInfo.

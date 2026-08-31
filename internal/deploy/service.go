@@ -782,9 +782,13 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		}
 		storageNodes[placement.NodeID] = true
 		required := requiredByNode[placement.NodeID]
-		cacheRoot := ""
-		if candidate := nodeByID[placement.NodeID]; candidate != nil && candidate.inv != nil && len(candidate.inv.CacheRoots) > 0 {
-			cacheRoot = candidate.inv.CacheRoots[0].Path
+		var cacheRoot string
+		var nodeInv *inventory.Inventory
+		if candidate := nodeByID[placement.NodeID]; candidate != nil {
+			nodeInv = candidate.inv
+			if candidate.inv != nil && len(candidate.inv.CacheRoots) > 0 {
+				cacheRoot = candidate.inv.CacheRoots[0].Path
+			}
 		}
 		payload, _ := loadPayload(placement.NodeID)
 		available, total, known := filesystemCapacity(payload, cacheRoot)
@@ -805,6 +809,20 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 				fmt.Sprintf("node %s needs %d artifact bytes plus %d reserve bytes but has %d available", placement.NodeName, required, storageReserveBytes, available),
 			).Res("node:"+placement.NodeID))
 		}
+		if required > 0 {
+			writable, probed := cacheRootWritableFromInventory(nodeInv)
+			if !probed {
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+					"storage.cache_root_unprobed",
+					fmt.Sprintf("node %s has not reported cache-root writability; update its agent", placement.NodeName),
+				).Res("node:"+placement.NodeID))
+			} else if !writable {
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error(
+					"storage.cache_root_readonly",
+					fmt.Sprintf("cache root %s on node %s is read-only to the node agent; add it to local-model-works-agent.service ReadWritePaths and restart the agent", cacheRoot, placement.NodeName),
+				).Res("node:"+placement.NodeID))
+			}
+		}
 	}
 
 	plan.Risks = append(plan.Risks, m.HighRiskPermissions()...)
@@ -813,6 +831,13 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		!diag.HasError(plan.Diagnostics)
 	plan.Digest = plan.PlanDigest()
 	return plan, nil
+}
+
+func cacheRootWritableFromInventory(inv *inventory.Inventory) (writable, probed bool) {
+	if inv == nil || len(inv.CacheRoots) == 0 {
+		return false, false
+	}
+	return inv.CacheRoots[0].Writable, true
 }
 
 func (s *Service) accelRequirement(m *recipe.Manifest) *planAccRequirement {

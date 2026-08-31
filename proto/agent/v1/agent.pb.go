@@ -1510,11 +1510,14 @@ func (x *RdmaGID) GetType() string {
 }
 
 type CacheRoot struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // e.g. huggingface, modelscope, local
-	SizeBytes     uint64                 `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	Repositories  []string               `protobuf:"bytes,4,rep,name=repositories,proto3" json:"repositories,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Path         string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Backend      string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // e.g. huggingface, modelscope, local
+	SizeBytes    uint64                 `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Repositories []string               `protobuf:"bytes,4,rep,name=repositories,proto3" json:"repositories,omitempty"`
+	// writable is probed by the agent through its own mount namespace at
+	// inventory time; false means artifact fetches into this root will fail.
+	Writable      bool `protobuf:"varint,5,opt,name=writable,proto3" json:"writable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1575,6 +1578,13 @@ func (x *CacheRoot) GetRepositories() []string {
 		return x.Repositories
 	}
 	return nil
+}
+
+func (x *CacheRoot) GetWritable() bool {
+	if x != nil {
+		return x.Writable
+	}
+	return false
 }
 
 type Telemetry struct {
@@ -3992,13 +4002,14 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\aRdmaGID\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x12\n" +
-	"\x04type\x18\x03 \x01(\tR\x04type\"|\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\"\x98\x01\n" +
 	"\tCacheRoot\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\"\n" +
-	"\frepositories\x18\x04 \x03(\tR\frepositories\"\x8a\x03\n" +
+	"\frepositories\x18\x04 \x03(\tR\frepositories\x12\x1a\n" +
+	"\bwritable\x18\x05 \x01(\bR\bwritable\"\x8a\x03\n" +
 	"\tTelemetry\x12*\n" +
 	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12,\n" +
 	"\x03cpu\x18\x02 \x01(\v2\x1a.lmw.agent.v1.CpuTelemetryR\x03cpu\x125\n" +

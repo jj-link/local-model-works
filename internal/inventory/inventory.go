@@ -47,6 +47,10 @@ type CacheRoot struct {
 	Path      string `json:"path"`
 	Backend   string `json:"backend,omitempty"`
 	SizeBytes int64  `json:"size_bytes,omitempty"`
+	// Writable is the agent's probed ability to create and delete files in
+	// this root through its own mount namespace. Absent (false) on inventories
+	// reported by agents predating the probe.
+	Writable bool `json:"writable,omitempty"`
 }
 
 // Inventory is the parsed node report.

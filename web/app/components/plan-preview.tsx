@@ -22,6 +22,14 @@ export function PlanPreview({
   className?: string;
 }) {
   const nodeName = (id: string) => nodes.find((n) => n.id === id)?.display_name ?? shortId(id);
+  // Nodes whose plan diagnostics flag a read-only cache root get inline
+  // repair guidance on the storage card.
+  const readonlyRoots: Record<string, true> = {};
+  for (const d of plan.diagnostics ?? []) {
+    if (d.code === "storage.cache_root_readonly" && d.resource) {
+      readonlyRoots[d.resource.replace(/^node:/, "")] = true;
+    }
+  }
   return (
     <div className={className}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -140,6 +148,15 @@ export function PlanPreview({
                   {storage.known ? ` · ${bytes(storage.available_bytes ?? 0)} available` : ""}
                 </p>
                 {storage.cache_root ? <p className="truncate font-mono text-[10px] text-faint" title={storage.cache_root}>{storage.cache_root}</p> : null}
+                {readonlyRoots.has(storage.node_id) ? (
+                  <p className="mt-1.5 rounded border border-fault/40 bg-fault/5 px-2 py-1.5 text-[11px] text-fault">
+                    The node agent cannot write to this cache root. On the node, add
+                    <code className="mx-1 font-mono">ReadWritePaths={storage.cache_root}</code>
+                    to a <code className="font-mono">local-model-works-agent.service.d</code> drop-in, run
+                    <code className="mx-1 font-mono">sudo systemctl daemon-reload && sudo systemctl restart local-model-works-agent</code>
+                    , then re-plan. <Link to={`/fleet/nodes/${storage.node_id}`} className="underline">Node details</Link>
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>

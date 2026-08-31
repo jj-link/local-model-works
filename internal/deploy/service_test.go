@@ -607,6 +607,89 @@ func TestPlanBlocksArtifactDownloadWhenCacheStorageIsInsufficient(t *testing.T) 
 	}
 }
 
+func TestPlanCacheRootWritabilityDiagnostics(t *testing.T) {
+	revision := strings.Repeat("c", 40)
+	identity := "hf://Acme/Big@" + revision
+	manifest := `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"storage","version":"1"},
+	  "artifacts":[{
+	    "name":"model","kind":"model","sizeBytes":1048576,
+	    "source":{"type":"huggingface","identity":"hf://Acme/Big","revision":"` + revision + `"},
+	    "mount":"/models/model"
+	  }],
+	  "workloads":[{
+	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	  }]
+	}`
+	cases := []struct {
+		name      string
+		roots     []inventory.CacheRoot
+		wantCode  string
+		wantRes   string
+		wantReady bool
+	}{
+		{"writable root plans ready", []inventory.CacheRoot{{Path: "/var/lib/lmw", Writable: true}}, "", "", true},
+		{"read-only root blocks", []inventory.CacheRoot{{Path: "/var/lib/lmw"}}, "storage.cache_root_readonly", "node:node", false},
+		{"unprobed roots block", nil, "storage.cache_root_unprobed", "node:node", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedNode(t, "node", nil, "")
+			inventoryJSON, err := json.Marshal(inventory.Inventory{
+				Hostname:   "node",
+				CacheRoots: tc.roots,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.q.SetNodeInventory(context.Background(), db.SetNodeInventoryParams{
+				ID: "node", Inventory: nullString(string(inventoryJSON)),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.q.InsertTelemetry5s(context.Background(), db.InsertTelemetry5sParams{
+				NodeID: "node",
+				Ts:     time.Now().Unix(),
+				Payload: `{"filesystems":[{
+					"mount_path":"/var/lib/lmw","used_bytes":1048576,"total_bytes":10737418240
+				}]}`,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			h.seedArtifact(t, "big-model", identity)
+			h.seedRecipe(t, "recipe-storage", manifest)
+
+			plan, err := h.svc.Plan(context.Background(), PlanRequest{
+				RecipeDigest: "recipe-storage",
+				Placements:   []PlacementOverride{{NodeID: "node", Rank: 0}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The web repair banner keys off resource ("node:<id>"), so pin
+			// it alongside the code.
+			found := false
+			for _, diagnostic := range plan.Diagnostics {
+				res := ""
+				if diagnostic.Resource != nil {
+					res = *diagnostic.Resource
+				}
+				if diagnostic.Code == tc.wantCode && res == tc.wantRes {
+					found = true
+				}
+			}
+			if tc.wantCode != "" && !found {
+				t.Fatalf("diagnostics = %+v, want %s on %q", plan.Diagnostics, tc.wantCode, tc.wantRes)
+			}
+			if plan.Ready != tc.wantReady {
+				t.Fatalf("plan ready = %t, want %t (diagnostics %+v)", plan.Ready, tc.wantReady, plan.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestWorkersFirstPersistsHeadWaitAndStartsWorkerFirst(t *testing.T) {
 	manifest := `{
 	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"worker-first","version":"1"},

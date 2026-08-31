@@ -242,13 +242,17 @@ func (a *Agent) handleLogRequest(ctx context.Context, req *agentv1.LogRequest) {
 // ---------------------------------------------------------------------------
 
 // scanCacheRoot inspects one configured cache root: backend detection,
-// total size, and repository listing.
+// total size, repository listing, and an actual writability probe. The
+// probe creates and removes a unique marker file through the agent's own
+// mount namespace, so systemd ProtectSystem/ProtectHome restrictions are
+// reflected exactly as artifact fetches will experience them.
 func scanCacheRoot(ctx context.Context, root string) hardware.CacheRoot {
 	out := hardware.CacheRoot{Path: root, Backend: detectBackend(root)}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return out
 	}
+	out.Writable = probeWritable(root)
 	var size int64
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -267,6 +271,21 @@ func scanCacheRoot(ctx context.Context, root string) hardware.CacheRoot {
 	out.SizeBytes = size
 	out.Repositories = listRepos(root)
 	return out
+}
+
+// probeWritable reports whether a marker file can be created, written,
+// and removed inside root. Any failure leaves the root reported as not
+// writable; diagnostics are intentionally coarse because the fix lives in
+// node configuration, not in the file contents.
+func probeWritable(root string) bool {
+	file, err := os.CreateTemp(root, ".lmw-write-probe-*")
+	if err != nil {
+		return false
+	}
+	_, writeErr := file.WriteString("lmw")
+	closeErr := file.Close()
+	removeErr := os.Remove(file.Name())
+	return writeErr == nil && closeErr == nil && removeErr == nil
 }
 
 // detectBackend classifies a cache root by its layout.

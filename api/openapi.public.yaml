@@ -1767,9 +1767,9 @@ components:
           items:
             type: string
           type: array
-        size_bytes:
-          format: int64
-          type: integer
+        writable:
+          description: Probed by the node agent through its own mount namespace. False means artifact fetches into this root will fail until the root is added to the agent service ReadWritePaths.
+          type: boolean
       required:
         - path
         - backend

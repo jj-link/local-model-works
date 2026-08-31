@@ -353,13 +353,16 @@ components:
           type: string
         backend:
           type: string
-        size_bytes:
-          type: integer
-          format: int64
         repositories:
           type: array
           items:
             type: string
+        writable:
+          type: boolean
+          description: >-
+            Probed by the node agent through its own mount namespace. False
+            means artifact fetches into this root will fail until the root is
+            added to the agent service ReadWritePaths.
 
     Accelerator:
       type: object

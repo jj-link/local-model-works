@@ -1009,8 +1009,8 @@ export interface components {
             backend: string;
             path: string;
             repositories?: string[];
-            /** Format: int64 */
-            size_bytes?: number;
+            /** @description Probed by the node agent through its own mount namespace. False means artifact fetches into this root will fail until the root is added to the agent service ReadWritePaths. */
+            writable?: boolean;
         };
         CertificateInfo: {
             /** Format: date-time */

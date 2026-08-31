@@ -65,6 +65,14 @@ func TestInstallWritesEnvironmentUnitAndUserDropIn(t *testing.T) {
 	if err != nil || string(dropIn) != "[Service]\nUser=operator\n" {
 		t.Fatalf("drop-in = %q, err=%v", dropIn, err)
 	}
+	cacheDropIn, err := os.ReadFile(filepath.Join(systemdRoot, "local-model-works-agent.service.d", "20-cache-roots.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCacheDropIn := "[Service]\nReadWritePaths=\"/srv/models\"\nReadWritePaths=\"/home/operator/.cache/huggingface\"\n"
+	if string(cacheDropIn) != wantCacheDropIn {
+		t.Fatalf("cache-root drop-in = %q, want %q", cacheDropIn, wantCacheDropIn)
+	}
 }
 
 func TestInstallRejectsUnsafeInputs(t *testing.T) {
