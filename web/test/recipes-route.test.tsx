@@ -217,7 +217,7 @@ describe("RecipesRoute repository catalog", () => {
     expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
   });
 
-  it("opens a compact installed launcher and auto-plans the recipe defaults", async () => {
+  it("opens a compact installed launcher and plans after explicit target selection", async () => {
     installCatalogHandlers();
     const planBodies: Record<string, unknown>[] = [];
     server.use(
@@ -273,7 +273,12 @@ describe("RecipesRoute repository catalog", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Launch MiaAI-Lab/beta-recipe" });
     expect(within(dialog).getByText("Target")).toBeInTheDocument();
-    expect(within(dialog).getByText("spark1:8000/v1")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Launch" })).toBeDisabled();
+    expect(within(dialog).queryByText(/fabric|images|storage|risk|transfer/i)).not.toBeInTheDocument();
+
+    await user.selectOptions(within(dialog).getByLabelText("Target"), "node-1");
+
+    expect(await within(dialog).findByText("spark1:8000/v1")).toBeInTheDocument();
     expect(within(dialog).getByText("Installed")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Launch" })).toBeEnabled();
     expect(within(dialog).queryByText(/^Settings/)).not.toBeInTheDocument();
@@ -282,6 +287,7 @@ describe("RecipesRoute repository catalog", () => {
       recipe_digest: betaDigest,
       variants: { model: "managed" },
       parameters: { kv_cache_dtype: "fp8_e4m3" },
+      placements: [{ rank: 0, node_id: "node-1" }],
     }));
   });
 

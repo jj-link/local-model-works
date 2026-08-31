@@ -141,7 +141,7 @@ function installHandlers(
 }
 
 describe("PlanDeploymentDialog", () => {
-  it("auto-plans and launches a profile-less multi-node recipe", async () => {
+  it("plans and launches a profile-less multi-node recipe", async () => {
     let createBody: Record<string, unknown> | undefined;
     installHandlers(undefined, (body) => { createBody = body; });
     const user = userEvent.setup();
@@ -154,6 +154,11 @@ describe("PlanDeploymentDialog", () => {
     expect(await screen.findByLabelText("Rank 0 node")).toBeInTheDocument();
     expect(screen.getByLabelText("Rank 1 node")).toBeInTheDocument();
     expect(screen.queryByText(/^Settings/)).not.toBeInTheDocument();
+    expect(screen.getByText("Select target nodes")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Rank 0 node"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+
     expect(await screen.findByText("Installed")).toBeInTheDocument();
     const launch = await screen.findByRole("button", { name: "Launch" });
     await waitFor(() => expect(launch).toBeEnabled());
@@ -163,6 +168,7 @@ describe("PlanDeploymentDialog", () => {
       recipe_digest: D,
       parameters: {},
       variants: {},
+      plan_digest: plan.plan_digest,
       placements: [
         { rank: 0, node_id: "n-spark2" },
         { rank: 1, node_id: "n-spark3" },
@@ -170,7 +176,7 @@ describe("PlanDeploymentDialog", () => {
     }));
   });
 
-  it("auto-plans explicit node overrides", async () => {
+  it("holds planning until every rank has an explicit node", async () => {
     const planBodies: Record<string, unknown>[] = [];
     installHandlers((body) => {
       planBodies.push(body);
@@ -182,11 +188,20 @@ describe("PlanDeploymentDialog", () => {
     const recipeSelect = await screen.findByLabelText("Recipe");
     await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
     await user.selectOptions(recipeSelect, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark3");
 
-    await waitFor(() => expect(planBodies.at(-1)?.placements).toEqual([
+    const rankZero = await screen.findByLabelText("Rank 0 node");
+    await user.selectOptions(rankZero, "n-spark3");
+    await waitFor(() =>
+      expect((screen.getByLabelText("Rank 1 node") as HTMLSelectElement).options).toHaveLength(4),
+    );
+    expect(planBodies).toHaveLength(0);
+
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
+    await waitFor(() => expect(planBodies).toHaveLength(1));
+    expect(planBodies[0].placements).toEqual([
       { rank: 0, node_id: "n-spark3" },
-    ]));
+      { rank: 1, node_id: "n-spark2" },
+    ]);
   });
 
   it("shows the blocking diagnostic without exposing plan internals", async () => {
@@ -206,6 +221,8 @@ describe("PlanDeploymentDialog", () => {
     const recipeSelect = await screen.findByLabelText("Recipe");
     await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
     await user.selectOptions(recipeSelect, D);
+    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
+    await user.selectOptions(await screen.findByLabelText("Rank 1 node"), "n-spark3");
 
     expect(await screen.findByText("no eligible node for rank 0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
@@ -230,7 +247,11 @@ describe("PlanDeploymentDialog", () => {
         resource: "node:n-spark2",
       }],
     }));
+    const user = userEvent.setup();
     renderDialog(true, D);
+
+    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
+    await user.selectOptions(await screen.findByLabelText("Rank 1 node"), "n-spark3");
 
     expect(await screen.findByText("cache root is read-only")).toBeInTheDocument();
     expect(screen.getByText("ReadWritePaths=/var/lib/local-model-works/cache")).toBeInTheDocument();
@@ -257,5 +278,34 @@ describe("PlanDeploymentDialog", () => {
     view.rerenderDialog(false, D);
     view.rerenderDialog(true, D);
     await waitFor(() => expect(screen.getByLabelText("Rank 0 node")).toHaveValue(""));
+  });
+
+  it("requires an explicit target for single-node recipes", async () => {
+    const planBodies: Record<string, unknown>[] = [];
+    installHandlers((body) => {
+      planBodies.push(body);
+      return {
+        ...plan,
+        placements: [{ node_id: "n-spark3", node_name: "spark3", rank: 0, accelerator_index: 0 }],
+      };
+    });
+    server.use(
+      http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
+        ...recipeDetail,
+        compatibility: { ...recipe.compatibility, nodeCount: 1 },
+      })),
+    );
+    const user = userEvent.setup();
+    renderDialog(true, D);
+
+    const target = await screen.findByLabelText("Target");
+    expect(target).toHaveValue("");
+    expect(screen.getByText("Select node")).toBeInTheDocument();
+    await waitFor(() => expect((target as HTMLSelectElement).options).toHaveLength(4));
+    expect(planBodies).toHaveLength(0);
+
+    await user.selectOptions(target, "n-spark3");
+    await waitFor(() => expect(planBodies).toHaveLength(1));
+    expect(planBodies[0].placements).toEqual([{ rank: 0, node_id: "n-spark3" }]);
   });
 });

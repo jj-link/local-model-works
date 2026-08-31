@@ -255,20 +255,22 @@ export function PlanDeploymentDialog({
 
   useEffect(() => {
     if (!open || !recipeDigest || !recipeDetail || !nodes || detailFetching) return;
-    const placements = Object.entries(nodeOverrides)
-      .filter(([, nodeId]) => nodeId)
-      .map(([rank, node_id]) => ({ rank: Number(rank), node_id }));
+    const placements = Array.from({ length: nodeCount }, (_, rank) => ({
+      rank,
+      node_id: nodeOverrides[rank] ?? "",
+    }));
+    if (placements.some((placement) => !placement.node_id)) return;
     const request = selectedProfileId
       ? {
           recipe_digest: recipeDigest,
           launch_profile_id: selectedProfileId,
-          ...(placements.length > 0 ? { placements } : {}),
+          placements,
         }
       : {
           recipe_digest: recipeDigest,
           variants: variantChoices,
           parameters: parameterChoices,
-          ...(placements.length > 0 ? { placements } : {}),
+          placements,
         };
     const key = JSON.stringify(request);
     if (autoPreviewKey.current === key) return;
@@ -276,6 +278,7 @@ export function PlanDeploymentDialog({
     void planMutation.mutateAsync(request).catch(() => undefined);
   }, [
     detailFetching,
+    nodeCount,
     nodeOverrides,
     nodes,
     open,
@@ -349,9 +352,12 @@ export function PlanDeploymentDialog({
     0,
   );
   const hasUnknownDownload = originDownloads.some((transfer) => transfer.bytes == null);
-  const targetLabel = plan?.placements?.length
-    ? plan.placements.map((placement) => placement.node_name ?? placement.node_id).join(", ")
-    : "Checking compatible nodes…";
+  const selectedTargets = Array.from({ length: nodeCount }, (_, rank) =>
+    (nodes ?? []).find((node) => node.id === nodeOverrides[rank]),
+  ).filter((node) => node !== undefined);
+  const targetLabel =
+    selectedTargets.map((node) => node.display_name).join(", ") ||
+    (nodeCount === 1 ? "Select node" : "Select target nodes");
   const readonlyDiagnostic = plan?.diagnostics?.find(
     (diagnostic) => diagnostic.code === "storage.cache_root_readonly",
   );
@@ -437,6 +443,7 @@ export function PlanDeploymentDialog({
                   value={nodeOverrides[0] ?? ""}
                   onChange={(event) => {
                     setNodeOverrides(event.target.value ? { 0: event.target.value } : {});
+                    resetPlan();
                     autoPreviewKey.current = "";
                   }}
                 >
@@ -462,6 +469,8 @@ export function PlanDeploymentDialog({
               <span className="lmw-label">Preparation</span>
               {planMutation.isPending || detailFetching ? (
                 <span className="text-sm text-muted">Checking…</span>
+              ) : !plan ? (
+                <span className="text-sm text-muted">—</span>
               ) : originDownloads.length > 0 ? (
                 <span className="flex items-center gap-2 text-sm text-warn">
                   <Download className="h-4 w-4" aria-hidden />
@@ -507,10 +516,11 @@ export function PlanDeploymentDialog({
                         ...current,
                         [rank]: event.target.value,
                       }));
+                      resetPlan();
                       autoPreviewKey.current = "";
                     }}
                   >
-                    <option value="">Automatic</option>
+                    <option value="">Select node</option>
                     {(nodes ?? []).map((node) => {
                       const reason = nodeReason(node, rank);
                       return (
