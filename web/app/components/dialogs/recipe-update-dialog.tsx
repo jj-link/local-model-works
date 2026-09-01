@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import {
@@ -11,6 +12,7 @@ import {
 } from "~/components/ui/dialog";
 import { Button } from "~/components/ui/button";
 import {
+  qk,
   usePlanRecipeRepositoryUpdate,
   useRecipeRepository,
   useRun,
@@ -54,14 +56,19 @@ export function RecipeUpdateDialog({
   const planMutation = usePlanRecipeRepositoryUpdate();
   const startMutation = useStartRecipeRepositoryUpdate();
   const [runId, setRunId] = useState<string>();
+  const queryClient = useQueryClient();
   const runQuery = useRun(runId);
   const plannedKey = useRef("");
+  const targetCommit = useRef("");
+  const reconciledRun = useRef("");
   const resetPlan = planMutation.reset;
   const resetStart = startMutation.reset;
 
   useEffect(() => {
     if (!open) {
       plannedKey.current = "";
+      targetCommit.current = "";
+      reconciledRun.current = "";
       setRunId(undefined);
       resetPlan();
       resetStart();
@@ -100,6 +107,23 @@ export function RecipeUpdateDialog({
   const runState = runQuery.data?.state;
   const succeeded = runState === "succeeded";
   const failed = runState !== undefined && TERMINAL.has(runState) && !succeeded;
+  const installedCommit = repositoryQuery.data?.installed_commit;
+  const installedTarget =
+    succeeded &&
+    Boolean(
+      installedCommit &&
+      targetCommit.current &&
+      installedCommit.toLowerCase() === targetCommit.current.toLowerCase(),
+    );
+
+  useEffect(() => {
+    if (!succeeded || !runId || reconciledRun.current === runId) return;
+    reconciledRun.current = runId;
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.recipes }),
+      queryClient.invalidateQueries({ queryKey: qk.deployments }),
+    ]);
+  }, [queryClient, runId, succeeded]);
   const planDevices: ProgressDevice[] =
     planMutation.data?.installed_devices ?? repositoryQuery.data?.installed_devices ?? [];
   const planRunningDeployments: ProgressRunningDeployment[] =
@@ -110,6 +134,7 @@ export function RecipeUpdateDialog({
     const repository = repositoryQuery.data;
     const plan = planMutation.data;
     if (!repositoryId || !repository?.observed_head_commit || !plan) return;
+    targetCommit.current = repository.observed_head_commit;
     try {
       const accepted = await startMutation.mutateAsync({
         id: repositoryId,
@@ -271,6 +296,21 @@ export function RecipeUpdateDialog({
             {planMutation.data && !planMutation.data.ready ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" role="alert">
                 {(planMutation.data.diagnostics ?? []).map((diagnostic) => diagnostic.message).join(" · ") || "The update plan is not ready."}
+              </div>
+            ) : null}
+            {succeeded ? (
+              <div className="rounded-md border border-ok/40 bg-ok/5 p-3 text-sm" role="status">
+                {installedTarget ? (
+                  <>
+                    <p className="font-medium">Installed source revision {installedCommit?.slice(0, 12)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Version {repositoryQuery.data?.current_recipe?.version ?? "not reported"} is declared by the recipe.
+                      The source commit and recipe digest identify this update even when that version label is unchanged.
+                    </p>
+                  </>
+                ) : (
+                  <p>Refreshing the installed recipe revision…</p>
+                )}
               </div>
             ) : null}
             {failed ? (

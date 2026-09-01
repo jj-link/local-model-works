@@ -13,6 +13,7 @@ const alphaDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const betaDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const gammaDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const glmDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const updatedAlphaDigest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const alphaRepositoryId = "repo-alpha";
 
 const recipes = [
@@ -192,7 +193,7 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(alphaCard).getByText("2 nodes · RDMA fabric")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Recipe ready on 2 nodes")).toBeInTheDocument();
     expect(within(alphaCard).getByText("Launch →")).toBeInTheDocument();
-    expect(within(alphaCard).getByText(/2\.0\.0 · sha256:aaaaa… · MIT/)).toBeInTheDocument();
+    expect(within(alphaCard).getByText(/2\.0\.0 · commit 11111111… · sha256:aaaaa… · MIT/)).toBeInTheDocument();
     expect(within(alphaCard).getByLabelText("git source")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update recipe" })).toBeInTheDocument();
 
@@ -359,10 +360,33 @@ describe("RecipesRoute repository catalog", () => {
     expect(within(resumedImport).getByText("compiled · launchable")).toBeInTheDocument();
   });
   it("shows installed devices and confirms an update without running deployments", async () => {
+    let updateFinished = false;
+    const updatedRecipe = { ...repositories[0].current_recipe, digest: updatedAlphaDigest };
+    const updatedRepository = {
+      ...repositories[0],
+      current_recipe: updatedRecipe,
+      installed_commit: repositories[0].observed_head_commit,
+      update_available: false,
+      versions: [
+        ...repositories[0].versions,
+        {
+          recipe: updatedRecipe,
+          commit_sha: repositories[0].observed_head_commit,
+          canonical: true,
+          installed_at: "2026-01-05T00:00:00Z",
+        },
+      ],
+      updated_at: "2026-01-05T00:00:00Z",
+    };
     installCatalogHandlers();
     server.use(
+      http.get("*/api/v1/recipe-repositories", () =>
+        HttpResponse.json(updateFinished
+          ? [updatedRepository, ...repositories.slice(1)]
+          : repositories),
+      ),
       http.get(`*/api/v1/recipe-repositories/${alphaRepositoryId}`, () =>
-        HttpResponse.json(repositories[0]),
+        HttpResponse.json(updateFinished ? updatedRepository : repositories[0]),
       ),
       http.post(`*/api/v1/recipe-repositories/${alphaRepositoryId}/update/plan`, () =>
         HttpResponse.json({
@@ -380,8 +404,9 @@ describe("RecipesRoute repository catalog", () => {
         });
         return HttpResponse.json({ run_id: "run-empty-update" }, { status: 202 });
       }),
-      http.get("*/api/v1/runs/run-empty-update", () =>
-        HttpResponse.json({
+      http.get("*/api/v1/runs/run-empty-update", () => {
+        updateFinished = true;
+        return HttpResponse.json({
           id: "run-empty-update", module: "library", kind: "recipe-update", state: "succeeded",
           progress: {
             phase: "ready", total_devices: 2, completed_devices: 2,
@@ -390,8 +415,8 @@ describe("RecipesRoute repository catalog", () => {
             })),
             total_running_targets: 0, completed_running_targets: 0, running_deployments: [],
           },
-        }),
-      ),
+        });
+      }),
     );
     const user = userEvent.setup();
     renderCatalog();
@@ -411,6 +436,14 @@ describe("RecipesRoute repository catalog", () => {
     await user.click(updateButton);
     expect(await screen.findByRole("heading", { name: "Update complete" })).toBeInTheDocument();
     expect(screen.getByText("2 of 2 devices updated")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Installed source revision 222222222222")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Version 2\.0\.0 is declared by the recipe/)).toBeInTheDocument();
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Update complete" })).not.toBeInTheDocument());
+    const updatedCard = screen.getByRole("button", { name: "Launch MiaAI-Lab/alpha-recipe" });
+    expect(within(updatedCard).getByText("Up to date")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update recipe" })).not.toBeInTheDocument();
+    expect(within(updatedCard).getByText(/2\.0\.0 · commit 22222222… · sha256:eeeee… · MIT/)).toBeInTheDocument();
   });
 
   it("shows exact hardware and advances persisted update progress to completion", async () => {

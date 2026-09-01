@@ -3,7 +3,7 @@ import { useCheckRecipeUpdates, useRecipeRepositories } from "~/lib/queries";
 import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { RecipeUpdateDialog } from "~/components/dialogs/recipe-update-dialog";
-import { shortDigest } from "~/lib/format";
+import { shortDigest, shortId } from "~/lib/format";
 import type { Recipe, RecipeRepository } from "~/lib/api";
 import { toast } from "sonner";
 import "./catalog.css";
@@ -212,7 +212,7 @@ export default function RecipesRoute() {
                         <span className="sample-a-upd">Launch →</span>
                       </span>
                       <span className="sample-a-meta">
-                        {recipe.version} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
+                        {recipe.version} · commit {shortId(repository.installed_commit)} · {shortDigest(recipe.digest)} · {recipe.license || "License not reported"}
                       </span>
                     </button>
                     {installedCount > 0 && repository.update_available && repository.update_supported ? (
