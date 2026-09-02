@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/recipe"
@@ -16,11 +17,12 @@ import (
 )
 
 const (
-	QwenRepositoryURL         = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
-	DeepSeekRepositoryURL     = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
-	GLM53RepositoryURL        = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
-	GLM53NVFP4RepositoryURL   = "https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark"
-	QwenDGXSparkRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark"
+	QwenRepositoryURL          = "https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark"
+	DeepSeekRepositoryURL      = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
+	GLM53RepositoryURL         = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
+	GLM53NVFP4RepositoryURL    = "https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark"
+	QwenDGXSparkRepositoryURL  = "https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark"
+	QwenFlashNextRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks"
 )
 
 const qwenManagedLicense = "patch/sglang/LICENSE"
@@ -54,14 +56,16 @@ func NewRegistry(validator *recipe.Validator) *Registry {
 	glm53ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53RepositoryURL, Path: "."})
 	glm53NVFP4ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53NVFP4RepositoryURL, Path: "."})
 	qwenDGXID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenDGXSparkRepositoryURL, Path: "."})
+	qwenFlashNextID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenFlashNextRepositoryURL, Path: "."})
 	return &Registry{
 		validator: validator,
 		drivers: map[string]Compiler{
-			qwenID:       &MiaQwenSGLangCompiler{validator: validator},
-			deepSeekID:   &MiaDeepSeekDSparkCompiler{validator: validator},
-			glm53ID:      &MiaGLM53EXL3Compiler{validator: validator},
-			glm53NVFP4ID: &TonyGLM53NVFP4Compiler{validator: validator},
-			qwenDGXID:    &MiaQwenDGXSparkCompiler{validator: validator},
+			qwenID:          &MiaQwenSGLangCompiler{validator: validator},
+			deepSeekID:      &MiaDeepSeekDSparkCompiler{validator: validator},
+			glm53ID:         &MiaGLM53EXL3Compiler{validator: validator},
+			glm53NVFP4ID:    &TonyGLM53NVFP4Compiler{validator: validator},
+			qwenDGXID:       &MiaQwenDGXSparkCompiler{validator: validator},
+			qwenFlashNextID: &MiaQwenFlashNextCompiler{validator: validator},
 		},
 	}
 }
@@ -116,7 +120,7 @@ type MiaQwenDGXSparkCompiler struct {
 	validator *recipe.Validator
 }
 
-func (c *MiaQwenDGXSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+func (c *MiaQwenDGXSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
 	root, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, err
@@ -127,7 +131,32 @@ func (c *MiaQwenDGXSparkCompiler) Compile(_ context.Context, source recipe.Repos
 			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
 		}
 	}
-	return compileManagedAssets(source, checkout, "qwen38-27b-dgx-spark-mtp", nil, false, c.validator)
+	return compileManagedAssets(source, checkout, "qwen38-27b-dgx-spark-mtp", nil, false, previous, c.validator)
+}
+
+// MiaQwenFlashNextCompiler maps the upstream imperative dual-Spark
+// distribution to a declarative two-node LMW workload. The upstream PLE FP8
+// patch file is packaged verbatim from the pinned commit; the reviewed
+// start/stop scripts are required for layout drift detection but never
+// executed.
+type MiaQwenFlashNextCompiler struct {
+	validator *recipe.Validator
+}
+
+func (c *MiaQwenFlashNextCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	root, err := checkoutPath(checkout, source.Path)
+	if err != nil {
+		return nil, err
+	}
+	for _, required := range []string{"README.md", ".env.sample", "start.sh", "files/ple_layer_patched.py"} {
+		info, statErr := os.Lstat(filepath.Join(root, required))
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
+		}
+	}
+	return compileManagedAssets(source, checkout, "qwen38-flash-next-dspark-tp2", func(asset string) bool {
+		return strings.HasPrefix(asset, "files/")
+	}, false, previous, c.validator)
 }
 
 // MiaQwenSGLangCompiler combines the controller-owned runtime template with
@@ -136,8 +165,8 @@ type MiaQwenSGLangCompiler struct {
 	validator *recipe.Validator
 }
 
-func (c *MiaQwenSGLangCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	return compileManaged(source, checkout, "qwen38-27b-rtx6000pro-dflash2", true, c.validator)
+func (c *MiaQwenSGLangCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	return compileManaged(source, checkout, "qwen38-27b-rtx6000pro-dflash2", true, previous, c.validator)
 }
 
 // MiaDeepSeekDSparkCompiler retains the declarative two-node runtime contract
@@ -146,7 +175,7 @@ type MiaDeepSeekDSparkCompiler struct {
 	validator *recipe.Validator
 }
 
-func (c *MiaDeepSeekDSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+func (c *MiaDeepSeekDSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
 	root, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, err
@@ -157,7 +186,9 @@ func (c *MiaDeepSeekDSparkCompiler) Compile(_ context.Context, source recipe.Rep
 			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
 		}
 	}
-	return compileManaged(source, checkout, "deepseek-v4-flash-0731-dspark-tp2", false, c.validator)
+	return compileManagedAssets(source, checkout, "deepseek-v4-flash-vision-exp-dspark-tp2", func(asset string) bool {
+		return strings.HasPrefix(asset, "patches/")
+	}, false, previous, c.validator)
 }
 
 // MiaGLM53EXL3Compiler maps the upstream two-Spark shell distribution to a
@@ -167,7 +198,7 @@ type MiaGLM53EXL3Compiler struct {
 	validator *recipe.Validator
 }
 
-func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
 	root, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, err
@@ -187,6 +218,7 @@ func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.Reposito
 			return ok
 		},
 		false,
+		previous,
 		c.validator,
 	)
 }
@@ -199,7 +231,7 @@ type TonyGLM53NVFP4Compiler struct {
 	validator *recipe.Validator
 }
 
-func (c *TonyGLM53NVFP4Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, _ *recipe.RecipeDetail) (*recipe.PackResult, error) {
+func (c *TonyGLM53NVFP4Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
 	root, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, err
@@ -224,21 +256,22 @@ func (c *TonyGLM53NVFP4Compiler) Compile(_ context.Context, source recipe.Reposi
 			return ok
 		},
 		false,
+		previous,
 		c.validator,
 	)
 }
 
-func compileManaged(source recipe.RepositorySource, checkout, template string, upstreamPatches bool, validator *recipe.Validator) (*recipe.PackResult, error) {
+func compileManaged(source recipe.RepositorySource, checkout, template string, upstreamPatches bool, previous *recipe.RecipeDetail, validator *recipe.Validator) (*recipe.PackResult, error) {
 	var upstreamAsset func(string) bool
 	if upstreamPatches {
 		upstreamAsset = func(asset string) bool {
 			return strings.HasPrefix(asset, "patch/sglang/") && asset != qwenManagedLicense
 		}
 	}
-	return compileManagedAssets(source, checkout, template, upstreamAsset, upstreamPatches, validator)
+	return compileManagedAssets(source, checkout, template, upstreamAsset, upstreamPatches, previous, validator)
 }
 
-func compileManagedAssets(source recipe.RepositorySource, checkout, template string, upstreamAsset func(string) bool, rejectUnexpectedPatches bool, validator *recipe.Validator) (*recipe.PackResult, error) {
+func compileManagedAssets(source recipe.RepositorySource, checkout, template string, upstreamAsset func(string) bool, rejectUnexpectedPatches bool, previous *recipe.RecipeDetail, validator *recipe.Validator) (*recipe.PackResult, error) {
 	manifestBytes, err := recipeassets.Templates.ReadFile(template + "/recipe.yaml")
 	if err != nil {
 		return nil, err
@@ -251,6 +284,11 @@ func compileManagedAssets(source recipe.RepositorySource, checkout, template str
 	if err != nil {
 		return nil, err
 	}
+	version, err := nextManagedVersion(manifest.Metadata.Version, previous)
+	if err != nil {
+		return nil, err
+	}
+	manifest.Metadata.Version = version
 	manifest.Metadata.Source = &recipe.Source{URL: source.URL, Path: source.Path, Revision: source.CommitSHA}
 	if err := validatePinnedManifest(manifest); err != nil {
 		return nil, err
@@ -307,6 +345,54 @@ func compileManagedAssets(source recipe.RepositorySource, checkout, template str
 		"localmodelworks.repository.tree":   source.TreeSHA,
 		"localmodelworks.compiler":          template + "@1",
 	})
+}
+
+func nextManagedVersion(templateVersion string, previous *recipe.RecipeDetail) (string, error) {
+	if previous == nil {
+		return templateVersion, nil
+	}
+	template, err := parseManagedVersion(templateVersion)
+	if err != nil {
+		return "", fmt.Errorf("parse managed recipe template version %q: %w", templateVersion, err)
+	}
+	current, err := parseManagedVersion(previous.Version)
+	if err != nil {
+		return "", fmt.Errorf("parse previous managed recipe version %q: %w", previous.Version, err)
+	}
+	current[2]++
+	if compareManagedVersions(template, current) > 0 {
+		current = template
+	}
+	return fmt.Sprintf("%d.%d.%d", current[0], current[1], current[2]), nil
+}
+
+func parseManagedVersion(version string) ([3]int, error) {
+	var parsed [3]int
+	core := strings.SplitN(strings.SplitN(version, "+", 2)[0], "-", 2)[0]
+	parts := strings.Split(core, ".")
+	if len(parts) != len(parsed) {
+		return parsed, fmt.Errorf("expected major.minor.patch")
+	}
+	for index, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 {
+			return parsed, fmt.Errorf("invalid numeric component %q", part)
+		}
+		parsed[index] = value
+	}
+	return parsed, nil
+}
+
+func compareManagedVersions(a, b [3]int) int {
+	for index := range a {
+		if a[index] < b[index] {
+			return -1
+		}
+		if a[index] > b[index] {
+			return 1
+		}
+	}
+	return 0
 }
 
 func validatePinnedManifest(manifest *recipe.Manifest) error {

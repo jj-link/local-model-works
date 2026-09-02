@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "api": "openai-completions",
-  "input": ["text"],
+  "input": ["text", "image"],
   "max_output_tokens": 393216,
   "quantization": {
     "weights": "FP8"
@@ -14,7 +14,7 @@
     "supported": true,
     "can_disable": true,
     "levels": ["high", "max"],
-    "default": "high",
+    "default": "max",
     "request_format": "qwen-chat-template",
     "response_field": "reasoning_content"
   }

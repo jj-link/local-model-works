@@ -1,16 +1,20 @@
 apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
-  name: deepseek-v4-flash-0731-dspark-tp2
-  version: 1.0.0
-  model: DeepSeek V4 Flash
+  name: deepseek-v4-flash-vision-exp-dspark-tp2
+  version: "1.1.0"
+  model: DeepSeek V4 Flash Vision
   engine: vllm
   description: >-
     Two-node GB10 (DGX Spark) vLLM TP=2 with DSpark speculative decoding for
-    deepseek-ai/DeepSeek-V4-Flash-0731. 1M-token ceiling, nvfp4_ds_mla KV cache,
-    RoCE fabric between the two ranks. Head node serves the OpenAI API on :8888;
-    the worker rank is headless. Sourced from
-    MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark.
+    deepseek-ai/DeepSeek-V4-Flash-Vision-Exp. 1M-token ceiling, nvfp4_ds_mla KV
+    cache, native image input (image_url, up to 8 images per request), RoCE
+    fabric between the two ranks. Applies the upstream Vision-Exp overlay and
+    encoder-output hotfixes at container boot and serves the checkpoint's
+    encoder; remaining upstream shell hotfixes are omitted as in version 1.0.0.
+    The gated uncensored checkpoint variant is intentionally not offered. Head
+    node serves the OpenAI API on :8888; the worker rank is headless. Sourced
+    from MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark.
   license: MIT
   source:
     url: https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark
@@ -31,9 +35,9 @@ artifacts:
     kind: model
     source:
       type: huggingface
-      identity: hf://deepseek-ai/DeepSeek-V4-Flash-0731
-      revision: "9e165c30e2704aec5d9d593cce3eebd58bbef1cb"
-    mount: /models/hub/models--deepseek-ai--DeepSeek-V4-Flash-0731
+      identity: hf://deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
+      revision: "86f746b36186f0e567729a5c06a8c918caba82a9"
+    mount: /models/hub/models--deepseek-ai--DeepSeek-V4-Flash-Vision-Exp
     validation: snapshot
 workloads:
   - match:
@@ -58,21 +62,21 @@ workloads:
       MASTER_PORT: "25000"
       # model / serve
       MODEL_PATH: "${artifact.model.path}"
-      SERVED: "deepseek-v4-flash-0731"
+      SERVED: "deepseek-v4-flash-vision-exp"
       API_HOST: "0.0.0.0"
       API_PORT: "8888"
       MAX_MODEL_LEN: "1048576"
       MAX_NUM_SEQS: "6"
       MAX_NUM_BATCHED_TOKENS: "8192"
       LONG_PREFILL_TOKEN_THRESHOLD: "1024"
-      MTP_NUM_TOKENS: "5"
-      KV_CACHE_DTYPE: "fp8_ds_mla"
+      MTP_NUM_TOKENS: "6"
+      KV_CACHE_DTYPE: "nvfp4_ds_mla"
       GPU_MEMORY_UTILIZATION: "0.85"
       CUDA_VISIBLE_DEVICES: "0"
       # capability profile + custom vllm modules (recipe assets)
-      PYTHONPATH: "/lmw/assets"
+      PYTHONPATH: "/lmw/assets/patches:/lmw/assets"
       DGX_MODEL_CAPABILITIES_PATH: "/lmw/assets/capabilities.json"
-      DGX_MODEL_CAPABILITIES_SHA256: "c68f3bf45b65f1896f01330e97ff54fa35048a7bb8550f1f6bf8fb6a97251785"
+      DGX_MODEL_CAPABILITIES_SHA256: "37c875792727c52a4ad8f8822794e17c6128d35491e0bf2b19a134cd973d4765"
       # NCCL / RoCE fabric
       VLLM_HOST_IP: "${node.address}"
       GLOO_SOCKET_IFNAME: "enp1s0f1np1"
@@ -145,10 +149,26 @@ workloads:
       - devices.rdma
       - network.host
       - memory.shm-large
+      - rootfs.write
     ports:
       - container: 8888
         host: 8888
         protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      intervalSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 30
+    verify:
+      expect:
+        statusCode: 200
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
     resources:
       cpu: 16
       memoryBytes: 103079215104
@@ -160,3 +180,11 @@ assets:
   - model_capabilities.py
   - decode_aware_scheduler.py
   - capabilities.json
+  - patches/hotfix-encoding-dsv4-issue21.py
+  - patches/hotfix-dsv4-vision-exp.py
+  - patches/hotfix-vllm-empty-encoder-output.py
+  - patches/vision_exp/__init__.py
+  - patches/vision_exp/apply.py
+  - patches/vision_exp/image_processor.py
+  - patches/vision_exp/processor.py
+  - patches/vision_exp/vision.py

@@ -1,0 +1,150 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: qwen38-flash-next-dspark-tp2
+  version: 1.0.0
+  model: Qwen3.8 Flash Next
+  engine: vllm
+  description: >-
+    Two-node GB10 (DGX Spark) vLLM TP=2 with expert parallelism and MTP-3
+    speculative decoding for RadixArk/Qwen3.8-Flash-Next-NVFP4. Native 262K
+    context extended to 1M with YaRN (factor 4.0), NVFP4 MoE via FlashInfer
+    CUTLASS with the upstream PLE FP8 patch applied at boot, 8192-token
+    prefill chunks, reasoning and tool calling, RoCE fabric between the two
+    ranks. Head node serves the OpenAI API on :8888; the worker rank is
+    headless and starts first. Sourced from
+    MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks.
+  license: MIT
+  source:
+    url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks
+    revision: "169fbad266f2791335a3102f0d3d625e7c295563"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts:
+  - name: model
+    kind: model
+    sizeBytes: 135253622894
+    source:
+      type: huggingface
+      identity: hf://RadixArk/Qwen3.8-Flash-Next-NVFP4
+      revision: "7b719225242aacd3dbd3f9407468c2ee9a9d2594"
+    mount: /models/hub/models--RadixArk--Qwen3.8-Flash-Next-NVFP4
+    validation: snapshot
+workloads:
+  - match:
+      nodeCount: 2
+      accelerator:
+        vendor: nvidia
+    image:
+      reference: vllm/vllm-openai@sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8
+      digest: sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8
+    command:
+      - /bin/bash
+      - /lmw/assets/serve.sh
+    args: []
+    ranks:
+      - 0
+      - 1
+    startOrder: workers-first
+    env:
+      # rank / distributed wiring
+      NODE_RANK: "${node.rank}"
+      WORLD_SIZE: "2"
+      MASTER_ADDR: "${fabric.address}"
+      MASTER_PORT: "50000"
+      # model / serve
+      MODEL_PATH: "${artifact.model.path}"
+      SERVED: "qwen3.8-flash-next"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8888"
+      MAX_MODEL_LEN: "1000000"
+      MAX_NUM_SEQS: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MTP_NUM_SPECULATIVE_TOKENS: "3"
+      YARN_FACTOR: "4.0"
+      KV_CACHE_DTYPE: "auto"
+      GPU_MEMORY_UTILIZATION: "0.835"
+      PLE_QUANT_OVERRIDE: "fp8"
+      CUDA_VISIBLE_DEVICES: "0"
+      # capability profile of the upstream PLE patch
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      # NCCL / RoCE fabric (cluster-proven values, identical to the DeepSeek recipe)
+      VLLM_HOST_IP: "${node.address}"
+      GLOO_SOCKET_IFNAME: "enp1s0f1np1"
+      TP_SOCKET_IFNAME: "enp1s0f1np1"
+      NCCL_SOCKET_IFNAME: "enp1s0f1np1"
+      NCCL_IB_HCA: "rocep1s0f1"
+      NCCL_IB_GID_INDEX: "5"
+      NCCL_IB_ADDR_FAMILY: "AF_INET"
+      NCCL_IB_ROCE_VERSION_NUM: "2"
+      NCCL_IB_DISABLE: "0"
+      NCCL_NET: "IB"
+      NCCL_CROSS_NIC: "1"
+      NCCL_NVLS_ENABLE: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: "INFO"
+      # CUDA / arch
+      TORCH_CUDA_ARCH_LIST: "12.1a"
+      FLASHINFER_CUDA_ARCH_LIST: "12.1a"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      VLLM_USE_FLASHINFER_SAMPLER: "1"
+      # offline HF (model artifact is pre-placed by LMW)
+      HF_HOME: "/models/hub"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # writable scratch
+      HOME: "/tmp/home"
+      NUMBA_CACHE_DIR: "/tmp/numba"
+      TRITON_CACHE_DIR: "/tmp/triton"
+      XDG_CACHE_HOME: "/tmp/cache"
+      VLLM_CACHE_ROOT: "/tmp/vllm-cache"
+    devices:
+      accelerator:
+        all: true
+      rdma:
+        all: true
+    networkMode: host
+    permissions:
+      - devices.rdma
+      - network.host
+      - memory.shm-large
+      - rootfs.write
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    resources:
+      cpu: 16
+      memoryBytes: 103079215104
+      shmBytes: 34359738368
+      tmpfsBytes: 8589934592
+      pids: 8192
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      intervalSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 30
+    verify:
+      expect:
+        statusCode: 200
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+assets:
+  - serve.sh
+  - files/ple_layer_patched.py

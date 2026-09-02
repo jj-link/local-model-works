@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -196,11 +197,64 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, name := range []string{
+		"patches/hotfix-encoding-dsv4-issue21.py",
+		"patches/hotfix-dsv4-vision-exp.py",
+		"patches/hotfix-vllm-empty-encoder-output.py",
+		"patches/vision_exp/__init__.py",
+		"patches/vision_exp/apply.py",
+		"patches/vision_exp/image_processor.py",
+		"patches/vision_exp/processor.py",
+		"patches/vision_exp/vision.py",
+	} {
+		target := filepath.Join(deepCheckout, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("# reviewed upstream patch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	deepSource := recipe.RepositorySource{
 		RepositoryID: repositoryID(t, DeepSeekRepositoryURL), URL: DeepSeekRepositoryURL, Path: ".",
 		CommitSHA: strings.Repeat("c", 40), TreeSHA: strings.Repeat("d", 40),
 	}
-	assertDeterministic(t, &MiaDeepSeekDSparkCompiler{validator: validator}, deepSource, deepCheckout)
+	deepCompiler := &MiaDeepSeekDSparkCompiler{validator: validator}
+	assertDeterministic(t, deepCompiler, deepSource, deepCheckout)
+	compiledDeep, err := deepCompiler.Compile(context.Background(), deepSource, deepCheckout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deepManifest, err := recipe.Parse(compiledDeep.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deepManifest.Metadata.Name != "deepseek-v4-flash-vision-exp-dspark-tp2" ||
+		deepManifest.Metadata.Version != "1.1.0" ||
+		deepManifest.Metadata.Model != "DeepSeek V4 Flash Vision" ||
+		len(deepManifest.Artifacts) != 1 ||
+		deepManifest.Artifacts[0].Source == nil ||
+		deepManifest.Artifacts[0].Source.Identity != "hf://deepseek-ai/DeepSeek-V4-Flash-Vision-Exp" ||
+		deepManifest.Artifacts[0].Source.Revision != "86f746b36186f0e567729a5c06a8c918caba82a9" ||
+		deepManifest.Artifacts[0].Mount != "/models/hub/models--deepseek-ai--DeepSeek-V4-Flash-Vision-Exp" {
+		t.Fatalf("managed DeepSeek Vision contract = %+v", deepManifest.Metadata)
+	}
+	deepWorkload := deepManifest.Workloads[0]
+	if deepWorkload.Env["KV_CACHE_DTYPE"] != "nvfp4_ds_mla" ||
+		deepWorkload.Env["MTP_NUM_TOKENS"] != "6" ||
+		deepWorkload.Env["SERVED"] != "deepseek-v4-flash-vision-exp" ||
+		deepWorkload.Env["PYTHONPATH"] != "/lmw/assets/patches:/lmw/assets" {
+		t.Fatalf("managed DeepSeek Vision env = %+v", deepWorkload.Env)
+	}
+	if !slices.Contains(deepManifest.Assets, "patches/hotfix-dsv4-vision-exp.py") {
+		t.Fatalf("DeepSeek Vision assets missing vision hotfix: %v", deepManifest.Assets)
+	}
+	if err := os.Remove(filepath.Join(deepCheckout, "patches", "vision_exp", "apply.py")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deepCompiler.Compile(context.Background(), deepSource, deepCheckout, nil); !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
+		t.Fatalf("DeepSeek Vision layout error = %v", err)
+	}
 
 	glmCheckout := t.TempDir()
 	for _, name := range []string{"Dockerfile", "start.sh", ".env.example"} {
@@ -242,6 +296,22 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 	}
 	if got := glmManifest.Workloads[0].Image.Digest; got != "sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58" {
 		t.Fatalf("GLM image digest = %q", got)
+	}
+	updatedGLMSource := glmSource
+	updatedGLMSource.CommitSHA = strings.Repeat("0", 40)
+	updatedGLMSource.TreeSHA = strings.Repeat("1", 40)
+	updatedGLM, err := glmCompiler.Compile(context.Background(), updatedGLMSource, glmCheckout, &recipe.RecipeDetail{
+		Recipe: recipe.Recipe{Version: glmManifest.Metadata.Version},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedGLMManifest, err := recipe.Parse(updatedGLM.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedGLMManifest.Metadata.Version != "1.0.1" {
+		t.Fatalf("managed GLM update version = %q, want 1.0.1", updatedGLMManifest.Metadata.Version)
 	}
 	if err := os.Remove(filepath.Join(glmCheckout, "overlay", "patch_glm5_drafter_group.py")); err != nil {
 		t.Fatal(err)
@@ -305,6 +375,74 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 	_, err = nvfp4Compiler.Compile(context.Background(), nvfp4Source, nvfp4Checkout, nil)
 	if !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
 		t.Fatalf("NVFP4 layout error = %v", err)
+	}
+
+	flashNextCheckout := t.TempDir()
+	for _, name := range []string{"README.md", ".env.sample", "start.sh", "files/ple_layer_patched.py"} {
+		target := filepath.Join(flashNextCheckout, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("# reviewed upstream contract\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flashNextSource := recipe.RepositorySource{
+		RepositoryID: repositoryID(t, QwenFlashNextRepositoryURL), URL: QwenFlashNextRepositoryURL, Path: ".",
+		CommitSHA: strings.Repeat("3", 40), TreeSHA: strings.Repeat("4", 40),
+	}
+	flashNextCompiler := &MiaQwenFlashNextCompiler{validator: validator}
+	assertDeterministic(t, flashNextCompiler, flashNextSource, flashNextCheckout)
+	compiledFlashNext, err := flashNextCompiler.Compile(context.Background(), flashNextSource, flashNextCheckout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flashNextManifest, err := recipe.Parse(compiledFlashNext.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flashNextManifest.Metadata.Name != "qwen38-flash-next-dspark-tp2" ||
+		flashNextManifest.Metadata.Version != "1.0.0" ||
+		flashNextManifest.Metadata.Model != "Qwen3.8 Flash Next" ||
+		flashNextManifest.Metadata.Engine != "vllm" ||
+		flashNextManifest.Metadata.License != "MIT" ||
+		flashNextManifest.Metadata.Source == nil ||
+		flashNextManifest.Metadata.Source.Revision != strings.Repeat("3", 40) ||
+		flashNextManifest.Compatibility.NodeCount != 2 ||
+		flashNextManifest.Compatibility.Fabric == nil ||
+		flashNextManifest.Compatibility.Fabric.Transport != "roce" {
+		t.Fatalf("managed Flash-Next contract = %+v", flashNextManifest.Metadata)
+	}
+	if len(flashNextManifest.Artifacts) != 1 ||
+		flashNextManifest.Artifacts[0].Source == nil ||
+		flashNextManifest.Artifacts[0].Source.Identity != "hf://RadixArk/Qwen3.8-Flash-Next-NVFP4" ||
+		flashNextManifest.Artifacts[0].Source.Revision != "7b719225242aacd3dbd3f9407468c2ee9a9d2594" ||
+		flashNextManifest.Artifacts[0].SizeBytes != 135253622894 ||
+		flashNextManifest.Artifacts[0].Mount != "/models/hub/models--RadixArk--Qwen3.8-Flash-Next-NVFP4" {
+		t.Fatalf("managed Flash-Next artifact = %+v", flashNextManifest.Artifacts)
+	}
+	flashNextWorkload := flashNextManifest.Workloads[0]
+	if got := flashNextWorkload.Image.Digest; got != "sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8" {
+		t.Fatalf("Flash-Next image digest = %q", got)
+	}
+	if flashNextWorkload.StartOrder != "workers-first" ||
+		flashNextWorkload.NetworkMode != "host" ||
+		flashNextWorkload.Env["PLE_QUANT_OVERRIDE"] != "fp8" ||
+		flashNextWorkload.Env["MTP_NUM_SPECULATIVE_TOKENS"] != "3" ||
+		flashNextWorkload.Env["KV_CACHE_DTYPE"] != "auto" ||
+		flashNextWorkload.Env["MAX_MODEL_LEN"] != "1000000" ||
+		flashNextWorkload.Resources.CPU != 16 ||
+		flashNextWorkload.Resources.MemoryBytes != 103079215104 {
+		t.Fatalf("managed Flash-Next workload = %+v", flashNextWorkload)
+	}
+	if !slices.Contains(flashNextManifest.Assets, "files/ple_layer_patched.py") {
+		t.Fatalf("Flash-Next assets missing PLE patch: %v", flashNextManifest.Assets)
+	}
+	if err := os.Remove(filepath.Join(flashNextCheckout, "files", "ple_layer_patched.py")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flashNextCompiler.Compile(context.Background(), flashNextSource, flashNextCheckout, nil); !errors.As(err, &packErr) || packErr.Code != "recipe.repository_layout_changed" {
+		t.Fatalf("Flash-Next layout error = %v", err)
 	}
 }
 
