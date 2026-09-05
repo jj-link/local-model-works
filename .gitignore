@@ -10,3 +10,4 @@ build-check.sh
 amend-check.sh
 /lmw
 /lmw-agent
+__pycache__/
