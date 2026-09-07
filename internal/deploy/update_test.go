@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
@@ -44,28 +45,18 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidatePlan, err := h.svc.PlanRepositoryUpdateCandidate(ctx, repositoryID, &recipe.RepositoryCandidate{
-		Digest: newDigest, Manifest: candidateManifest,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h.seedRecipeUnplaced(t, newDigest, string(candidateDoc))
-	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), false)
-	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, newDigest)
+	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), true)
+	request := RepositoryReplacementRequest{TargetDigest: newDigest, DeploymentIDs: []string{source.ID}}
+	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidatePlan.Digest != updatePlan.Digest {
-		t.Fatalf("candidate plan digest %q != installed plan digest %q", candidatePlan.Digest, updatePlan.Digest)
-	}
-	if len(candidatePlan.CurrentPermissions) != 0 ||
-		len(candidatePlan.CandidatePermissions) != 1 || candidatePlan.CandidatePermissions[0] != "rootfs.write" ||
-		len(candidatePlan.AddedPermissions) != 1 || candidatePlan.AddedPermissions[0] != "rootfs.write" ||
-		len(candidatePlan.RemovedPermissions) != 0 {
-		t.Fatalf("candidate permission diff = current %v candidate %v added %v removed %v",
-			candidatePlan.CurrentPermissions, candidatePlan.CandidatePermissions,
-			candidatePlan.AddedPermissions, candidatePlan.RemovedPermissions)
+	if len(updatePlan.CurrentPermissions) != 0 ||
+		len(updatePlan.CandidatePermissions) != 1 || updatePlan.CandidatePermissions[0] != "rootfs.write" ||
+		len(updatePlan.AddedPermissions) != 1 || updatePlan.AddedPermissions[0] != "rootfs.write" ||
+		len(updatePlan.RemovedPermissions) != 0 {
+		t.Fatalf("running source permission diff = %+v", updatePlan)
 	}
 	if !updatePlan.Ready || len(updatePlan.InstalledDevices) != 1 || len(updatePlan.RunningDeployments) != 1 {
 		t.Fatalf("update plan = %+v", updatePlan)
@@ -73,18 +64,17 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	if target := updatePlan.RunningDeployments[0]; target.NodeID != "node-a" || target.SourceDeploymentID != source.ID || target.Rank != 0 {
 		t.Fatalf("running deployment target = %+v", target)
 	}
-	if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, newDigest, "sha256:stale"); !errors.Is(err, ErrPlanStale) {
+	if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, "sha256:stale"); !errors.Is(err, ErrPlanStale) {
 		t.Fatalf("stale plan error = %v", err)
 	}
 	if row := deploymentRow(t, h, source.ID); row.DesiredState != "running" {
 		t.Fatalf("stale plan stopped source: %+v", row)
 	}
 
-	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, newDigest, updatePlan.Digest)
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, updatePlan.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ackRecipeUpdateFetch(t, h, newDigest, "node-a")
 	ackDeploymentStop(t, h, source.ID, newDigest)
 	replacementID := driveReplacementHealthy(t, h, newDigest)
 	updateRun := waitRunState(t, h, runID, string(runs.Succeeded))
@@ -117,51 +107,25 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	}
 }
 
-func TestRepositoryUpdateInstallsOnDeviceWithoutRunningDeployments(t *testing.T) {
+func TestRepositoryReplacementRequiresExplicitActiveSelection(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	oldDigest := "sha256:" + strings.Repeat("8", 64)
-	targetDigest := "sha256:" + strings.Repeat("9", 64)
-	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
-	h.seedNode(t, "node-a", nil, "")
-	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	digest := "sha256:" + strings.Repeat("8", 64)
+	h.seedRecipeUnplaced(t, digest, noArtifactManifest)
 	repositoryID := "https://fixtures.local/idle\n."
-	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("d", 40), true)
-	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("e", 40), false)
-
-	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
-	if err != nil {
-		t.Fatal(err)
+	seedRepositoryVersion(t, h, repositoryID, digest, strings.Repeat("d", 40), true)
+	for _, request := range []RepositoryReplacementRequest{
+		{TargetDigest: digest},
+		{TargetDigest: digest, DeploymentIDs: []string{""}},
+		{TargetDigest: digest, DeploymentIDs: []string{"unknown"}},
+		{TargetDigest: digest, DeploymentIDs: []string{"unknown", "unknown"}},
+	} {
+		if _, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request); !errors.Is(err, ErrRecipe) {
+			t.Fatalf("selection %+v error = %v", request, err)
+		}
 	}
-	if !plan.Ready || len(plan.InstalledDevices) != 1 || len(plan.RunningDeployments) != 0 || len(plan.Deployments) != 0 {
-		t.Fatalf("idle update plan = %+v", plan)
-	}
-	if device := plan.InstalledDevices[0]; device.NodeID != "node-a" ||
-		len(device.InstalledDigests) != 1 || device.InstalledDigests[0] != oldDigest {
-		t.Fatalf("installed device = %+v", device)
-	}
-	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, targetDigest, plan.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
-	updateRun := waitRunState(t, h, runID, string(runs.Succeeded))
-	if updateRun.Progress["total_devices"] != float64(1) || updateRun.Progress["completed_devices"] != float64(1) {
-		t.Fatalf("idle update progress = %#v", updateRun.Progress)
-	}
-	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != targetDigest {
-		t.Fatalf("repository current = %+v", repository.CurrentDigest)
-	}
-	artifact, err := h.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, valid := h.svc.validPlacement(ctx, artifact.ID, "node-a"); !valid {
-		t.Fatal("candidate package was not installed on node-a")
+	if commands := h.nodes.artifactCommands(); len(commands) != 0 {
+		t.Fatal("invalid selection fetched packages")
 	}
 }
 
@@ -176,76 +140,38 @@ func TestRepositoryUpdateOutlivesRequestContext(t *testing.T) {
 	repositoryID := "https://fixtures.local/request-context\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("8", 40), true)
 	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("9", 40), false)
+	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: oldDigest, PlanDigest: sourcePlan.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	request := RepositoryReplacementRequest{TargetDigest: targetDigest, DeploymentIDs: []string{source.ID}}
 
-	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requestCtx, cancelRequest := context.WithCancel(ctx)
-	runID, err := h.svc.CreateRepositoryUpdate(requestCtx, repositoryID, targetDigest, plan.Digest)
+	runID, err := h.svc.CreateRepositoryUpdate(requestCtx, repositoryID, request, plan.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cancelRequest()
 
-	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+	ackDeploymentStop(t, h, source.ID, targetDigest)
+	driveReplacementHealthy(t, h, targetDigest)
 	waitRunState(t, h, runID, string(runs.Succeeded))
 	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != targetDigest {
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != oldDigest {
 		t.Fatalf("repository current = %+v", repository.CurrentDigest)
 	}
-}
-
-func TestRepositoryUpdatePackageFailureKeepsCurrentVersion(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	oldDigest := "sha256:" + strings.Repeat("6", 64)
-	targetDigest := "sha256:" + strings.Repeat("7", 64)
-	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
-	h.seedNode(t, "node-a", nil, "")
-	h.seedRecipe(t, oldDigest, noArtifactManifest)
-	repositoryID := "https://fixtures.local/failure\n."
-	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("f", 40), true)
-	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("a", 40), false)
-
-	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, targetDigest, plan.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	failRecipeUpdateFetch(t, h, targetDigest, "node-a", "package unavailable")
-	waitRunState(t, h, runID, string(runs.Failed))
-	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != oldDigest {
-		t.Fatalf("failed update changed repository current: %+v", repository.CurrentDigest)
-	}
-}
-
-func failRecipeUpdateFetch(t *testing.T, h *harness, digest, nodeID, message string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, sent := range h.nodes.artifactCommands() {
-			command := sent.msg.GetArtifactCommand()
-			if sent.nodeID == nodeID && command.GetArtifactIdentity() == "recipe://"+digest {
-				h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
-					CommandId: command.GetCommandId(), Ok: false, Error: message,
-				})
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timed out waiting for repository package fetch")
 }
 
 func TestRepositoryUpdateCoordinatorResumesDeviceInstallation(t *testing.T) {
@@ -259,9 +185,11 @@ func TestRepositoryUpdateCoordinatorResumesDeviceInstallation(t *testing.T) {
 	repositoryID := "https://fixtures.local/resume\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("1", 40), true)
 	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("2", 40), false)
-	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
-	if err != nil {
-		t.Fatal(err)
+	// Frozen legacy ledger entries still resume their original selected package
+	// installations without re-planning moving upstream content.
+	plan := &RepositoryUpdatePlan{
+		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: true,
+		InstalledDevices: []RepositoryUpdateDevice{{NodeID: "node-a", NodeName: "node-a", NodeStatus: "online", InstalledDigests: []string{oldDigest}}},
 	}
 	input := repositoryUpdateRunInput{
 		RepositoryID: repositoryID, TargetDigest: targetDigest,
@@ -285,7 +213,8 @@ func TestRepositoryUpdateCoordinatorResumesDeviceInstallation(t *testing.T) {
 	}
 
 	h.nodes.setOnline("node-a", false)
-	h.svc = New(h.dbh, h.q, h.svc.bus, h.svc.runs, h.nodes, h.svc.ca)
+	h.svc = New(h.dbh, h.q, h.svc.bus, h.svc.runs, h.nodes)
+	h.svc.downloads = &fakeAcquisition{service: h.svc}
 	h.svc.RunRepositoryUpdateCoordinator(ctx)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -320,27 +249,219 @@ func TestRepositoryUpdateCoordinatorResumesDeviceInstallation(t *testing.T) {
 	}
 }
 
-func TestRepositoryUpdatePlanRejectsOfflineInstalledDevice(t *testing.T) {
+func TestRepositoryReplacementIgnoresUnselectedOfflineDevices(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	oldDigest := "sha256:" + strings.Repeat("c", 64)
 	targetDigest := "sha256:" + strings.Repeat("d", 64)
-	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
 	h.seedNode(t, "node-a", nil, "")
 	h.seedRecipe(t, oldDigest, noArtifactManifest)
-	if err := h.q.SetNodeStatus(ctx, db.SetNodeStatusParams{Status: "offline", ID: "node-a"}); err != nil {
-		t.Fatal(err)
-	}
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
 	repositoryID := "https://fixtures.local/offline\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("3", 40), true)
 	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("4", 40), false)
-	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Ready || len(plan.InstalledDevices) != 1 ||
-		len(plan.Diagnostics) != 1 || plan.Diagnostics[0].Code != "recipe.update_device_offline" {
-		t.Fatalf("offline update plan = %+v", plan)
+	source, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: oldDigest, PlanDigest: sourcePlan.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	h.seedNode(t, "node-b", nil, "")
+	if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{
+		ID: "node-b", Inventory: nullString(strings.ReplaceAll(inventoryWith(nil, ""), "100.86.3.45", "100.86.3.46")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	otherPlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest, Placements: []PlacementOverride{{NodeID: "node-b", Rank: 0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: oldDigest, Placements: []PlacementOverride{{NodeID: "node-b", Rank: 0}}, PlanDigest: otherPlan.Digest})
+	if err != nil {
+		t.Fatalf("create unrelated deployment: %v; reviewed plan: %+v", err, otherPlan)
+	}
+	driveDeploymentHealthy(t, h, other.ID, "node-b")
+	if err := h.q.SetNodeStatus(ctx, db.SetNodeStatusParams{Status: "offline", ID: "node-b"}); err != nil {
+		t.Fatal(err)
+	}
+	request := RepositoryReplacementRequest{TargetDigest: targetDigest, DeploymentIDs: []string{source.ID}}
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Ready || len(plan.Deployments) != 1 || plan.Deployments[0].SourceDeploymentID != source.ID ||
+		len(plan.InstalledDevices) != 1 || plan.InstalledDevices[0].NodeID != "node-a" {
+		t.Fatalf("unselected device affected plan: %+v", plan)
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackDeploymentStop(t, h, source.ID, targetDigest)
+	driveReplacementHealthy(t, h, targetDigest)
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	if row := deploymentRow(t, h, other.ID); row.DesiredState != "running" || row.RecipeDigest != oldDigest {
+		t.Fatalf("unselected deployment changed: %+v", row)
+	}
+}
+
+func TestRepositoryReplacementCancellationWaitsForAcquisitionQuiescence(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	oldDigest := "sha256:" + strings.Repeat("e", 64)
+	targetDigest := "sha256:" + strings.Repeat("f", 64)
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/acquisition-cancel\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("5", 40), true)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("6", 40), true)
+	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: oldDigest, PlanDigest: sourcePlan.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	started, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	defer close(release)
+	h.svc.downloads = &fakeAcquisition{acquire: func(acquireCtx context.Context, _ downloads.PlanRequest, _ bool) error {
+		close(started)
+		<-acquireCtx.Done()
+		close(cancelled)
+		<-release
+		return acquireCtx.Err()
+	}}
+	request := RepositoryReplacementRequest{TargetDigest: targetDigest, DeploymentIDs: []string{source.ID}}
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("acquisition not started")
+	}
+	if err := h.svc.CancelRepositoryUpdate(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("acquisition did not receive cancellation")
+	}
+	run, err := h.svc.runs.Get(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != string(runs.Cancelling) {
+		t.Fatalf("completed before acquisition stopped: %s", run.State)
+	}
+	if row := deploymentRow(t, h, source.ID); row.DesiredState != "running" || row.ObservedState != "healthy" {
+		t.Fatalf("acquisition stopped source: %+v", row)
+	}
+	release <- struct{}{}
+	waitRunState(t, h, runID, string(runs.Cancelled))
+	repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.CurrentDigest.String != targetDigest {
+		t.Fatal("acquisition cancellation reverted catalog save")
+	}
+}
+
+func TestRepositoryReplacementAlreadyTargetDoesNotRestart(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	digest := "sha256:" + strings.Repeat("0", 64)
+	h.seedRecipe(t, digest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/unchanged\n."
+	seedRepositoryVersion(t, h, repositoryID, digest, strings.Repeat("7", 40), true)
+	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: digest, PlanDigest: sourcePlan.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	request := RepositoryReplacementRequest{TargetDigest: digest, DeploymentIDs: []string{source.ID}}
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Ready || len(plan.Deployments) != 0 || len(plan.UnchangedDeploymentIDs) != 1 || plan.UnchangedDeploymentIDs[0] != source.ID {
+		t.Fatalf("already target was not reported unchanged: %+v", plan)
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	rows, err := h.q.ListDeployments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != source.ID || rows[0].ObservedState != "healthy" {
+		t.Fatalf("no-change selection restarted deployment: %+v", rows)
+	}
+}
+
+func TestReplacementAcquisitionAllowsOnlyVerifiedReuseTransition(t *testing.T) {
+	now := time.Now().UTC()
+	approvedResource := downloads.Resource{
+		ResourceSpec: downloads.ResourceSpec{Kind: downloads.ResourceArtifact, Identity: "hf://fixture/model@" + strings.Repeat("a", 40), Destination: "/cache/exact"},
+		Key:          "exact-model", NodeID: "node-a", Required: true,
+		Action: downloads.ActionPeerCopy, SourceNode: "node-b", SourcePath: "/cache/peer", CredentialID: "approved-secret",
+	}
+	reviewed := &Plan{RecipeDigest: "recipe", AcquisitionPolicy: AcquisitionDownloadMissing, Acquisition: &downloads.Plan{
+		Targets:   []downloads.Target{{NodeID: "node-a", CacheRoot: "/cache"}},
+		Resources: []downloads.Resource{approvedResource},
+	}}
+	freshResource := approvedResource
+	freshResource.Action, freshResource.SourceNode, freshResource.SourcePath, freshResource.CredentialID = downloads.ActionReuse, "", "", ""
+	freshResource.Verification = downloads.Verification{State: downloads.ResourceAvailable, VerifiedAt: &now}
+	fresh := *reviewed
+	freshAcquisition := *reviewed.Acquisition
+	freshAcquisition.Resources = []downloads.Resource{freshResource}
+	fresh.Acquisition = &freshAcquisition
+	if !replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
+		t.Fatal("verified acquired bytes could not replace approved peer acquisition")
+	}
+	if fresh.Acquisition.Resources[0].Action != downloads.ActionReuse {
+		t.Fatal("comparison rewrote execution's real acquisition state")
+	}
+	fresh.Acquisition.Resources[0].Verification.Stale = true
+	if replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
+		t.Fatal("stale observation authorized replacement")
+	}
+	fresh.Acquisition.Resources[0] = freshResource
+	fresh.Acquisition.Resources[0].Action = downloads.ActionDownloadOrigin
+	if replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
+		t.Fatal("peer disappearance silently switched to origin")
+	}
+	fresh.Acquisition.Resources[0] = freshResource
+	fresh.Acquisition.Resources[0].Destination = "/other-cache"
+	if replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
+		t.Fatal("reuse silently changed destination")
+	}
+	fresh.Acquisition.Resources[0] = freshResource
+	fresh.Acquisition.Resources[0].Identity = "hf://fixture/model@" + strings.Repeat("b", 40)
+	if replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
+		t.Fatal("reuse substituted another immutable revision")
 	}
 }
 

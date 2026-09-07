@@ -167,10 +167,127 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /recipe-repositories/{id}/update/plan:
+  /recipe-repositories/{id}/check-updates:
+    parameters: [{$ref: '#/components/parameters/ID'}]
     post:
       tags: [recipes]
-      operationId: planRecipeRepositoryUpdate
+      operationId: checkRecipeRepositoryUpdates
+      responses:
+        '200': {description: Recorded upstream check including source errors, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeUpdateStatus'}}}}
+
+  /recipes/{digest}/changes:
+    parameters: [{name: digest, in: path, required: true, schema: {type: string}}]
+    post:
+      tags: [recipes]
+      operationId: createRecipeChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, expected_current_digest]
+              properties:
+                kind: {type: string, enum: [repair, update]}
+                expected_current_digest: {type: string, minLength: 1}
+                expected_head_commit: {type: string}
+                deployment_id: {type: string}
+      responses:
+        '202': {description: Editable change accepted without workload effects, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '412': {description: Saved version changed}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+
+  /recipe-drafts/{id}/inspect:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: inspectRecipeDraft
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      responses:
+        '202': {description: Pinned inspection accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+
+  /recipe-drafts/{id}/comparison:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [recipes]
+      operationId: compareRecipeDraft
+      responses:
+        '200': {description: Saved and candidate source comparison, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeChangeComparison'}}}}
+
+  /recipe-drafts/{id}/generation-preview:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: previewRecipeGeneration
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecipeGenerationPreviewRequest'}
+      responses:
+        '200': {description: Exact sanitized outbound content; no provider request sent, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeGenerationPreview'}}}}
+        '412': {description: Draft or provider settings changed}
+
+  /recipes/{digest}/downloads/plan:
+    parameters: [{name: digest, in: path, required: true, schema: {type: string}}]
+    post:
+      tags: [recipes]
+      operationId: planRecipeDownload
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadPlanRequest'}}}
+      responses:
+        '200': {description: Reviewed storage-only acquisition plan, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadPlan'}}}}
+
+  /recipes/{digest}/downloads:
+    parameters: [{name: digest, in: path, required: true, schema: {type: string}}]
+    get:
+      tags: [recipes]
+      operationId: listRecipeDownloads
+      responses:
+        '200': {description: Persisted downloads with frozen choices, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadRun'}}}}}
+    post:
+      tags: [recipes]
+      operationId: startRecipeDownload
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadCreateRequest'}}}
+      responses:
+        '202': {description: Download accepted without creating a deployment, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadAccepted'}}}}
+        '412': {description: Reviewed acquisition plan changed}
+
+  /recipes/{digest}/downloads/{run_id}/resume:
+    parameters:
+      - {name: digest, in: path, required: true, schema: {type: string}}
+      - {name: run_id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [recipes]
+      operationId: resumeRecipeDownload
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadResumeRequest'}}}
+      responses:
+        '202': {description: Explicit linked attempt accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDownloadAccepted'}}}}
+        '412': {description: Reviewed acquisition plan changed}
+
+  /recipes/{digest}/availability:
+    parameters: [{name: digest, in: path, required: true, schema: {type: string}}]
+    post:
+      tags: [recipes]
+      operationId: getRecipeAvailability
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RecipeAvailabilityRequest'}}}
+      responses:
+        '200': {description: Observed exact resource availability and separate running versions, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeAvailability'}}}}
+
+  /recipe-repositories/{id}/replacements/plan:
+    post:
+      tags: [recipes]
+      operationId: planRecipeRepositoryReplacement
       parameters:
         - name: id
           in: path
@@ -182,7 +299,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecipeRepositoryUpdatePlanRequest'
+              $ref: '#/components/schemas/RecipeRepositoryReplacementPlanRequest'
       responses:
         '200':
           description: Exact hardware replacement preview
@@ -197,10 +314,10 @@ paths:
         '422':
           $ref: '#/components/responses/Unprocessable'
 
-  /recipe-repositories/{id}/update:
+  /recipe-repositories/{id}/replacements:
     post:
       tags: [recipes]
-      operationId: startRecipeRepositoryUpdate
+      operationId: startRecipeRepositoryReplacement
       parameters:
         - name: id
           in: path
@@ -212,7 +329,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecipeRepositoryUpdateRequest'
+              $ref: '#/components/schemas/RecipeRepositoryReplacementRequest'
       responses:
         '202':
           description: Durable recipe update run accepted
@@ -339,6 +456,13 @@ paths:
     get:
       tags: [recipes]
       operationId: listRecipeDrafts
+      parameters:
+        - name: package_digest
+          in: query
+          schema: {type: string}
+        - name: repository_id
+          in: query
+          schema: {type: string}
       responses:
         '200':
           description: Inspectable recipe drafts
@@ -355,13 +479,10 @@ paths:
             schema: {$ref: '#/components/schemas/RecipeDraftSource'}
       responses:
         '202':
-          description: Draft analysis job accepted
+          description: Draft inspection accepted
           content:
             application/json:
-              schema:
-                type: object
-                required: [run_id]
-                properties: {run_id: {type: string}}
+              schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}
 
   /recipe-drafts/{id}:
     parameters: [{$ref: '#/components/parameters/ID'}]
@@ -373,57 +494,395 @@ paths:
     put:
       tags: [recipes]
       operationId: updateRecipeDraft
-      parameters:
-        - name: If-Match
-          in: header
-          required: true
-          schema: {type: string}
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [manifest, selected_assets]
               properties:
                 manifest: {type: object}
-                selected_assets: {type: array, items: {type: string}}
+                selected_assets: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAssetSelection'}}
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [question_id, answer]
+                    properties:
+                      question_id: {type: string}
+                      answer: {type: string}
+                acknowledged_warnings: {type: array, items: {type: string}}
       responses:
         '200': {description: Updated draft, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
     delete:
       tags: [recipes]
       operationId: deleteRecipeDraft
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
       responses: {'204': {description: Draft deleted}}
 
+  /recipe-drafts/{id}/context:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    put:
+      tags: [recipes]
+      operationId: updateRecipeDraftContext
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items: {$ref: '#/components/schemas/RecipeDraftContextFile'}
+      responses:
+        '200': {description: Updated draft context, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+
   /recipe-drafts/{id}/package:
+    parameters: [{$ref: '#/components/parameters/ID'}]
     post:
       tags: [recipes]
       operationId: packageRecipeDraft
-      parameters: [{$ref: '#/components/parameters/ID'}]
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
       responses:
-        '200': {description: Packaged draft, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+        '202': {description: Package operation accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+
+  /recipe-drafts/{id}/diagnostics/dismiss:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: dismissRecipeDraftDiagnostics
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [diagnostic_ids]
+              properties:
+                diagnostic_ids:
+                  type: array
+                  uniqueItems: true
+                  items: {type: string, minLength: 1}
+      responses:
+        '200': {description: Attempt diagnostics dismissed, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+
+  /recipe-drafts/{id}/files:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [recipes]
+      operationId: getRecipeDraftFile
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+        - name: sha256
+          in: query
+          required: true
+          schema: {type: string}
+        - name: source_commit
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: Draft-owned file
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, sha256, origin, content]
+                properties:
+                  path: {type: string}
+                  sha256: {type: string}
+                  origin: {type: string}
+                  content: {type: string}
+    put:
+      tags: [recipes]
+      operationId: updateRecipeDraftFile
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path, content]
+              properties:
+                path: {type: string}
+                content: {type: string, maxLength: 262144}
+      responses:
+        '200': {description: Generated file updated, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+
+  /recipe-drafts/{id}/generate:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: generateRecipeDraft
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeGenerationRequest'
+      responses:
+        '202': {description: Generation operation accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+
+  /recipe-drafts/{id}/resolve:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: resolveRecipeDraftReferences
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                credentials:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [path, host, secret_id]
+                    properties:
+                      path: {type: string}
+                      host: {type: string}
+                      secret_id: {type: string}
+                file_checksums:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [path, url, sha256, evidence_note]
+                    properties:
+                      path: {type: string}
+                      url: {type: string}
+                      sha256: {type: string}
+                      evidence_note: {type: string}
+      responses:
+        '202': {description: Reference resolution accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+
+  /recipe-drafts/{id}/proposal:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    delete:
+      tags: [recipes]
+      operationId: discardRecipeDraftProposal
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [proposal_id]
+              properties:
+                proposal_id: {type: string, minLength: 1}
+      responses:
+        '200': {description: Proposal discarded, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
+  /recipe-drafts/{id}/proposal/accept:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: acceptRecipeDraftProposal
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [proposal_id]
+              properties:
+                proposal_id: {type: string, minLength: 1}
+      responses:
+        '200': {description: Proposal accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraft'}}}}
 
   /recipe-drafts/{id}/install:
+    parameters: [{$ref: '#/components/parameters/ID'}]
     post:
       tags: [recipes]
       operationId: installRecipeDraft
-      parameters: [{$ref: '#/components/parameters/ID'}]
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [package_digest, acknowledged_warnings]
+              properties:
+                package_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+                acknowledged_warnings:
+                  type: array
+                  uniqueItems: true
+                  items: {type: string, minLength: 64, maxLength: 64}
       responses:
-        '201': {description: Installed recipe, content: {application/json: {schema: {$ref: '#/components/schemas/Recipe'}}}}
+        '202': {description: Install operation accepted, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeDraftOperationAccepted'}}}}
+
+  /recipe-drafts/{id}/run-excerpt:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [recipes]
+      operationId: getRecipeDraftRunExcerpt
+      responses:
+        '200':
+          description: Bounded redacted excerpt from the associated run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, stdout, stderr, truncated]
+                properties:
+                  run_id: {type: string}
+                  stdout: {type: string}
+                  stderr: {type: string}
+                  truncated: {type: boolean}
+
+  /recipe-assistant/providers/{id}/test:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [recipes]
+      operationId: testRecipeAssistantProvider
+      responses:
+        '200':
+          description: Provider connection result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, model, message]
+                properties:
+                  ok: {type: boolean}
+                  model: {type: string}
+                  message: {type: string}
+
+  /recipe-assistant/codex/status:
+    get:
+      tags: [recipes]
+      operationId: getRecipeAssistantCodexStatus
+      responses:
+        '200': {description: Dedicated Codex account status, content: {application/json: {schema: {type: object}}}}
+  /recipe-assistant/codex/login:
+    post:
+      tags: [recipes]
+      operationId: startRecipeAssistantCodexLogin
+      responses:
+        '200': {description: Device login started, headers: {Cache-Control: {schema: {type: string}}}, content: {application/json: {schema: {type: object}}}}
+  /recipe-assistant/codex/login/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [recipes]
+      operationId: getRecipeAssistantCodexLogin
+      responses:
+        '200': {description: Device login status, content: {application/json: {schema: {type: object}}}}
+    delete:
+      tags: [recipes]
+      operationId: cancelRecipeAssistantCodexLogin
+      responses:
+        '204': {description: Device login cancelled}
+  /recipe-assistant/codex/logout:
+    post:
+      tags: [recipes]
+      operationId: logoutRecipeAssistantCodex
+      responses:
+        '204': {description: Dedicated Codex account logged out}
+  /recipe-assistant/codex/models:
+    get:
+      tags: [recipes]
+      operationId: listRecipeAssistantCodexModels
+      responses:
+        '200': {description: Available Codex models, content: {application/json: {schema: {type: array, items: {type: object}}}}}
 
 components:
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string}
   schemas:
     RecipeDraftSource:
       type: object
       additionalProperties: false
-      required: [remote, revision]
+      required: [remote]
       properties:
         remote: {type: string}
         revision: {type: string}
         path: {type: string}
+    RecipeDraftOperationAccepted:
+      type: object
+      required: [draft_id, run_id]
+      properties:
+        draft_id: {type: string}
+        run_id: {type: string}
+    RecipeDraftCandidate:
+      type: object
+      required: [path, size, sha256, origin]
+      properties:
+        path: {type: string}
+        size: {type: integer}
+        sha256: {type: string}
+        binary: {type: boolean}
+        origin: {type: string, enum: [source, generated]}
+        source_path: {type: string}
+    RecipeDraftAssetSelection:
+      type: object
+      additionalProperties: false
+      required: [path, sha256]
+      properties:
+        path: {type: string}
+        sha256: {type: string}
+        origin: {type: string, enum: [source, generated]}
+    RecipeDraftContextFile:
+      type: object
+      additionalProperties: false
+      required: [path, sha256]
+      properties:
+        path: {type: string}
+        sha256: {type: string}
+        source_commit: {type: string}
+        origin: {type: string, enum: [source, generated]}
+        start_line: {type: integer, minimum: 1}
+        end_line: {type: integer, minimum: 1}
+    RecipeDraftDiagnostic:
+      type: object
+      required: [id, code, severity, message, phase, blocking, remediation, retryable, dismissible]
+      properties:
+        id: {type: string}
+        code: {type: string}
+        severity: {type: string, enum: [error, warning]}
+        acknowledgement: {type: string, description: Exact current warning token accepted by acknowledged_warnings}
+        path: {type: string}
+        message: {type: string}
+        phase: {type: string, enum: [inspect, generate, resolve, validate, package, install, launch]}
+        blocking: {type: boolean}
+        remediation: {type: string}
+        source_path: {type: string}
+        source_line: {type: integer}
+        resource: {type: string}
+        retryable: {type: boolean}
+        dismissible: {type: boolean}
     RecipeDraft:
       type: object
-      required: [id, version, state, source, manifest, candidates, selected_assets, diagnostics, created_at, updated_at]
+      required: [id, version, state, source, manifest, candidates, selected_assets, diagnostics, context_selection, questions, acknowledged_warnings, resolved_references, created_at, updated_at]
       properties:
         id: {type: string}
         version: {type: integer}
@@ -432,9 +891,19 @@ components:
         resolved_commit: {type: string}
         resolved_tree: {type: string}
         manifest: {type: object}
-        candidates: {type: array, items: {type: object}}
-        selected_assets: {type: array, items: {type: string}}
-        diagnostics: {type: array, items: {type: object}}
+        candidates:
+          type: array
+          items: {$ref: '#/components/schemas/RecipeDraftCandidate'}
+        selected_assets: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAssetSelection'}}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/RecipeDraftDiagnostic'}}
+        operation: {$ref: '#/components/schemas/RecipeDraftOperation'}
+        proposal: {$ref: '#/components/schemas/RecipeDraftSuggestion'}
+        context_selection: {type: array, items: {$ref: '#/components/schemas/RecipeDraftContextFile'}}
+        questions: {type: array, items: {$ref: '#/components/schemas/RecipeDraftQuestion'}}
+        acknowledged_warnings: {type: array, items: {type: string}}
+        resolved_references: {type: array, items: {$ref: '#/components/schemas/RecipeResolvedReference'}}
+        parent_draft_id: {type: string}
+        change_context: {$ref: '#/components/schemas/RecipeChangeContext'}
         package_digest: {type: string}
         run_id: {type: string}
         created_at: {type: string, format: date-time}
@@ -498,7 +967,7 @@ components:
 
     TransferRequest:
       type: object
-      required: [artifact_id, source_node, dest_node, dest_path]
+      required: [artifact_id, source_node, dest_node]
       properties:
         artifact_id:
           type: string
@@ -511,6 +980,7 @@ components:
           format: uuid
         dest_path:
           type: string
+          description: Optional exact canonical destination under a configured cache root. Omit to use the verified artifact identity destination; arbitrary basenames are rejected.
 
     Transfer:
       type: object
@@ -586,6 +1056,7 @@ components:
         head_checked_at:
           type: string
           format: date-time
+        head_check_error: {type: string}
         update_available:
           type: boolean
         update_supported:
@@ -626,21 +1097,22 @@ components:
       allOf:
         - $ref: '#/components/schemas/RecipeRepository'
 
-    RecipeRepositoryUpdatePlanRequest:
+    RecipeRepositoryReplacementPlanRequest:
       type: object
-      required: [expected_head_commit]
+      additionalProperties: false
+      required: [target_digest, deployment_ids]
       properties:
-        expected_head_commit:
-          type: string
+        target_digest: {type: string, minLength: 1}
+        deployment_ids: {type: array, minItems: 1, uniqueItems: true, items: {type: string, minLength: 1}}
 
-    RecipeRepositoryUpdateRequest:
+    RecipeRepositoryReplacementRequest:
       type: object
-      required: [expected_head_commit, plan_digest]
+      additionalProperties: false
+      required: [target_digest, deployment_ids, plan_digest]
       properties:
-        expected_head_commit:
-          type: string
-        plan_digest:
-          type: string
+        target_digest: {type: string, minLength: 1}
+        deployment_ids: {type: array, minItems: 1, uniqueItems: true, items: {type: string, minLength: 1}}
+        plan_digest: {type: string, minLength: 1}
 
     RecipeUpdateDevice:
       type: object
@@ -700,6 +1172,27 @@ components:
          added_permissions, removed_permissions, installed_devices,
          running_deployments, diagnostics]
       properties:
+        repository_id: {type: string}
+        target_digest: {type: string}
+        deployment_ids: {type: array, items: {type: string}}
+        unchanged_deployment_ids: {type: array, items: {type: string}}
+        deployments:
+          type: array
+          items:
+            type: object
+            required: [source_deployment_id, source_digest, placement, workload_index, deployment_plan, current_permissions, added_permissions, removed_permissions]
+            properties:
+              source_deployment_id: {type: string}
+              source_digest: {type: string}
+              placement: {type: string}
+              workload_index: {type: integer}
+              fabric: {type: string}
+              parameters: {type: object, additionalProperties: true}
+              variants: {type: object, additionalProperties: {type: string}}
+              deployment_plan: {$ref: '#/components/schemas/DeploymentPlan'}
+              current_permissions: {type: array, items: {type: string}}
+              added_permissions: {type: array, items: {type: string}}
+              removed_permissions: {type: array, items: {type: string}}
         plan_digest:
           type: string
         ready:
@@ -854,3 +1347,373 @@ components:
         fabric:
           type: object
           additionalProperties: true
+
+    RecipeChangeContext:
+      type: object
+      required: [kind, base_source_status]
+      properties:
+        kind: {type: string, enum: [add, update, repair]}
+        repository_id: {type: string}
+        base_recipe_digest: {type: string}
+        expected_current_digest: {type: string}
+        base_source: {type: object}
+        base_commit: {type: string}
+        base_tree: {type: string}
+        base_manifest: {type: object}
+        base_assets: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAssetSelection'}}
+        base_candidates: {type: array, items: {$ref: '#/components/schemas/RecipeDraftCandidate'}}
+        base_source_status: {type: string, enum: [available, unavailable]}
+        base_source_error: {type: string}
+        deployment_id: {type: string}
+    RecipeChangeComparison:
+      type: object
+      required: [base_source_status, files, configuration_changes]
+      properties:
+        base_recipe_digest: {type: string}
+        base_commit: {type: string}
+        target_commit: {type: string}
+        base_source_status: {type: string, enum: [available, unavailable]}
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, change, binary]
+            properties:
+              path: {type: string}
+              change: {type: string, enum: [added, modified, removed]}
+              before_sha256: {type: string}
+              after_sha256: {type: string}
+              binary: {type: boolean}
+        configuration_changes:
+          type: array
+          items:
+            type: object
+            required: [path]
+            properties:
+              path: {type: string}
+              before: {}
+              after: {}
+    RecipeRunExcerptSelection:
+      type: object
+      additionalProperties: false
+      required: [run_id, deployment_id, rank, stream, offset, byte_count]
+      properties:
+        run_id: {type: string, minLength: 1}
+        deployment_id: {type: string, minLength: 1}
+        rank: {type: integer, minimum: 0}
+        stream: {type: string, enum: [stdout, stderr]}
+        offset: {type: integer, minimum: 0}
+        byte_count: {type: integer, minimum: 1, maximum: 16384}
+    RecipeGenerationPreviewRequest:
+      type: object
+      required: [provider_id, provider_version, diagnostic_ids, run_excerpts]
+      properties:
+        provider_id: {type: string, minLength: 1}
+        provider_version: {type: string, minLength: 1}
+        model: {type: string}
+        instruction: {type: string, maxLength: 16384}
+        diagnostic_ids: {type: array, uniqueItems: true, items: {type: string}}
+        run_excerpts: {type: array, maxItems: 4, items: {$ref: '#/components/schemas/RecipeRunExcerptSelection'}}
+    RecipeGenerationRequest:
+      allOf:
+        - {$ref: '#/components/schemas/RecipeGenerationPreviewRequest'}
+        - type: object
+          required: [preview_sha256, content_consent]
+          properties:
+            preview_sha256: {type: string, minLength: 64, maxLength: 64}
+            content_consent: {type: boolean, enum: [true]}
+    RecipeGenerationPreview:
+      type: object
+      required: [provider_id, provider_version, destination, model, request, preview_sha256, warnings]
+      properties:
+        provider_id: {type: string}
+        provider_version: {type: string}
+        destination: {type: string}
+        model: {type: string}
+        request: {type: object, additionalProperties: true}
+        warnings: {type: array, items: {type: string}}
+        preview_sha256: {type: string}
+    RecipeDownloadTarget:
+      type: object
+      additionalProperties: false
+      required: [node_id]
+      properties:
+        node_id: {type: string, minLength: 1}
+        cache_root: {type: string}
+    RecipeDownloadCredential:
+      type: object
+      additionalProperties: false
+      required: [resource, host, secret_id]
+      properties:
+        resource: {type: string}
+        host: {type: string}
+        secret_id: {type: string}
+    RecipeDownloadSelection:
+      type: object
+      properties:
+        targets: {type: array, minItems: 1, items: {$ref: '#/components/schemas/RecipeDownloadTarget'}}
+        workload_index: {type: integer, minimum: 0}
+        variants: {type: object, additionalProperties: true}
+        launch_profile_id: {type: string}
+        credentials: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadCredential'}}
+    RecipeDownloadPlanRequest:
+      allOf:
+        - {$ref: '#/components/schemas/RecipeDownloadSelection'}
+        - type: object
+          required: [targets]
+          properties:
+            targets: {type: array, minItems: 1, items: {$ref: '#/components/schemas/RecipeDownloadTarget'}}
+            resume_run_id: {type: string}
+    RecipeDownloadCreateRequest:
+      allOf:
+        - {$ref: '#/components/schemas/RecipeDownloadPlanRequest'}
+        - type: object
+          required: [plan_digest]
+          properties:
+            plan_digest: {type: string, minLength: 1}
+    RecipeDownloadResumeRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_digest]
+      properties:
+        plan_digest: {type: string, minLength: 1}
+        credentials: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadCredential'}}
+    RecipeAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        targets: {type: array, minItems: 1, items: {$ref: '#/components/schemas/RecipeDownloadTarget'}}
+        workload_index: {type: integer, minimum: 0}
+        variants: {type: object, additionalProperties: true}
+        launch_profile_id: {type: string}
+        refresh: {type: boolean}
+    RecipeDownloadResource:
+      type: object
+      required: [key, kind, identity, source, node_id, destination, action, verification, required]
+      properties:
+        key: {type: string}
+        kind: {type: string, enum: [artifact, recipe, image]}
+        identity: {type: string}
+        source:
+          type: object
+          required: [type]
+          properties:
+            type: {type: string}
+            reference: {type: string}
+            url: {type: string}
+            revision: {type: string}
+            digest: {type: string}
+        index_digest: {type: string}
+        manifest_digest: {type: string}
+        size_bytes: {type: integer, format: int64}
+        node_id: {type: string}
+        destination: {type: string}
+        platform: {type: string}
+        action: {type: string, enum: [reuse, validate-local, download-origin, peer-copy]}
+        source_node: {type: string}
+        source_path: {type: string}
+        bytes_total: {type: integer, format: int64, minimum: 0}
+        bytes_remaining: {type: integer, format: int64, minimum: 0}
+        credential_id: {type: string}
+        verification: {$ref: '#/components/schemas/RecipeResourceVerification'}
+        required: {type: boolean}
+    RecipeDownloadPlan:
+      type: object
+      required: [recipe_digest, workload_index, variants, targets, resources, storage, diagnostics, ready, plan_digest]
+      properties:
+        recipe_digest: {type: string}
+        workload_index: {type: integer}
+        variants: {type: object, additionalProperties: {type: string}}
+        targets: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadTarget'}}
+        resources: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadResource'}}
+        storage: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadStorage'}}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        ready: {type: boolean}
+        plan_digest: {type: string}
+    RecipeDownloadAccepted:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: {type: string}
+    RecipeDownloadRun:
+      type: object
+      required: [run_id, state, input, items, created_at]
+      properties:
+        run_id: {type: string}
+        state: {type: string}
+        input:
+          type: object
+          required: [plan]
+          properties:
+            plan: {$ref: '#/components/schemas/RecipeDownloadPlan'}
+            predecessor_run_id: {type: string}
+            credentials: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadCredential'}}
+        items: {type: array, items: {$ref: '#/components/schemas/RecipeDownloadItem'}}
+        created_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+    RecipeAvailability:
+      type: object
+      required: [recipe_digest, workload_index, variants, devices, diagnostics]
+      properties:
+        recipe_digest: {type: string}
+        workload_index: {type: integer}
+        variants: {type: object, additionalProperties: {type: string}}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        devices:
+          type: array
+          items:
+            type: object
+            required: [node_id, node_name, online, resources, running_deployments, active_run_ids, other_versions, runtime_diagnostics, diagnostics]
+            properties:
+              node_id: {type: string}
+              node_name: {type: string}
+              online: {type: boolean}
+              last_checked_at: {type: string, format: date-time}
+              resources: {type: array, items: {$ref: '#/components/schemas/RecipeAvailableResource'}}
+              running_deployments: {type: array, items: {$ref: '#/components/schemas/RecipeRunningVersion'}}
+              active_run_ids: {type: array, items: {type: string}}
+              other_versions:
+                type: array
+                items:
+                  type: object
+                  required: [kind, identity, path, verification]
+                  properties:
+                    kind: {type: string}
+                    identity: {type: string}
+                    path: {type: string}
+                    verification: {$ref: '#/components/schemas/RecipeResourceVerification'}
+                    supported_variants: {type: object, additionalProperties: {type: string}}
+              runtime_diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+              diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    RecipeResourceVerification:
+      type: object
+      required: [state, stale]
+      properties:
+        state: {type: string, enum: [unknown, missing, partial, verifying, available, invalid]}
+        stale: {type: boolean}
+        verified_at: {type: string, format: date-time}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    RecipeDownloadStorage:
+      type: object
+      required: [node_id, filesystem, destination, resource_keys, reserve_bytes]
+      properties:
+        node_id: {type: string}
+        filesystem: {type: string}
+        destination: {type: string}
+        resource_keys: {type: array, items: {type: string}}
+        required_bytes: {type: integer, format: int64}
+        staging_bytes: {type: integer, format: int64}
+        available_bytes: {type: integer, format: int64}
+        total_bytes: {type: integer, format: int64}
+        reserve_bytes: {type: integer, format: int64}
+        sufficient: {type: boolean}
+    RecipeAvailableResource:
+      type: object
+      required: [key, kind, identity, destination, required, verification]
+      properties:
+        key: {type: string}
+        kind: {type: string, enum: [artifact, recipe, image]}
+        identity: {type: string}
+        destination: {type: string}
+        platform: {type: string}
+        index_digest: {type: string}
+        manifest_digest: {type: string}
+        required: {type: boolean}
+        verification: {$ref: '#/components/schemas/RecipeResourceVerification'}
+    RecipeRunningVersion:
+      type: object
+      required: [deployment_id, recipe_digest, workload_index, variants, rank, state]
+      properties:
+        deployment_id: {type: string}
+        recipe_digest: {type: string}
+        workload_index: {type: integer}
+        variants: {type: object, additionalProperties: {type: string}}
+        rank: {type: integer}
+        state: {type: string}
+    RecipeDownloadItem:
+      type: object
+      required: [id, run_id, resource_key, node_id, resource, state, checkpoint, updated_at]
+      properties:
+        id: {type: string}
+        run_id: {type: string}
+        predecessor_item_id: {type: string}
+        resource_key: {type: string}
+        node_id: {type: string}
+        resource: {$ref: '#/components/schemas/RecipeDownloadResource'}
+        state: {type: string, enum: [pending, checking, transferring, verifying, cancelling, succeeded, failed, cancelled, interrupted]}
+        command_id: {type: string}
+        transfer_id: {type: string}
+        checkpoint: {type: object}
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            message: {type: string}
+            retryable: {type: boolean}
+        updated_at: {type: string, format: date-time}
+    RecipeDraftQuestion:
+      type: object
+      required: [id, question]
+      properties:
+        id: {type: string}
+        path: {type: string}
+        question: {type: string}
+        answer: {type: string}
+    RecipeDraftOperation:
+      type: object
+      required: [id, kind, started_at, updated_at, previous_state]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        phase: {type: string}
+        message: {type: string}
+        started_at: {type: string}
+        updated_at: {type: string}
+        previous_state: {type: string}
+    RecipeDraftSuggestion:
+      type: object
+      required: [id, base_version, manifest, files, selected_source_assets, questions, evidence, diagnostics]
+      properties:
+        id: {type: string}
+        base_version: {type: integer}
+        provider_id: {type: string}
+        provider_version: {type: string}
+        model: {type: string}
+        run_id: {type: string}
+        manifest: {type: object, additionalProperties: true}
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, content]
+            properties:
+              path: {type: string}
+              content: {type: string}
+              source_path: {type: string}
+        selected_source_assets: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAssetSelection'}}
+        questions: {type: array, items: {$ref: '#/components/schemas/RecipeDraftQuestion'}}
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [path, sha256]
+            properties:
+              path: {type: string}
+              sha256: {type: string}
+              source_path: {type: string}
+              source_commit: {type: string}
+              start_line: {type: integer}
+              end_line: {type: integer}
+        summary: {type: string}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/RecipeDraftDiagnostic'}}
+        preview_sha256: {type: string}
+    RecipeResolvedReference:
+      type: object
+      required: [path, input_identity, resolved_value, origin, verified_at]
+      properties:
+        path: {type: string}
+        input_identity: {type: string}
+        resolved_value: {type: string}
+        origin: {type: string}
+        verified_at: {type: string}
+        evidence_note: {type: string}

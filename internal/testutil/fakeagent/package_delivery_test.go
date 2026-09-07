@@ -3,16 +3,28 @@ package fakeagent
 import (
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
 	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/runtime"
 )
 
 func TestRecipeAssetsDeliveredBeforeMountedWorkload(t *testing.T) {
 	server := NewServer(t, "", "127.0.0.1:0")
 	defer server.Stop()
 	agent := StartAgent(t, server, AgentOpts{Token: server.IssueToken(t), Hostname: "asset-node"})
+	for _, image := range []struct{ reference, digest string }{
+		{"ghcr.io/localmodelworks/package-assets", "sha256:" + strings.Repeat("a", 64)},
+		{"ghcr.io/localmodelworks/helper", "sha256:" + strings.Repeat("b", 64)},
+	} {
+		agent.RT.SeedImage(runtime.ImageInfo{
+			Reference: image.reference + "@" + image.digest, Digest: image.digest,
+			IndexDigest: image.digest, ManifestDigest: image.digest,
+			Platform: goruntime.GOOS + "/" + goruntime.GOARCH, SizeBytes: 1024,
+		})
+	}
 	nodeID := agent.NodeID()
 	server.ApproveNode(t, nodeID)
 	server.WaitOnline(t, nodeID)
@@ -38,7 +50,7 @@ workloads:
       digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     command: [/lmw/assets/serve.sh]
     args: []
-    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
+    resources: {pids: 64}
 prepare:
   image:
     reference: ghcr.io/localmodelworks/helper:1.0.0

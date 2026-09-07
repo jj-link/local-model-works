@@ -17,6 +17,7 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/cjson"
 	"github.com/jj-link/local-model-works/internal/diag"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/inventory"
 )
 
@@ -129,33 +130,43 @@ type HostPreparationPreview struct {
 	HelperImage       string `json:"helper_image"`
 }
 
+const (
+	AcquisitionRequireExisting = "require-existing"
+	AcquisitionDownloadMissing = "download-missing"
+)
+
 // Plan is the previewed deployment (openapi DeploymentPlan).
 type Plan struct {
-	RecipeDigest    string                   `json:"recipe_digest"`
-	RecipeName      string                   `json:"recipe_name,omitempty"`
-	RecipeVersion   string                   `json:"recipe_version,omitempty"`
-	Settings        map[string]any           `json:"settings,omitempty"`
-	Variants        map[string]string        `json:"variants,omitempty"`
-	WorkloadIndex   int                      `json:"workload_index"`
-	Placements      []Placement              `json:"placements"`
-	Fabric          *string                  `json:"fabric,omitempty"`
-	Transfers       []TransferPreview        `json:"transfers,omitempty"`
-	Images          []ImagePreview           `json:"images,omitempty"`
-	Storage         []StoragePreview         `json:"storage,omitempty"`
-	HostPreparation []HostPreparationPreview `json:"host_preparation,omitempty"`
-	Ports           []PortPreview            `json:"ports,omitempty"`
-	Endpoint        Endpoint                 `json:"endpoint,omitempty"`
-	Risks           []string                 `json:"risks,omitempty"`
-	Conflicts       []Conflict               `json:"conflicts,omitempty"`
-	Diagnostics     []diag.Diagnostic        `json:"diagnostics,omitempty"`
-	Ready           bool                     `json:"ready"`
-	Digest          string                   `json:"plan_digest,omitempty"`
+	RecipeDigest      string                   `json:"recipe_digest"`
+	RecipeName        string                   `json:"recipe_name,omitempty"`
+	RecipeVersion     string                   `json:"recipe_version,omitempty"`
+	Parameters        map[string]any           `json:"parameters,omitempty"`
+	Variants          map[string]string        `json:"variants,omitempty"`
+	WorkloadIndex     int                      `json:"workload_index"`
+	AcquisitionPolicy string                   `json:"acquisition_policy"`
+	Acquisition       *downloads.Plan          `json:"acquisition,omitempty"`
+	MissingResources  []downloads.Resource     `json:"missing_resources,omitempty"`
+	Placements        []Placement              `json:"placements"`
+	Fabric            *string                  `json:"fabric,omitempty"`
+	Transfers         []TransferPreview        `json:"transfers,omitempty"`
+	Images            []ImagePreview           `json:"images,omitempty"`
+	Storage           []StoragePreview         `json:"storage,omitempty"`
+	HostPreparation   []HostPreparationPreview `json:"host_preparation,omitempty"`
+	Ports             []PortPreview            `json:"ports,omitempty"`
+	Endpoint          Endpoint                 `json:"endpoint,omitempty"`
+	Risks             []string                 `json:"risks,omitempty"`
+	Conflicts         []Conflict               `json:"conflicts,omitempty"`
+	Diagnostics       []diag.Diagnostic        `json:"diagnostics,omitempty"`
+	Ready             bool                     `json:"ready"`
+	Digest            string                   `json:"plan_digest,omitempty"`
 }
 
 // PlanRequest previews a deployment (openapi DeploymentPlanRequest).
 type PlanRequest struct {
-	RecipeDigest string              `json:"recipe_digest"`
-	Placements   []PlacementOverride `json:"placements,omitempty"`
+	RecipeDigest      string              `json:"recipe_digest"`
+	AcquisitionPolicy string              `json:"acquisition_policy,omitempty"`
+	WorkloadIndex     *int                `json:"workload_index,omitempty"`
+	Placements        []PlacementOverride `json:"placements,omitempty"`
 	// LaunchProfileID selects a saved profile. Mutually exclusive with
 	// explicit Variants/Parameters.
 	LaunchProfileID string            `json:"launch_profile_id,omitempty"`
@@ -165,12 +176,14 @@ type PlanRequest struct {
 
 // CreateRequest creates from a validated plan (openapi).
 type CreateRequest struct {
-	RecipeDigest    string              `json:"recipe_digest"`
-	Placements      []PlacementOverride `json:"placements,omitempty"`
-	LaunchProfileID string              `json:"launch_profile_id,omitempty"`
-	Variants        map[string]string   `json:"variants,omitempty"`
-	Parameters      map[string]any      `json:"parameters,omitempty"`
-	PlanDigest      string              `json:"plan_digest,omitempty"`
+	RecipeDigest      string              `json:"recipe_digest"`
+	AcquisitionPolicy string              `json:"acquisition_policy,omitempty"`
+	WorkloadIndex     *int                `json:"workload_index,omitempty"`
+	Placements        []PlacementOverride `json:"placements,omitempty"`
+	LaunchProfileID   string              `json:"launch_profile_id,omitempty"`
+	Variants          map[string]string   `json:"variants,omitempty"`
+	Parameters        map[string]any      `json:"parameters,omitempty"`
+	PlanDigest        string              `json:"plan_digest"`
 }
 
 // dispatchPhase is one rank's completed dispatch step.
@@ -207,26 +220,45 @@ func ParseDispatch(raw string) dispatchPhases {
 	return out
 }
 
-// PlanDigest identifies the launch contract the operator reviewed. Live
-// preflight telemetry (free bytes, cache/download actions, host readings, and
-// diagnostics) is deliberately excluded: Create recomputes and enforces that
-// telemetry, but harmless changes between preview and click must not make an
-// otherwise identical launch stale.
+// PlanDigest binds the reviewed launch and acquisition permissions, immutable
+// resource identities, destinations, actions, peer sources, and credential IDs.
+// Live free-space readings, verification timestamps and diagnostics are excluded.
 func (p *Plan) PlanDigest() string {
+	type resourceContract struct {
+		NodeID       string                 `json:"node_id"`
+		Required     bool                   `json:"required"`
+		Action       downloads.Action       `json:"action"`
+		SourceNode   string                 `json:"source_node,omitempty"`
+		SourcePath   string                 `json:"source_path,omitempty"`
+		CredentialID string                 `json:"credential_id,omitempty"`
+		Spec         downloads.ResourceSpec `json:"spec"`
+	}
 	contract := struct {
-		RecipeDigest  string            `json:"recipe_digest"`
-		RecipeName    string            `json:"name,omitempty"`
-		Variants      map[string]string `json:"variants,omitempty"`
-		Settings      map[string]any    `json:"settings,omitempty"`
-		WorkloadIndex int               `json:"workload_index"`
-		Placements    []Placement       `json:"placements"`
-		Fabric        *string           `json:"fabric,omitempty"`
-		Ports         []PortPreview     `json:"ports,omitempty"`
-		Endpoint      Endpoint          `json:"endpoint,omitempty"`
+		RecipeDigest         string             `json:"recipe_digest"`
+		RecipeName           string             `json:"name,omitempty"`
+		Variants             map[string]string  `json:"variants,omitempty"`
+		Parameters           map[string]any     `json:"parameters,omitempty"`
+		AcquisitionPolicy    string             `json:"acquisition_policy"`
+		AcquisitionResources []resourceContract `json:"acquisition_resources,omitempty"`
+		AcquisitionTargets   []downloads.Target `json:"acquisition_targets,omitempty"`
+		WorkloadIndex        int                `json:"workload_index"`
+		Placements           []Placement        `json:"placements"`
+		Fabric               *string            `json:"fabric,omitempty"`
+		Ports                []PortPreview      `json:"ports,omitempty"`
+		Endpoint             Endpoint           `json:"endpoint,omitempty"`
 	}{
 		RecipeDigest: p.RecipeDigest, RecipeName: p.RecipeName, Variants: p.Variants,
-		Settings: p.Settings, WorkloadIndex: p.WorkloadIndex, Placements: p.Placements,
-		Fabric: p.Fabric, Ports: p.Ports, Endpoint: p.Endpoint,
+		Parameters: p.Parameters, WorkloadIndex: p.WorkloadIndex, Placements: p.Placements,
+		AcquisitionPolicy: p.AcquisitionPolicy,
+		Fabric:            p.Fabric, Ports: p.Ports, Endpoint: p.Endpoint,
+	}
+	if p.Acquisition != nil {
+		contract.AcquisitionTargets = p.Acquisition.Targets
+		for _, resource := range p.Acquisition.Resources {
+			spec := resource.ResourceSpec
+			spec.SizeBytes = nil
+			contract.AcquisitionResources = append(contract.AcquisitionResources, resourceContract{NodeID: resource.NodeID, Required: resource.Required, Spec: spec, Action: resource.Action, SourceNode: resource.SourceNode, SourcePath: resource.SourcePath, CredentialID: resource.CredentialID})
+		}
 	}
 	b, err := cjson.Marshal(contract)
 	if err != nil {

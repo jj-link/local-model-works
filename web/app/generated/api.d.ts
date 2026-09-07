@@ -53,6 +53,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/benchmarks/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        /** Get one benchmark run and its live summary */
+        get: operations["getBenchmark"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmarks/{runId}/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        /** Download a succeeded benchmark result bundle */
+        get: operations["downloadBenchmarkBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmarks/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a non-terminal benchmark run */
+        post: operations["cancelBenchmark"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmarks/{runId}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        /** Download a succeeded benchmark summary */
+        get: operations["downloadBenchmarkSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmarks/{runId}/trials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        /** List normalized trials for one benchmark run */
+        get: operations["listBenchmarkTrials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/benchmarks/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List pinned benchmarks and live local runner availability */
+        get: operations["getBenchmarkCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/benchmarks/results": {
         parameters: {
             query?: never;
@@ -576,6 +688,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipe-assistant/codex/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startRecipeAssistantCodexLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-assistant/codex/login/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecipeAssistantCodexLogin"];
+        put?: never;
+        post?: never;
+        delete: operations["cancelRecipeAssistantCodexLogin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-assistant/codex/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["logoutRecipeAssistantCodex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-assistant/codex/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRecipeAssistantCodexModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-assistant/codex/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRecipeAssistantCodexStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-assistant/providers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["testRecipeAssistantProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipe-drafts": {
         parameters: {
             query?: never;
@@ -610,11 +822,139 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipe-drafts/{id}/comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get: operations["compareRecipeDraft"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateRecipeDraftContext"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/diagnostics/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["dismissRecipeDraftDiagnostics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecipeDraftFile"];
+        put: operations["updateRecipeDraftFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["generateRecipeDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/generation-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewRecipeGeneration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["inspectRecipeDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipe-drafts/{id}/install": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
             cookie?: never;
         };
         get?: never;
@@ -630,12 +970,86 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         post: operations["packageRecipeDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["discardRecipeDraftProposal"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/proposal/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acceptRecipeDraftProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveRecipeDraftReferences"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-drafts/{id}/run-excerpt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecipeDraftRunExcerpt"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -674,23 +1088,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/recipe-repositories/{id}/update": {
+    "/recipe-repositories/{id}/check-updates": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post: operations["startRecipeRepositoryUpdate"];
+        post: operations["checkRecipeRepositoryUpdates"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/recipe-repositories/{id}/update/plan": {
+    "/recipe-repositories/{id}/replacements": {
         parameters: {
             query?: never;
             header?: never;
@@ -699,7 +1115,23 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["planRecipeRepositoryUpdate"];
+        post: operations["startRecipeRepositoryReplacement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}/replacements/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["planRecipeRepositoryReplacement"];
         delete?: never;
         options?: never;
         head?: never;
@@ -734,6 +1166,97 @@ export interface paths {
         post?: never;
         /** Uninstall; blocked while referenced by any deployment or run */
         delete: operations["deleteRecipe"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipes/{digest}/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["getRecipeAvailability"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipes/{digest}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createRecipeChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipes/{digest}/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        get: operations["listRecipeDownloads"];
+        put?: never;
+        post: operations["startRecipeDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipes/{digest}/downloads/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeRecipeDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipes/{digest}/downloads/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["planRecipeDownload"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -989,54 +1512,186 @@ export interface components {
         };
         /** @enum {string} */
         ArtifactKind: "model" | "dataset" | "adapter" | "checkpoint" | "recipe" | "image" | "result" | "file";
+        BenchmarkCatalogEntry: {
+            benchmark_id: string;
+            dataset_locator?: string;
+            harnesses: components["schemas"]["BenchmarkCatalogHarness"][];
+            languages?: string[];
+            /** Format: uri */
+            reference_url?: string;
+            source_checksum?: string;
+            supports_repeated_candidates: boolean;
+            supports_task_filters: boolean;
+            supports_verifier: boolean;
+            task_count: number;
+            task_ids?: string[];
+            title: string;
+            version: string;
+        };
+        BenchmarkCatalogHarness: {
+            accepts_openai_compatible: boolean;
+            id: string;
+            requires_generation_deployment: boolean;
+            title: string;
+        };
+        BenchmarkCatalogResponse: {
+            benchmarks: components["schemas"]["BenchmarkCatalogEntry"][];
+            runner: components["schemas"]["BenchmarkRunnerAvailability"];
+        };
         BenchmarkCreate: {
+            benchmark_id: string;
+            /** @default 1 */
+            candidate_count: number;
+            /** @default 1 */
+            concurrency: number;
             /** Format: uuid */
-            deployment_id: string;
-            languages: string[];
+            generation_deployment_id?: string;
+            generation_model?: string;
+            harness: string;
+            languages?: ("python" | "javascript" | "go" | "rust" | "cpp" | "java")[];
             /** @default 512 */
             max_tokens: number;
-            /** @description Override the model field sent to the endpoint */
-            model_name?: string;
+            origin?: components["schemas"]["BenchmarkOriginInput"];
             /** @default 8 */
             prompts_per_language: number;
-            quantization?: string;
-            /** @description Why this benchmark is being run; stored with the result */
             reason?: string;
             /** @default 0 */
+            seed: number;
+            task_ids?: string[];
+            /** @default 0 */
             temperature: number;
-        };
-        BenchmarkResult: {
-            completion_tokens?: number;
+            /** Format: uuid */
+            verification_deployment_id?: string;
+            verification_model?: string;
+            verifier_pivots?: number;
+            /** @default 8 */
+            verifier_repetitions: number;
+            version: string;
+        } & ({
+            /** @constant */
+            benchmark_id?: "lmw-code-generation";
+            /** @constant */
+            candidate_count?: 1;
+            /** @constant */
+            harness?: "lmw-oneshot";
+            /** @constant */
+            version?: "1";
+        } | {
+            /** @constant */
+            benchmark_id?: "terminal-bench";
+            /** @constant */
+            harness?: "oracle";
+            /** @constant */
+            version?: "3.0.0";
+        } | {
+            /** @constant */
+            benchmark_id?: "terminal-bench";
+            /** @enum {unknown} */
+            harness?: "codex" | "mini-swe-agent";
+            /** @constant */
+            version?: "3.0.0";
+        });
+        BenchmarkLanguageResult: {
+            completion_tokens: number;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             endpoint?: string;
             first_token_ms?: {
                 [key: string]: number;
             };
             grading?: {
                 [key: string]: unknown;
-            } | null;
+            };
             language: string;
             latency_ms?: {
-                avg?: number;
-                p50?: number;
-                p90?: number;
-                p99?: number;
+                [key: string]: number;
             };
             model?: string;
-            prompt_tokens?: number;
-            quantization?: string | null;
+            prompt_tokens: number;
             reasoning?: {
                 [key: string]: unknown;
-            } | null;
-            requests?: number;
-            result_path?: string | null;
+            };
+            requests: number;
+            result_path?: string;
             /** Format: uuid */
             run_id: string;
-            successes?: number;
-            tokens_per_second?: number;
-            total_tokens?: number;
-            wall_seconds?: number;
+            successes: number;
+            tokens_per_second: number;
+            total_tokens: number;
+            wall_seconds: number;
+        };
+        BenchmarkOrigin: {
+            /** Format: uuid */
+            client_id: string;
+            client_name: string;
+            /** Format: uuid */
+            project_id?: string;
+            /** Format: uuid */
+            run_id?: string;
+        };
+        BenchmarkOriginInput: {
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            run_id: string;
+        };
+        BenchmarkRunResult: {
+            benchmark_id: string;
+            benchmark_version: string;
+            bundle_artifact_id?: string;
+            candidate_count: number;
+            completion_tokens: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            execution_node_id?: string;
+            /** Format: uuid */
+            generation_deployment_id?: string;
+            harness: string;
+            language_results: components["schemas"]["BenchmarkLanguageResult"][];
+            metrics: {
+                [key: string]: unknown;
+            };
+            oracle_pass_rate?: number | null;
+            origin?: components["schemas"]["BenchmarkOrigin"];
+            pass_at_1?: number | null;
+            passed_count: number;
+            prompt_tokens: number;
+            /** Format: uuid */
+            run_id: string;
+            summary_artifact_id?: string;
+            task_count: number;
+            total_tokens: number;
+            /** Format: uuid */
+            verification_deployment_id?: string;
+            verifier_pass_rate?: number | null;
+            wall_seconds: number;
+        };
+        BenchmarkRunSummary: {
+            result: components["schemas"]["BenchmarkRunResult"];
+            run: components["schemas"]["Run"];
+        };
+        BenchmarkRunnerAvailability: {
+            configured: boolean;
+            max_concurrency: number;
+            /** Format: uuid */
+            node_id?: string;
+            online: boolean;
+        };
+        BenchmarkTrialResult: {
+            candidate_index: number;
+            /** Format: date-time */
+            created_at: string;
+            metrics: {
+                [key: string]: unknown;
+            };
+            official_pass: boolean;
+            /** Format: uuid */
+            run_id: string;
+            task_id: string;
+            trajectory_path: string;
+            verifier_score?: number | null;
+            verifier_selected: boolean;
         };
         BrowserLoginRequest: {
             token: string;
@@ -1148,6 +1803,11 @@ export interface components {
             updated_at?: string;
         };
         DeploymentCreateRequest: {
+            /**
+             * @default require-existing
+             * @enum {string}
+             */
+            acquisition_policy: "require-existing" | "download-missing";
             /** @description Saved profile to apply; mutually exclusive with variants/parameters */
             launch_profile_id?: string;
             /** @description Optional parameter overrides; validated against the recipe manifest. */
@@ -1159,15 +1819,19 @@ export interface components {
                 node_id: string;
                 rank: number;
             }[];
-            /** @description Distinguishes an unchanged plan from the one previewed */
-            plan_digest?: string;
+            /** @description Required digest of the explicitly reviewed plan, including its acquisition policy. */
+            plan_digest: string;
             recipe_digest: string;
             /** @description Optional artifact name -> selected model variant. Must match the previewed plan. */
             variants?: {
                 [key: string]: string;
             };
+            workload_index?: number;
         };
         DeploymentPlan: {
+            acquisition?: components["schemas"]["RecipeDownloadPlan"];
+            /** @enum {string} */
+            acquisition_policy: "require-existing" | "download-missing";
             conflicts?: {
                 /** Format: uuid */
                 deployment_id?: string;
@@ -1184,7 +1848,8 @@ export interface components {
             fabric?: string | null;
             host_preparation?: components["schemas"]["HostPreparationPreview"][];
             images?: components["schemas"]["ImagePreview"][];
-            /** @description Effective launch settings for this plan */
+            missing_resources?: components["schemas"]["RecipeDownloadResource"][];
+            /** @description Effective launch parameters for this plan */
             parameters?: {
                 [key: string]: unknown;
             } | null;
@@ -1197,7 +1862,7 @@ export interface components {
                 rank: number;
             }[];
             /** @description Opaque digest for this previewed plan; pass to create to pin it */
-            plan_digest?: string;
+            plan_digest: string;
             ports?: {
                 container_port: number;
                 host_port: number;
@@ -1222,6 +1887,12 @@ export interface components {
             workload_index?: number | null;
         };
         DeploymentPlanRequest: {
+            /**
+             * @description Require exact local resources, or acquire missing resources through shared downloads before launch.
+             * @default require-existing
+             * @enum {string}
+             */
+            acquisition_policy: "require-existing" | "download-missing";
             /** @description Saved profile to apply; mutually exclusive with variants/parameters */
             launch_profile_id?: string;
             /** @description Optional parameter overrides; validated against the recipe manifest. */
@@ -1239,6 +1910,8 @@ export interface components {
             variants?: {
                 [key: string]: string;
             };
+            /** @description Optional explicit workload selection; otherwise selected from compatible fleet inventory. */
+            workload_index?: number;
         };
         Diagnostic: {
             code: string;
@@ -1588,22 +2261,244 @@ export interface components {
             /** @description Other installed versions of the same recipe name */
             version_count?: number;
         };
+        RecipeAvailability: {
+            devices: {
+                active_run_ids: string[];
+                diagnostics: components["schemas"]["Diagnostic"][];
+                /** Format: date-time */
+                last_checked_at?: string;
+                node_id: string;
+                node_name: string;
+                online: boolean;
+                other_versions: {
+                    identity: string;
+                    kind: string;
+                    path: string;
+                    supported_variants?: {
+                        [key: string]: string;
+                    };
+                    verification: components["schemas"]["RecipeResourceVerification"];
+                }[];
+                resources: components["schemas"]["RecipeAvailableResource"][];
+                running_deployments: components["schemas"]["RecipeRunningVersion"][];
+                runtime_diagnostics: components["schemas"]["Diagnostic"][];
+            }[];
+            diagnostics: components["schemas"]["Diagnostic"][];
+            recipe_digest: string;
+            variants: {
+                [key: string]: string;
+            };
+            workload_index: number;
+        };
+        RecipeAvailabilityRequest: {
+            launch_profile_id?: string;
+            refresh?: boolean;
+            targets?: components["schemas"]["RecipeDownloadTarget"][];
+            variants?: {
+                [key: string]: unknown;
+            };
+            workload_index?: number;
+        };
+        RecipeAvailableResource: {
+            destination: string;
+            identity: string;
+            index_digest?: string;
+            key: string;
+            /** @enum {string} */
+            kind: "artifact" | "recipe" | "image";
+            manifest_digest?: string;
+            platform?: string;
+            required: boolean;
+            verification: components["schemas"]["RecipeResourceVerification"];
+        };
+        RecipeChangeComparison: {
+            base_commit?: string;
+            base_recipe_digest?: string;
+            /** @enum {string} */
+            base_source_status: "available" | "unavailable";
+            configuration_changes: {
+                after?: unknown;
+                before?: unknown;
+                path: string;
+            }[];
+            files: {
+                after_sha256?: string;
+                before_sha256?: string;
+                binary: boolean;
+                /** @enum {string} */
+                change: "added" | "modified" | "removed";
+                path: string;
+            }[];
+            target_commit?: string;
+        };
+        RecipeChangeContext: {
+            base_assets?: components["schemas"]["RecipeDraftAssetSelection"][];
+            base_candidates?: components["schemas"]["RecipeDraftCandidate"][];
+            base_commit?: string;
+            base_manifest?: Record<string, never>;
+            base_recipe_digest?: string;
+            base_source?: Record<string, never>;
+            base_source_error?: string;
+            /** @enum {string} */
+            base_source_status: "available" | "unavailable";
+            base_tree?: string;
+            deployment_id?: string;
+            expected_current_digest?: string;
+            /** @enum {string} */
+            kind: "add" | "update" | "repair";
+            repository_id?: string;
+        };
         RecipeDetail: components["schemas"]["Recipe"] & {
             /** @description Canonical recipe manifest JSON (localmodelworks/v1alpha1) */
             manifest?: Record<string, never>;
         };
-        RecipeDraft: {
-            candidates: Record<string, never>[];
+        RecipeDownloadAccepted: {
+            run_id: string;
+        };
+        RecipeDownloadCreateRequest: components["schemas"]["RecipeDownloadPlanRequest"] & {
+            plan_digest: string;
+        };
+        RecipeDownloadCredential: {
+            host: string;
+            resource: string;
+            secret_id: string;
+        };
+        RecipeDownloadItem: {
+            checkpoint: Record<string, never>;
+            command_id?: string;
+            error?: {
+                code?: string;
+                message?: string;
+                retryable?: boolean;
+            };
+            id: string;
+            node_id: string;
+            predecessor_item_id?: string;
+            resource: components["schemas"]["RecipeDownloadResource"];
+            resource_key: string;
+            run_id: string;
+            /** @enum {string} */
+            state: "pending" | "checking" | "transferring" | "verifying" | "cancelling" | "succeeded" | "failed" | "cancelled" | "interrupted";
+            transfer_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RecipeDownloadPlan: {
+            diagnostics: components["schemas"]["Diagnostic"][];
+            plan_digest: string;
+            ready: boolean;
+            recipe_digest: string;
+            resources: components["schemas"]["RecipeDownloadResource"][];
+            storage: components["schemas"]["RecipeDownloadStorage"][];
+            targets: components["schemas"]["RecipeDownloadTarget"][];
+            variants: {
+                [key: string]: string;
+            };
+            workload_index: number;
+        };
+        RecipeDownloadPlanRequest: components["schemas"]["RecipeDownloadSelection"] & {
+            resume_run_id?: string;
+            targets: components["schemas"]["RecipeDownloadTarget"][];
+        };
+        RecipeDownloadResource: {
+            /** @enum {string} */
+            action: "reuse" | "validate-local" | "download-origin" | "peer-copy";
+            /** Format: int64 */
+            bytes_remaining?: number;
+            /** Format: int64 */
+            bytes_total?: number;
+            credential_id?: string;
+            destination: string;
+            identity: string;
+            index_digest?: string;
+            key: string;
+            /** @enum {string} */
+            kind: "artifact" | "recipe" | "image";
+            manifest_digest?: string;
+            node_id: string;
+            platform?: string;
+            required: boolean;
+            /** Format: int64 */
+            size_bytes?: number;
+            source: {
+                digest?: string;
+                reference?: string;
+                revision?: string;
+                type: string;
+                url?: string;
+            };
+            source_node?: string;
+            source_path?: string;
+            verification: components["schemas"]["RecipeResourceVerification"];
+        };
+        RecipeDownloadResumeRequest: {
+            credentials?: components["schemas"]["RecipeDownloadCredential"][];
+            plan_digest: string;
+        };
+        RecipeDownloadRun: {
             /** Format: date-time */
             created_at: string;
-            diagnostics: Record<string, never>[];
+            /** Format: date-time */
+            finished_at?: string;
+            input: {
+                credentials?: components["schemas"]["RecipeDownloadCredential"][];
+                plan: components["schemas"]["RecipeDownloadPlan"];
+                predecessor_run_id?: string;
+            };
+            items: components["schemas"]["RecipeDownloadItem"][];
+            run_id: string;
+            state: string;
+        };
+        RecipeDownloadSelection: {
+            credentials?: components["schemas"]["RecipeDownloadCredential"][];
+            launch_profile_id?: string;
+            targets?: components["schemas"]["RecipeDownloadTarget"][];
+            variants?: {
+                [key: string]: unknown;
+            };
+            workload_index?: number;
+        };
+        RecipeDownloadStorage: {
+            /** Format: int64 */
+            available_bytes?: number;
+            destination: string;
+            filesystem: string;
+            node_id: string;
+            /** Format: int64 */
+            required_bytes?: number;
+            /** Format: int64 */
+            reserve_bytes: number;
+            resource_keys: string[];
+            /** Format: int64 */
+            staging_bytes?: number;
+            sufficient?: boolean;
+            /** Format: int64 */
+            total_bytes?: number;
+        };
+        RecipeDownloadTarget: {
+            cache_root?: string;
+            node_id: string;
+        };
+        RecipeDraft: {
+            acknowledged_warnings: string[];
+            candidates: components["schemas"]["RecipeDraftCandidate"][];
+            change_context?: components["schemas"]["RecipeChangeContext"];
+            context_selection: components["schemas"]["RecipeDraftContextFile"][];
+            /** Format: date-time */
+            created_at: string;
+            diagnostics: components["schemas"]["RecipeDraftDiagnostic"][];
             id: string;
             manifest: Record<string, never>;
+            operation?: components["schemas"]["RecipeDraftOperation"];
             package_digest?: string;
+            parent_draft_id?: string;
+            proposal?: components["schemas"]["RecipeDraftSuggestion"];
+            questions: components["schemas"]["RecipeDraftQuestion"][];
             resolved_commit?: string;
+            resolved_references: components["schemas"]["RecipeResolvedReference"][];
             resolved_tree?: string;
             run_id?: string;
-            selected_assets: string[];
+            selected_assets: components["schemas"]["RecipeDraftAssetSelection"][];
             source: Record<string, never>;
             /** @enum {string} */
             state: "analyzing" | "needs_input" | "valid" | "packaged" | "installed" | "failed";
@@ -1611,10 +2506,125 @@ export interface components {
             updated_at: string;
             version: number;
         };
+        RecipeDraftAssetSelection: {
+            /** @enum {string} */
+            origin?: "source" | "generated";
+            path: string;
+            sha256: string;
+        };
+        RecipeDraftCandidate: {
+            binary?: boolean;
+            /** @enum {string} */
+            origin: "source" | "generated";
+            path: string;
+            sha256: string;
+            size: number;
+            source_path?: string;
+        };
+        RecipeDraftContextFile: {
+            end_line?: number;
+            /** @enum {string} */
+            origin?: "source" | "generated";
+            path: string;
+            sha256: string;
+            source_commit?: string;
+            start_line?: number;
+        };
+        RecipeDraftDiagnostic: {
+            /** @description Exact current warning token accepted by acknowledged_warnings */
+            acknowledgement?: string;
+            blocking: boolean;
+            code: string;
+            dismissible: boolean;
+            id: string;
+            message: string;
+            path?: string;
+            /** @enum {string} */
+            phase: "inspect" | "generate" | "resolve" | "validate" | "package" | "install" | "launch";
+            remediation: string;
+            resource?: string;
+            retryable: boolean;
+            /** @enum {string} */
+            severity: "error" | "warning";
+            source_line?: number;
+            source_path?: string;
+        };
+        RecipeDraftOperation: {
+            id: string;
+            kind: string;
+            message?: string;
+            phase?: string;
+            previous_state: string;
+            started_at: string;
+            updated_at: string;
+        };
+        RecipeDraftOperationAccepted: {
+            draft_id: string;
+            run_id: string;
+        };
+        RecipeDraftQuestion: {
+            answer?: string;
+            id: string;
+            path?: string;
+            question: string;
+        };
         RecipeDraftSource: {
             path?: string;
             remote: string;
-            revision: string;
+            revision?: string;
+        };
+        RecipeDraftSuggestion: {
+            base_version: number;
+            diagnostics: components["schemas"]["RecipeDraftDiagnostic"][];
+            evidence: {
+                end_line?: number;
+                path: string;
+                sha256: string;
+                source_commit?: string;
+                source_path?: string;
+                start_line?: number;
+            }[];
+            files: {
+                content: string;
+                path: string;
+                source_path?: string;
+            }[];
+            id: string;
+            manifest: {
+                [key: string]: unknown;
+            };
+            model?: string;
+            preview_sha256?: string;
+            provider_id?: string;
+            provider_version?: string;
+            questions: components["schemas"]["RecipeDraftQuestion"][];
+            run_id?: string;
+            selected_source_assets: components["schemas"]["RecipeDraftAssetSelection"][];
+            summary?: string;
+        };
+        RecipeGenerationPreview: {
+            destination: string;
+            model: string;
+            preview_sha256: string;
+            provider_id: string;
+            provider_version: string;
+            request: {
+                [key: string]: unknown;
+            };
+            warnings: string[];
+        };
+        RecipeGenerationPreviewRequest: {
+            diagnostic_ids: string[];
+            instruction?: string;
+            model?: string;
+            provider_id: string;
+            provider_version: string;
+            run_excerpts: components["schemas"]["RecipeRunExcerptSelection"][];
+        };
+        RecipeGenerationRequest: components["schemas"]["RecipeGenerationPreviewRequest"] & {
+            /** @enum {boolean} */
+            content_consent: true;
+            preview_sha256: string;
         };
         RecipeImport: {
             source: components["schemas"]["RecipeSource"];
@@ -1629,6 +2639,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             current_recipe?: components["schemas"]["Recipe"];
+            head_check_error?: string;
             /** Format: date-time */
             head_checked_at?: string;
             id: string;
@@ -1647,12 +2658,14 @@ export interface components {
             versions: components["schemas"]["RecipeRepositoryVersion"][];
         };
         RecipeRepositoryDetail: components["schemas"]["RecipeRepository"];
-        RecipeRepositoryUpdatePlanRequest: {
-            expected_head_commit: string;
+        RecipeRepositoryReplacementPlanRequest: {
+            deployment_ids: string[];
+            target_digest: string;
         };
-        RecipeRepositoryUpdateRequest: {
-            expected_head_commit: string;
+        RecipeRepositoryReplacementRequest: {
+            deployment_ids: string[];
             plan_digest: string;
+            target_digest: string;
         };
         RecipeRepositoryVersion: {
             canonical: boolean;
@@ -1661,6 +2674,41 @@ export interface components {
             installed_at: string;
             recipe: components["schemas"]["Recipe"];
             tree_sha?: string;
+        };
+        RecipeResolvedReference: {
+            evidence_note?: string;
+            input_identity: string;
+            origin: string;
+            path: string;
+            resolved_value: string;
+            verified_at: string;
+        };
+        RecipeResourceVerification: {
+            diagnostics?: components["schemas"]["Diagnostic"][];
+            stale: boolean;
+            /** @enum {string} */
+            state: "unknown" | "missing" | "partial" | "verifying" | "available" | "invalid";
+            /** Format: date-time */
+            verified_at?: string;
+        };
+        RecipeRunExcerptSelection: {
+            byte_count: number;
+            deployment_id: string;
+            offset: number;
+            rank: number;
+            run_id: string;
+            /** @enum {string} */
+            stream: "stdout" | "stderr";
+        };
+        RecipeRunningVersion: {
+            deployment_id: string;
+            rank: number;
+            recipe_digest: string;
+            state: string;
+            variants: {
+                [key: string]: string;
+            };
+            workload_index: number;
         };
         RecipeSource: {
             path?: string;
@@ -1685,12 +2733,33 @@ export interface components {
             added_permissions: string[];
             candidate_permissions: string[];
             current_permissions: string[];
+            deployment_ids?: string[];
+            deployments?: {
+                added_permissions: string[];
+                current_permissions: string[];
+                deployment_plan: components["schemas"]["DeploymentPlan"];
+                fabric?: string;
+                parameters?: {
+                    [key: string]: unknown;
+                };
+                placement: string;
+                removed_permissions: string[];
+                source_deployment_id: string;
+                source_digest: string;
+                variants?: {
+                    [key: string]: string;
+                };
+                workload_index: number;
+            }[];
             diagnostics: components["schemas"]["Diagnostic"][];
             installed_devices: components["schemas"]["RecipeUpdateDevice"][];
             plan_digest: string;
             ready: boolean;
             removed_permissions: string[];
+            repository_id?: string;
             running_deployments: components["schemas"]["RecipeUpdateRunningDeployment"][];
+            target_digest?: string;
+            unchanged_deployment_ids?: string[];
         };
         RecipeUpdateRunningDeployment: {
             current_step: number;
@@ -1770,14 +2839,14 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "recipe-assistant";
             /** Format: date-time */
             updated_at?: string;
         };
         SecretWrite: {
             name: string;
             /** @enum {string} */
-            purpose: "huggingface" | "github" | "registry";
+            purpose: "huggingface" | "github" | "registry" | "recipe-assistant";
             value: string;
         };
         ServingPayload: {
@@ -1907,7 +2976,8 @@ export interface components {
             artifact_id: string;
             /** Format: uuid */
             dest_node: string;
-            dest_path: string;
+            /** @description Optional exact canonical destination under a configured cache root. Omit to use the verified artifact identity destination; arbitrary basenames are rejected. */
+            dest_path?: string;
             /** Format: uuid */
             source_node: string;
         };
@@ -1967,6 +3037,7 @@ export interface components {
     };
     parameters: {
         ID: string;
+        IfMatch: string;
     };
     requestBodies: never;
     headers: never;
@@ -2025,7 +3096,12 @@ export interface operations {
     };
     listBenchmarks: {
         parameters: {
-            query?: never;
+            query?: {
+                origin_run_id?: string;
+                origin_project_id?: string;
+                cursor?: string;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2035,6 +3111,7 @@ export interface operations {
             /** @description Benchmark runs */
             200: {
                 headers: {
+                    "X-Next-Cursor"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -2073,6 +3150,155 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getBenchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Benchmark run summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkRunSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadBenchmarkBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Benchmark result bundle */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    "Content-Length"?: number;
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cancelBenchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Benchmark cancellation requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    downloadBenchmarkSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable benchmark summary JSON */
+            200: {
+                headers: {
+                    "Content-Length"?: number;
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listBenchmarkTrials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Benchmark trials */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkTrialResult"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getBenchmarkCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Benchmark catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkCatalogResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listBenchmarkResults: {
         parameters: {
             query?: never;
@@ -2082,13 +3308,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Per-language results across runs */
+            /** @description Benchmark run summaries */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BenchmarkResult"][];
+                    "application/json": components["schemas"]["BenchmarkRunSummary"][];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -3084,9 +4310,159 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
-    listRecipeDrafts: {
+    startRecipeAssistantCodexLogin: {
         parameters: {
             query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device login started */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    getRecipeAssistantCodexLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device login status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    cancelRecipeAssistantCodexLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device login cancelled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    logoutRecipeAssistantCodex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dedicated Codex account logged out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listRecipeAssistantCodexModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available Codex models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>[];
+                };
+            };
+        };
+    };
+    getRecipeAssistantCodexStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dedicated Codex account status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    testRecipeAssistantProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider connection result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                        model: string;
+                        ok: boolean;
+                    };
+                };
+            };
+        };
+    };
+    listRecipeDrafts: {
+        parameters: {
+            query?: {
+                package_digest?: string;
+                repository_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3117,15 +4493,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Draft analysis job accepted */
+            /** @description Draft inspection accepted */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        run_id: string;
-                    };
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
                 };
             };
         };
@@ -3156,7 +4530,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                "If-Match": string;
+                "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
                 id: components["parameters"]["ID"];
@@ -3166,8 +4540,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    acknowledged_warnings?: string[];
+                    answers?: {
+                        answer: string;
+                        question_id: string;
+                    }[];
                     manifest: Record<string, never>;
-                    selected_assets: string[];
+                    selected_assets: components["schemas"]["RecipeDraftAssetSelection"][];
                 };
             };
         };
@@ -3186,7 +4565,9 @@ export interface operations {
     deleteRecipeDraft: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
             path: {
                 id: components["parameters"]["ID"];
             };
@@ -3203,7 +4584,7 @@ export interface operations {
             };
         };
     };
-    installRecipeDraft: {
+    compareRecipeDraft: {
         parameters: {
             query?: never;
             header?: never;
@@ -3214,13 +4595,253 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Installed recipe */
-            201: {
+            /** @description Saved and candidate source comparison */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Recipe"];
+                    "application/json": components["schemas"]["RecipeChangeComparison"];
+                };
+            };
+        };
+    };
+    updateRecipeDraftContext: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    files: components["schemas"]["RecipeDraftContextFile"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated draft context */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    dismissRecipeDraftDiagnostics: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    diagnostic_ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Attempt diagnostics dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    getRecipeDraftFile: {
+        parameters: {
+            query: {
+                path: string;
+                sha256: string;
+                source_commit?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft-owned file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        content: string;
+                        origin: string;
+                        path: string;
+                        sha256: string;
+                    };
+                };
+            };
+        };
+    };
+    updateRecipeDraftFile: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    content: string;
+                    path: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Generated file updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    generateRecipeDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeGenerationRequest"];
+            };
+        };
+        responses: {
+            /** @description Generation operation accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
+                };
+            };
+        };
+    };
+    previewRecipeGeneration: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeGenerationPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact sanitized outbound content; no provider request sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeGenerationPreview"];
+                };
+            };
+            /** @description Draft or provider settings changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    inspectRecipeDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pinned inspection accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
+                };
+            };
+        };
+    };
+    installRecipeDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    acknowledged_warnings: string[];
+                    package_digest: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Install operation accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
                 };
             };
         };
@@ -3228,6 +4849,130 @@ export interface operations {
     packageRecipeDraft: {
         parameters: {
             query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Package operation accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
+                };
+            };
+        };
+    };
+    discardRecipeDraftProposal: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    proposal_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Proposal discarded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    acceptRecipeDraftProposal: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    proposal_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Proposal accepted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraft"];
+                };
+            };
+        };
+    };
+    resolveRecipeDraftReferences: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    credentials?: {
+                        host: string;
+                        path: string;
+                        secret_id: string;
+                    }[];
+                    file_checksums?: {
+                        evidence_note: string;
+                        path: string;
+                        sha256: string;
+                        url: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Reference resolution accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
+                };
+            };
+        };
+    };
+    getRecipeDraftRunExcerpt: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 id: components["parameters"]["ID"];
@@ -3236,13 +4981,18 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Packaged draft */
+            /** @description Bounded redacted excerpt from the associated run */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecipeDraft"];
+                    "application/json": {
+                        run_id: string;
+                        stderr: string;
+                        stdout: string;
+                        truncated: boolean;
+                    };
                 };
             };
         };
@@ -3291,7 +5041,29 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    startRecipeRepositoryUpdate: {
+    checkRecipeRepositoryUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recorded upstream check including source errors */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdateStatus"];
+                };
+            };
+        };
+    };
+    startRecipeRepositoryReplacement: {
         parameters: {
             query?: never;
             header?: never;
@@ -3302,7 +5074,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RecipeRepositoryUpdateRequest"];
+                "application/json": components["schemas"]["RecipeRepositoryReplacementRequest"];
             };
         };
         responses: {
@@ -3320,7 +5092,7 @@ export interface operations {
             422: components["responses"]["Unprocessable"];
         };
     };
-    planRecipeRepositoryUpdate: {
+    planRecipeRepositoryReplacement: {
         parameters: {
             query?: never;
             header?: never;
@@ -3331,7 +5103,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RecipeRepositoryUpdatePlanRequest"];
+                "application/json": components["schemas"]["RecipeRepositoryReplacementPlanRequest"];
             };
         };
         responses: {
@@ -3417,6 +5189,188 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getRecipeAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeAvailabilityRequest"];
+            };
+        };
+        responses: {
+            /** @description Observed exact resource availability and separate running versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeAvailability"];
+                };
+            };
+        };
+    };
+    createRecipeChange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    deployment_id?: string;
+                    expected_current_digest: string;
+                    expected_head_commit?: string;
+                    /** @enum {string} */
+                    kind: "repair" | "update";
+                };
+            };
+        };
+        responses: {
+            /** @description Editable change accepted without workload effects */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDraftOperationAccepted"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Saved version changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    listRecipeDownloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted downloads with frozen choices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDownloadRun"][];
+                };
+            };
+        };
+    };
+    startRecipeDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeDownloadCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Download accepted without creating a deployment */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDownloadAccepted"];
+                };
+            };
+            /** @description Reviewed acquisition plan changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resumeRecipeDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeDownloadResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Explicit linked attempt accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDownloadAccepted"];
+                };
+            };
+            /** @description Reviewed acquisition plan changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    planRecipeDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeDownloadPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Reviewed storage-only acquisition plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeDownloadPlan"];
+                };
+            };
         };
     };
     listLaunchProfiles: {

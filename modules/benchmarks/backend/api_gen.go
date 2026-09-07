@@ -4,13 +4,46 @@
 package backend
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for BenchmarkCreateLanguages.
+const (
+	Cpp        BenchmarkCreateLanguages = "cpp"
+	Go         BenchmarkCreateLanguages = "go"
+	Java       BenchmarkCreateLanguages = "java"
+	Javascript BenchmarkCreateLanguages = "javascript"
+	Python     BenchmarkCreateLanguages = "python"
+	Rust       BenchmarkCreateLanguages = "rust"
+)
+
+// Valid indicates whether the value is a known member of the BenchmarkCreateLanguages enum.
+func (e BenchmarkCreateLanguages) Valid() bool {
+	switch e {
+	case Cpp:
+		return true
+	case Go:
+		return true
+	case Java:
+		return true
+	case Javascript:
+		return true
+	case Python:
+		return true
+	case Rust:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for RunState.
 const (
@@ -54,47 +87,173 @@ func (e RunState) Valid() bool {
 	}
 }
 
-// BenchmarkCreate defines model for BenchmarkCreate.
-type BenchmarkCreate struct {
-	DeploymentId openapi_types.UUID `json:"deployment_id"`
-	Languages    []string           `json:"languages"`
-	MaxTokens    *int               `json:"max_tokens,omitempty"`
-
-	// ModelName Override the model field sent to the endpoint
-	ModelName          *string `json:"model_name,omitempty"`
-	PromptsPerLanguage *int    `json:"prompts_per_language,omitempty"`
-	Quantization       *string `json:"quantization,omitempty"`
-
-	// Reason Why this benchmark is being run; stored with the result
-	Reason      *string  `json:"reason,omitempty"`
-	Temperature *float32 `json:"temperature,omitempty"`
+// BenchmarkCatalogEntry defines model for BenchmarkCatalogEntry.
+type BenchmarkCatalogEntry struct {
+	BenchmarkId                string                    `json:"benchmark_id"`
+	DatasetLocator             *string                   `json:"dataset_locator,omitempty"`
+	Harnesses                  []BenchmarkCatalogHarness `json:"harnesses"`
+	Languages                  *[]string                 `json:"languages,omitempty"`
+	ReferenceUrl               *string                   `json:"reference_url,omitempty"`
+	SourceChecksum             *string                   `json:"source_checksum,omitempty"`
+	SupportsRepeatedCandidates bool                      `json:"supports_repeated_candidates"`
+	SupportsTaskFilters        bool                      `json:"supports_task_filters"`
+	SupportsVerifier           bool                      `json:"supports_verifier"`
+	TaskCount                  int                       `json:"task_count"`
+	TaskIds                    *[]string                 `json:"task_ids,omitempty"`
+	Title                      string                    `json:"title"`
+	Version                    string                    `json:"version"`
 }
 
-// BenchmarkResult defines model for BenchmarkResult.
-type BenchmarkResult struct {
-	CompletionTokens *int                    `json:"completion_tokens,omitempty"`
-	CreatedAt        *time.Time              `json:"created_at,omitempty"`
+// BenchmarkCatalogHarness defines model for BenchmarkCatalogHarness.
+type BenchmarkCatalogHarness struct {
+	AcceptsOpenaiCompatible      bool   `json:"accepts_openai_compatible"`
+	Id                           string `json:"id"`
+	RequiresGenerationDeployment bool   `json:"requires_generation_deployment"`
+	Title                        string `json:"title"`
+}
+
+// BenchmarkCatalogResponse defines model for BenchmarkCatalogResponse.
+type BenchmarkCatalogResponse struct {
+	Benchmarks []BenchmarkCatalogEntry     `json:"benchmarks"`
+	Runner     BenchmarkRunnerAvailability `json:"runner"`
+}
+
+// BenchmarkCreate defines model for BenchmarkCreate.
+type BenchmarkCreate struct {
+	BenchmarkId              string                      `json:"benchmark_id"`
+	CandidateCount           *int                        `json:"candidate_count,omitempty"`
+	Concurrency              *int                        `json:"concurrency,omitempty"`
+	GenerationDeploymentId   *openapi_types.UUID         `json:"generation_deployment_id,omitempty"`
+	GenerationModel          *string                     `json:"generation_model,omitempty"`
+	Harness                  string                      `json:"harness"`
+	Languages                *[]BenchmarkCreateLanguages `json:"languages,omitempty"`
+	MaxTokens                *int                        `json:"max_tokens,omitempty"`
+	Origin                   *BenchmarkOriginInput       `json:"origin,omitempty"`
+	PromptsPerLanguage       *int                        `json:"prompts_per_language,omitempty"`
+	Reason                   *string                     `json:"reason,omitempty"`
+	Seed                     *int                        `json:"seed,omitempty"`
+	TaskIds                  *[]string                   `json:"task_ids,omitempty"`
+	Temperature              *float32                    `json:"temperature,omitempty"`
+	VerificationDeploymentId *openapi_types.UUID         `json:"verification_deployment_id,omitempty"`
+	VerificationModel        *string                     `json:"verification_model,omitempty"`
+	VerifierPivots           *int                        `json:"verifier_pivots,omitempty"`
+	VerifierRepetitions      *int                        `json:"verifier_repetitions,omitempty"`
+	Version                  string                      `json:"version"`
+	union                    json.RawMessage
+}
+
+// BenchmarkCreateLanguages defines model for BenchmarkCreate.Languages.
+type BenchmarkCreateLanguages string
+
+// BenchmarkCreate0 defines model for BenchmarkCreate.0.
+type BenchmarkCreate0 struct {
+	BenchmarkId    interface{} `json:"benchmark_id,omitempty"`
+	CandidateCount interface{} `json:"candidate_count,omitempty"`
+	Harness        interface{} `json:"harness,omitempty"`
+	Version        interface{} `json:"version,omitempty"`
+}
+
+// BenchmarkCreate1 defines model for BenchmarkCreate.1.
+type BenchmarkCreate1 struct {
+	BenchmarkId interface{} `json:"benchmark_id,omitempty"`
+	Harness     interface{} `json:"harness,omitempty"`
+	Version     interface{} `json:"version,omitempty"`
+}
+
+// BenchmarkCreate2 defines model for BenchmarkCreate.2.
+type BenchmarkCreate2 struct {
+	BenchmarkId interface{} `json:"benchmark_id,omitempty"`
+	Harness     interface{} `json:"harness,omitempty"`
+	Version     interface{} `json:"version,omitempty"`
+}
+
+// BenchmarkLanguageResult defines model for BenchmarkLanguageResult.
+type BenchmarkLanguageResult struct {
+	CompletionTokens int                     `json:"completion_tokens"`
+	CreatedAt        time.Time               `json:"created_at"`
 	Endpoint         *string                 `json:"endpoint,omitempty"`
 	FirstTokenMs     *map[string]float32     `json:"first_token_ms,omitempty"`
 	Grading          *map[string]interface{} `json:"grading,omitempty"`
 	Language         string                  `json:"language"`
-	LatencyMs        *struct {
-		Avg *float32 `json:"avg,omitempty"`
-		P50 *float32 `json:"p50,omitempty"`
-		P90 *float32 `json:"p90,omitempty"`
-		P99 *float32 `json:"p99,omitempty"`
-	} `json:"latency_ms,omitempty"`
-	Model           *string                 `json:"model,omitempty"`
-	PromptTokens    *int                    `json:"prompt_tokens,omitempty"`
-	Quantization    *string                 `json:"quantization,omitempty"`
-	Reasoning       *map[string]interface{} `json:"reasoning,omitempty"`
-	Requests        *int                    `json:"requests,omitempty"`
-	ResultPath      *string                 `json:"result_path,omitempty"`
-	RunId           openapi_types.UUID      `json:"run_id"`
-	Successes       *int                    `json:"successes,omitempty"`
-	TokensPerSecond *float32                `json:"tokens_per_second,omitempty"`
-	TotalTokens     *int                    `json:"total_tokens,omitempty"`
-	WallSeconds     *float32                `json:"wall_seconds,omitempty"`
+	LatencyMs        *map[string]float32     `json:"latency_ms,omitempty"`
+	Model            *string                 `json:"model,omitempty"`
+	PromptTokens     int                     `json:"prompt_tokens"`
+	Reasoning        *map[string]interface{} `json:"reasoning,omitempty"`
+	Requests         int                     `json:"requests"`
+	ResultPath       *string                 `json:"result_path,omitempty"`
+	RunId            openapi_types.UUID      `json:"run_id"`
+	Successes        int                     `json:"successes"`
+	TokensPerSecond  float32                 `json:"tokens_per_second"`
+	TotalTokens      int                     `json:"total_tokens"`
+	WallSeconds      float32                 `json:"wall_seconds"`
+}
+
+// BenchmarkOrigin defines model for BenchmarkOrigin.
+type BenchmarkOrigin struct {
+	ClientId   openapi_types.UUID  `json:"client_id"`
+	ClientName string              `json:"client_name"`
+	ProjectId  *openapi_types.UUID `json:"project_id,omitempty"`
+	RunId      *openapi_types.UUID `json:"run_id,omitempty"`
+}
+
+// BenchmarkOriginInput defines model for BenchmarkOriginInput.
+type BenchmarkOriginInput struct {
+	ProjectId openapi_types.UUID `json:"project_id"`
+	RunId     openapi_types.UUID `json:"run_id"`
+}
+
+// BenchmarkRunResult defines model for BenchmarkRunResult.
+type BenchmarkRunResult struct {
+	BenchmarkId              string                    `json:"benchmark_id"`
+	BenchmarkVersion         string                    `json:"benchmark_version"`
+	BundleArtifactId         *string                   `json:"bundle_artifact_id,omitempty"`
+	CandidateCount           int                       `json:"candidate_count"`
+	CompletionTokens         int                       `json:"completion_tokens"`
+	CreatedAt                time.Time                 `json:"created_at"`
+	ExecutionNodeId          *openapi_types.UUID       `json:"execution_node_id,omitempty"`
+	GenerationDeploymentId   *openapi_types.UUID       `json:"generation_deployment_id,omitempty"`
+	Harness                  string                    `json:"harness"`
+	LanguageResults          []BenchmarkLanguageResult `json:"language_results"`
+	Metrics                  map[string]interface{}    `json:"metrics"`
+	OraclePassRate           *float32                  `json:"oracle_pass_rate,omitempty"`
+	Origin                   *BenchmarkOrigin          `json:"origin,omitempty"`
+	PassAt1                  *float32                  `json:"pass_at_1,omitempty"`
+	PassedCount              int                       `json:"passed_count"`
+	PromptTokens             int                       `json:"prompt_tokens"`
+	RunId                    openapi_types.UUID        `json:"run_id"`
+	SummaryArtifactId        *string                   `json:"summary_artifact_id,omitempty"`
+	TaskCount                int                       `json:"task_count"`
+	TotalTokens              int                       `json:"total_tokens"`
+	VerificationDeploymentId *openapi_types.UUID       `json:"verification_deployment_id,omitempty"`
+	VerifierPassRate         *float32                  `json:"verifier_pass_rate,omitempty"`
+	WallSeconds              float32                   `json:"wall_seconds"`
+}
+
+// BenchmarkRunSummary defines model for BenchmarkRunSummary.
+type BenchmarkRunSummary struct {
+	Result BenchmarkRunResult `json:"result"`
+	Run    Run                `json:"run"`
+}
+
+// BenchmarkRunnerAvailability defines model for BenchmarkRunnerAvailability.
+type BenchmarkRunnerAvailability struct {
+	Configured     bool                `json:"configured"`
+	MaxConcurrency int                 `json:"max_concurrency"`
+	NodeId         *openapi_types.UUID `json:"node_id,omitempty"`
+	Online         bool                `json:"online"`
+}
+
+// BenchmarkTrialResult defines model for BenchmarkTrialResult.
+type BenchmarkTrialResult struct {
+	CandidateIndex   int                    `json:"candidate_index"`
+	CreatedAt        time.Time              `json:"created_at"`
+	Metrics          map[string]interface{} `json:"metrics"`
+	OfficialPass     bool                   `json:"official_pass"`
+	RunId            openapi_types.UUID     `json:"run_id"`
+	TaskId           string                 `json:"task_id"`
+	TrajectoryPath   string                 `json:"trajectory_path"`
+	VerifierScore    *float32               `json:"verifier_score,omitempty"`
+	VerifierSelected bool                   `json:"verifier_selected"`
 }
 
 // Error defines model for Error.
@@ -146,20 +305,415 @@ type Unauthorized = Error
 // Unprocessable defines model for Unprocessable.
 type Unprocessable = Error
 
+// ListBenchmarksParams defines parameters for ListBenchmarks.
+type ListBenchmarksParams struct {
+	OriginRunId     *openapi_types.UUID `form:"origin_run_id,omitempty" json:"origin_run_id,omitempty"`
+	OriginProjectId *openapi_types.UUID `form:"origin_project_id,omitempty" json:"origin_project_id,omitempty"`
+	Cursor          *string             `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit           *int                `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CreateBenchmarkJSONRequestBody defines body for CreateBenchmark for application/json ContentType.
 type CreateBenchmarkJSONRequestBody = BenchmarkCreate
+
+// AsBenchmarkCreate0 returns the union data inside the BenchmarkCreate as a BenchmarkCreate0
+func (t BenchmarkCreate) AsBenchmarkCreate0() (BenchmarkCreate0, error) {
+	var body BenchmarkCreate0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromBenchmarkCreate0 overwrites any union data inside the BenchmarkCreate as the provided BenchmarkCreate0
+func (t *BenchmarkCreate) FromBenchmarkCreate0(v BenchmarkCreate0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeBenchmarkCreate0 performs a merge with any union data inside the BenchmarkCreate, using the provided BenchmarkCreate0
+func (t *BenchmarkCreate) MergeBenchmarkCreate0(v BenchmarkCreate0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsBenchmarkCreate1 returns the union data inside the BenchmarkCreate as a BenchmarkCreate1
+func (t BenchmarkCreate) AsBenchmarkCreate1() (BenchmarkCreate1, error) {
+	var body BenchmarkCreate1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromBenchmarkCreate1 overwrites any union data inside the BenchmarkCreate as the provided BenchmarkCreate1
+func (t *BenchmarkCreate) FromBenchmarkCreate1(v BenchmarkCreate1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeBenchmarkCreate1 performs a merge with any union data inside the BenchmarkCreate, using the provided BenchmarkCreate1
+func (t *BenchmarkCreate) MergeBenchmarkCreate1(v BenchmarkCreate1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsBenchmarkCreate2 returns the union data inside the BenchmarkCreate as a BenchmarkCreate2
+func (t BenchmarkCreate) AsBenchmarkCreate2() (BenchmarkCreate2, error) {
+	var body BenchmarkCreate2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromBenchmarkCreate2 overwrites any union data inside the BenchmarkCreate as the provided BenchmarkCreate2
+func (t *BenchmarkCreate) FromBenchmarkCreate2(v BenchmarkCreate2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeBenchmarkCreate2 performs a merge with any union data inside the BenchmarkCreate, using the provided BenchmarkCreate2
+func (t *BenchmarkCreate) MergeBenchmarkCreate2(v BenchmarkCreate2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t BenchmarkCreate) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["benchmark_id"], err = json.Marshal(t.BenchmarkId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'benchmark_id': %w", err)
+	}
+
+	if t.CandidateCount != nil {
+		object["candidate_count"], err = json.Marshal(t.CandidateCount)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'candidate_count': %w", err)
+		}
+	}
+
+	if t.Concurrency != nil {
+		object["concurrency"], err = json.Marshal(t.Concurrency)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'concurrency': %w", err)
+		}
+	}
+
+	if t.GenerationDeploymentId != nil {
+		object["generation_deployment_id"], err = json.Marshal(t.GenerationDeploymentId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'generation_deployment_id': %w", err)
+		}
+	}
+
+	if t.GenerationModel != nil {
+		object["generation_model"], err = json.Marshal(t.GenerationModel)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'generation_model': %w", err)
+		}
+	}
+
+	object["harness"], err = json.Marshal(t.Harness)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'harness': %w", err)
+	}
+
+	if t.Languages != nil {
+		object["languages"], err = json.Marshal(t.Languages)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'languages': %w", err)
+		}
+	}
+
+	if t.MaxTokens != nil {
+		object["max_tokens"], err = json.Marshal(t.MaxTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'max_tokens': %w", err)
+		}
+	}
+
+	if t.Origin != nil {
+		object["origin"], err = json.Marshal(t.Origin)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'origin': %w", err)
+		}
+	}
+
+	if t.PromptsPerLanguage != nil {
+		object["prompts_per_language"], err = json.Marshal(t.PromptsPerLanguage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'prompts_per_language': %w", err)
+		}
+	}
+
+	if t.Reason != nil {
+		object["reason"], err = json.Marshal(t.Reason)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'reason': %w", err)
+		}
+	}
+
+	if t.Seed != nil {
+		object["seed"], err = json.Marshal(t.Seed)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'seed': %w", err)
+		}
+	}
+
+	if t.TaskIds != nil {
+		object["task_ids"], err = json.Marshal(t.TaskIds)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'task_ids': %w", err)
+		}
+	}
+
+	if t.Temperature != nil {
+		object["temperature"], err = json.Marshal(t.Temperature)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'temperature': %w", err)
+		}
+	}
+
+	if t.VerificationDeploymentId != nil {
+		object["verification_deployment_id"], err = json.Marshal(t.VerificationDeploymentId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'verification_deployment_id': %w", err)
+		}
+	}
+
+	if t.VerificationModel != nil {
+		object["verification_model"], err = json.Marshal(t.VerificationModel)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'verification_model': %w", err)
+		}
+	}
+
+	if t.VerifierPivots != nil {
+		object["verifier_pivots"], err = json.Marshal(t.VerifierPivots)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'verifier_pivots': %w", err)
+		}
+	}
+
+	if t.VerifierRepetitions != nil {
+		object["verifier_repetitions"], err = json.Marshal(t.VerifierRepetitions)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'verifier_repetitions': %w", err)
+		}
+	}
+
+	object["version"], err = json.Marshal(t.Version)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'version': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *BenchmarkCreate) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["benchmark_id"]; found {
+		err = json.Unmarshal(raw, &t.BenchmarkId)
+		if err != nil {
+			return fmt.Errorf("error reading 'benchmark_id': %w", err)
+		}
+	}
+
+	if raw, found := object["candidate_count"]; found {
+		err = json.Unmarshal(raw, &t.CandidateCount)
+		if err != nil {
+			return fmt.Errorf("error reading 'candidate_count': %w", err)
+		}
+	}
+
+	if raw, found := object["concurrency"]; found {
+		err = json.Unmarshal(raw, &t.Concurrency)
+		if err != nil {
+			return fmt.Errorf("error reading 'concurrency': %w", err)
+		}
+	}
+
+	if raw, found := object["generation_deployment_id"]; found {
+		err = json.Unmarshal(raw, &t.GenerationDeploymentId)
+		if err != nil {
+			return fmt.Errorf("error reading 'generation_deployment_id': %w", err)
+		}
+	}
+
+	if raw, found := object["generation_model"]; found {
+		err = json.Unmarshal(raw, &t.GenerationModel)
+		if err != nil {
+			return fmt.Errorf("error reading 'generation_model': %w", err)
+		}
+	}
+
+	if raw, found := object["harness"]; found {
+		err = json.Unmarshal(raw, &t.Harness)
+		if err != nil {
+			return fmt.Errorf("error reading 'harness': %w", err)
+		}
+	}
+
+	if raw, found := object["languages"]; found {
+		err = json.Unmarshal(raw, &t.Languages)
+		if err != nil {
+			return fmt.Errorf("error reading 'languages': %w", err)
+		}
+	}
+
+	if raw, found := object["max_tokens"]; found {
+		err = json.Unmarshal(raw, &t.MaxTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_tokens': %w", err)
+		}
+	}
+
+	if raw, found := object["origin"]; found {
+		err = json.Unmarshal(raw, &t.Origin)
+		if err != nil {
+			return fmt.Errorf("error reading 'origin': %w", err)
+		}
+	}
+
+	if raw, found := object["prompts_per_language"]; found {
+		err = json.Unmarshal(raw, &t.PromptsPerLanguage)
+		if err != nil {
+			return fmt.Errorf("error reading 'prompts_per_language': %w", err)
+		}
+	}
+
+	if raw, found := object["reason"]; found {
+		err = json.Unmarshal(raw, &t.Reason)
+		if err != nil {
+			return fmt.Errorf("error reading 'reason': %w", err)
+		}
+	}
+
+	if raw, found := object["seed"]; found {
+		err = json.Unmarshal(raw, &t.Seed)
+		if err != nil {
+			return fmt.Errorf("error reading 'seed': %w", err)
+		}
+	}
+
+	if raw, found := object["task_ids"]; found {
+		err = json.Unmarshal(raw, &t.TaskIds)
+		if err != nil {
+			return fmt.Errorf("error reading 'task_ids': %w", err)
+		}
+	}
+
+	if raw, found := object["temperature"]; found {
+		err = json.Unmarshal(raw, &t.Temperature)
+		if err != nil {
+			return fmt.Errorf("error reading 'temperature': %w", err)
+		}
+	}
+
+	if raw, found := object["verification_deployment_id"]; found {
+		err = json.Unmarshal(raw, &t.VerificationDeploymentId)
+		if err != nil {
+			return fmt.Errorf("error reading 'verification_deployment_id': %w", err)
+		}
+	}
+
+	if raw, found := object["verification_model"]; found {
+		err = json.Unmarshal(raw, &t.VerificationModel)
+		if err != nil {
+			return fmt.Errorf("error reading 'verification_model': %w", err)
+		}
+	}
+
+	if raw, found := object["verifier_pivots"]; found {
+		err = json.Unmarshal(raw, &t.VerifierPivots)
+		if err != nil {
+			return fmt.Errorf("error reading 'verifier_pivots': %w", err)
+		}
+	}
+
+	if raw, found := object["verifier_repetitions"]; found {
+		err = json.Unmarshal(raw, &t.VerifierRepetitions)
+		if err != nil {
+			return fmt.Errorf("error reading 'verifier_repetitions': %w", err)
+		}
+	}
+
+	if raw, found := object["version"]; found {
+		err = json.Unmarshal(raw, &t.Version)
+		if err != nil {
+			return fmt.Errorf("error reading 'version': %w", err)
+		}
+	}
+
+	return err
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
 	// (GET /benchmarks)
-	ListBenchmarks(w http.ResponseWriter, r *http.Request)
+	ListBenchmarks(w http.ResponseWriter, r *http.Request, params ListBenchmarksParams)
 	// CreateBenchmark Launch a benchmark run against a deployment or explicit endpoints
 	// (POST /benchmarks)
 	CreateBenchmark(w http.ResponseWriter, r *http.Request)
+	// GetBenchmarkCatalog List pinned benchmarks and live local runner availability
+	// (GET /benchmarks/catalog)
+	GetBenchmarkCatalog(w http.ResponseWriter, r *http.Request)
 
 	// (GET /benchmarks/results)
 	ListBenchmarkResults(w http.ResponseWriter, r *http.Request)
+	// GetBenchmark Get one benchmark run and its live summary
+	// (GET /benchmarks/{runId})
+	GetBenchmark(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID)
+	// DownloadBenchmarkBundle Download a succeeded benchmark result bundle
+	// (GET /benchmarks/{runId}/bundle)
+	DownloadBenchmarkBundle(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID)
+	// CancelBenchmark Cancel a non-terminal benchmark run
+	// (POST /benchmarks/{runId}/cancel)
+	CancelBenchmark(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID)
+	// DownloadBenchmarkSummary Download a succeeded benchmark summary
+	// (GET /benchmarks/{runId}/summary)
+	DownloadBenchmarkSummary(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID)
+	// ListBenchmarkTrials List normalized trials for one benchmark run
+	// (GET /benchmarks/{runId}/trials)
+	ListBenchmarkTrials(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -167,7 +721,7 @@ type ServerInterface interface {
 type Unimplemented struct{}
 
 // (GET /benchmarks)
-func (_ Unimplemented) ListBenchmarks(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) ListBenchmarks(w http.ResponseWriter, r *http.Request, params ListBenchmarksParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -177,8 +731,44 @@ func (_ Unimplemented) CreateBenchmark(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetBenchmarkCatalog List pinned benchmarks and live local runner availability
+// (GET /benchmarks/catalog)
+func (_ Unimplemented) GetBenchmarkCatalog(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /benchmarks/results)
 func (_ Unimplemented) ListBenchmarkResults(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetBenchmark Get one benchmark run and its live summary
+// (GET /benchmarks/{runId})
+func (_ Unimplemented) GetBenchmark(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DownloadBenchmarkBundle Download a succeeded benchmark result bundle
+// (GET /benchmarks/{runId}/bundle)
+func (_ Unimplemented) DownloadBenchmarkBundle(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CancelBenchmark Cancel a non-terminal benchmark run
+// (POST /benchmarks/{runId}/cancel)
+func (_ Unimplemented) CancelBenchmark(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DownloadBenchmarkSummary Download a succeeded benchmark summary
+// (GET /benchmarks/{runId}/summary)
+func (_ Unimplemented) DownloadBenchmarkSummary(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBenchmarkTrials List normalized trials for one benchmark run
+// (GET /benchmarks/{runId}/trials)
+func (_ Unimplemented) ListBenchmarkTrials(w http.ResponseWriter, r *http.Request, runId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -194,8 +784,66 @@ type MiddlewareFunc func(http.Handler) http.Handler
 // ListBenchmarks operation middleware
 func (siw *ServerInterfaceWrapper) ListBenchmarks(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBenchmarksParams
+
+	// ------------- Optional query parameter "origin_run_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "origin_run_id", r.URL.Query(), &params.OriginRunId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "origin_run_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "origin_run_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "origin_project_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "origin_project_id", r.URL.Query(), &params.OriginProjectId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "origin_project_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "origin_project_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListBenchmarks(w, r)
+		siw.Handler.ListBenchmarks(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -219,11 +867,155 @@ func (siw *ServerInterfaceWrapper) CreateBenchmark(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetBenchmarkCatalog operation middleware
+func (siw *ServerInterfaceWrapper) GetBenchmarkCatalog(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBenchmarkCatalog(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListBenchmarkResults operation middleware
 func (siw *ServerInterfaceWrapper) ListBenchmarkResults(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListBenchmarkResults(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBenchmark operation middleware
+func (siw *ServerInterfaceWrapper) GetBenchmark(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBenchmark(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadBenchmarkBundle operation middleware
+func (siw *ServerInterfaceWrapper) DownloadBenchmarkBundle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadBenchmarkBundle(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelBenchmark operation middleware
+func (siw *ServerInterfaceWrapper) CancelBenchmark(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelBenchmark(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadBenchmarkSummary operation middleware
+func (siw *ServerInterfaceWrapper) DownloadBenchmarkSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadBenchmarkSummary(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBenchmarkTrials operation middleware
+func (siw *ServerInterfaceWrapper) ListBenchmarkTrials(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBenchmarkTrials(w, r, runId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -351,6 +1143,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/benchmarks", wrapper.CreateBenchmark)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/benchmarks/{runId}", wrapper.GetBenchmark)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/benchmarks/{runId}/bundle", wrapper.DownloadBenchmarkBundle)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/benchmarks/{runId}/cancel", wrapper.CancelBenchmark)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/benchmarks/{runId}/summary", wrapper.DownloadBenchmarkSummary)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/benchmarks/{runId}/trials", wrapper.ListBenchmarkTrials)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/benchmarks/catalog", wrapper.GetBenchmarkCatalog)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/benchmarks/results", wrapper.ListBenchmarkResults)

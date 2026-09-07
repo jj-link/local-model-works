@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
 	"net/http"
 
 	"golang.org/x/net/http2"
@@ -95,4 +97,16 @@ var errNoPEM = errString("no PEM block found")
 // default timeout (streams cancel via context).
 func httpClient(tr *http2.Transport) *http.Client {
 	return &http.Client{Transport: tr}
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }

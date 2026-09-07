@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/jj-link/local-model-works/internal/ca"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	agentv1connect "github.com/jj-link/local-model-works/proto/agent/v1/agentv1connect"
 )
@@ -47,6 +48,9 @@ type transferCred struct {
 	SrcSize      int64  `json:"src_size"`
 	DestPath     string `json:"dest_path"`
 	ExpUnix      int64  `json:"exp_unix"`
+	Identity     string `json:"identity,omitempty"`
+	TreeDigest   string `json:"tree_digest,omitempty"`
+	Operation    string `json:"operation,omitempty"`
 	Signature    string `json:"signature"`
 }
 
@@ -60,6 +64,7 @@ func (c *transferCred) canonicalJSON() []byte {
 type transferSession struct {
 	credential string
 	files      map[string]*agentv1.FileEntry
+	scope      string
 	finished   map[string]bool
 }
 
@@ -77,6 +82,12 @@ func (a *Agent) verifyCredential(credential *transferCred) error {
 	if credential.TransferID == "" || credential.SourceNode == "" || credential.DestNode == "" ||
 		credential.ArtifactID == "" || credential.SrcPath == "" || credential.DestPath == "" {
 		return fmt.Errorf("credential scope is incomplete")
+	}
+	if credential.SrcSize < 0 || len(credential.TransferID) > 256 || len(credential.SrcPath) > 4096 || len(credential.DestPath) > 4096 {
+		return fmt.Errorf("credential scope is invalid")
+	}
+	if credential.Identity != "" && (credential.Operation != "start" || credential.Identity != credential.ArtifactID || credential.TreeDigest != credential.SourceDigest || !strings.HasPrefix(credential.TreeDigest, "sha256:") || !validHFFileDigest(credential.TreeDigest)) {
+		return fmt.Errorf("credential immutable identity is invalid")
 	}
 	if time.Now().Unix() > credential.ExpUnix {
 		return fmt.Errorf("credential expired at %d", credential.ExpUnix)
@@ -183,6 +194,9 @@ func (t *transferService) stop() {
 }
 
 func decodeTransferCredential(encoded string) (*transferCred, error) {
+	if len(encoded) > 48<<10 {
+		return nil, fmt.Errorf("transfer credential exceeds bounds")
+	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, err
@@ -209,6 +223,9 @@ func (t *transferService) authorize(ctx context.Context, transferID, encoded str
 	if peer == nil || !contains(peer.DNSNames, credential.DestNode) {
 		return nil, fmt.Errorf("credential destination not in peer certificate")
 	}
+	if err := t.a.authorizePeerSource(credential); err != nil {
+		return nil, err
+	}
 	return credential, nil
 }
 
@@ -220,7 +237,14 @@ func (t *transferService) Manifest(ctx context.Context, request *connect.Request
 	if filepath.Clean(request.Msg.GetPath()) != filepath.Clean(credential.SrcPath) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("source path mismatch"))
 	}
-	entries, total, treeDigest, err := collectManifest(ctx, credential.SrcPath, hfContainDir(credential.SrcPath))
+	var entries []*agentv1.FileEntry
+	var total uint64
+	var treeDigest string
+	if credential.Identity != "" {
+		entries, total, treeDigest, err = collectResourceManifest(ctx, credential.Identity, credential.SrcPath)
+	} else {
+		entries, total, treeDigest, err = collectManifest(ctx, credential.SrcPath, hfContainDir(credential.SrcPath))
+	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -230,20 +254,26 @@ func (t *transferService) Manifest(ctx context.Context, request *connect.Request
 	if credential.SourceDigest != "" && credential.SourceDigest != treeDigest {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("source digest changed"))
 	}
+	if credential.TreeDigest != "" && credential.TreeDigest != treeDigest {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("signed tree digest changed"))
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.used[credential.TransferID] {
+	// Credentials may be refreshed for the same signed source scope. Every
+	// request re-verifies expiry, mTLS destination and immutable tree binding.
+	if credential.Identity == "" && t.used[credential.TransferID] {
 		return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("credential already used"))
 	}
-	if existing := t.active[credential.TransferID]; existing != nil && existing.credential != credential.Signature {
-		return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("credential replay mismatch"))
+	scope := credential.SourceNode + "|" + credential.DestNode + "|" + credential.SrcPath + "|" + credential.DestPath + "|" + credential.ArtifactID + "|" + credential.SourceDigest
+	if existing := t.active[credential.TransferID]; existing != nil && existing.scope != scope {
+		return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("credential scope changed"))
 	}
 	files := make(map[string]*agentv1.FileEntry, len(entries))
 	for _, entry := range entries {
 		files[entry.Path] = entry
 	}
 	t.active[credential.TransferID] = &transferSession{
-		credential: credential.Signature, files: files, finished: map[string]bool{},
+		credential: credential.Signature, scope: scope, files: files, finished: map[string]bool{},
 	}
 	return connect.NewResponse(&agentv1.ManifestResponse{Files: entries, TotalBytes: total, TreeDigest: treeDigest}), nil
 }
@@ -274,6 +304,9 @@ func (t *transferService) ReadChunk(ctx context.Context, request *connect.Reques
 	if entry.GetPath() != transferRootFile {
 		path = filepath.Join(credential.SrcPath, filepath.FromSlash(entry.GetPath()))
 	}
+	if err := safeDestination(path); err != nil {
+		return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("source path changed after manifest verification"))
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -296,7 +329,7 @@ func (t *transferService) ReadChunk(ctx context.Context, request *connect.Reques
 	if eof {
 		t.mu.Lock()
 		session.finished[entry.GetPath()] = true
-		if len(session.finished) == regularFileCount(session.files) {
+		if credential.Identity == "" && len(session.finished) == regularFileCount(session.files) {
 			t.used[credential.TransferID] = true
 			delete(t.active, credential.TransferID)
 		}
@@ -334,7 +367,7 @@ func collectManifest(ctx context.Context, root, contain string) ([]*agentv1.File
 			return nil, 0, "", err
 		}
 		hash := sha256.New()
-		size, copyErr := io.Copy(hash, file)
+		size, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: file})
 		file.Close()
 		if copyErr != nil {
 			return nil, 0, "", copyErr
@@ -381,7 +414,7 @@ func collectManifest(ctx context.Context, root, contain string) ([]*agentv1.File
 			return err
 		}
 		hash := sha256.New()
-		read, err := io.Copy(hash, file)
+		read, err := io.Copy(hash, contextReader{ctx: ctx, reader: file})
 		file.Close()
 		if err != nil {
 			return err
@@ -426,12 +459,74 @@ func makeTransferredArtifactMountable(root string) error {
 }
 
 func (a *Agent) handleTransfer(ctx context.Context, command *agentv1.TransferCommand) {
+	if command.GetOp() == agentv1.TransferOp_TRANSFER_OP_CANCEL {
+		at, err := a.cancelAcquisition(ctx, command.GetTargetTransferId())
+		var output []byte
+		if at != nil {
+			output = at.Output
+		}
+		a.downloadResult(command.GetTransferId(), output, err)
+		return
+	}
+	if command.GetOp() == agentv1.TransferOp_TRANSFER_OP_STATUS {
+		a.acquisitionMu.Lock()
+		at, err := a.loadAcquisition(command.GetTargetTransferId())
+		var output []byte
+		if at != nil {
+			output, _ = json.Marshal(at)
+		} else if err == nil {
+			err = fmt.Errorf("download.transfer_unknown")
+		}
+		a.acquisitionMu.Unlock()
+		a.downloadResult(command.GetTransferId(), output, err)
+		return
+	}
+	if command.GetOp() != agentv1.TransferOp_TRANSFER_OP_START && command.GetOp() != agentv1.TransferOp_TRANSFER_OP_UNSPECIFIED {
+		a.downloadResult(command.GetTransferId(), nil, fmt.Errorf("download.transfer_operation_invalid"))
+		return
+	}
 	if command.GetRole() != "dest" {
 		return
 	}
-	if err := a.pullTransfer(ctx, command); err != nil {
+	destination, err := a.transferDestination(command)
+	if err != nil {
+		a.downloadResult(command.GetTransferId(), nil, err)
+		return
+	}
+	credential, err := decodeTransferCredential(command.GetCredential())
+	if err != nil {
+		a.downloadResult(command.GetTransferId(), nil, err)
+		return
+	}
+	binding := credential.SourceNode + "|" + credential.SrcPath + "|" + credential.SourceDigest + "|" + credential.Identity + "|" + credential.TreeDigest
+	commandCtx, at, fresh, err := a.beginAcquisition(ctx, command.GetTransferId(), command.GetArtifactIdentity(), destination, binding)
+	if err != nil {
+		a.downloadResult(command.GetTransferId(), nil, err)
+		return
+	}
+	if !fresh {
+		select {
+		case <-at.done:
+		case <-ctx.Done():
+			return
+		}
+		if at.Error != "" {
+			err = fmt.Errorf("%s", at.Error)
+		}
+		a.downloadResult(command.GetTransferId(), at.Output, err)
+		return
+	}
+	err = a.pullTransfer(commandCtx, command)
+	state := downloads.ResourceAvailable
+	if err != nil {
+		state = downloads.ResourcePartial
+	}
+	output, _ := json.Marshal(downloads.CommandOutput{Identity: command.GetArtifactIdentity(), Path: destination, State: state})
+	a.finishAcquisition(at, output, err)
+	if err != nil {
 		a.transferError(command.GetTransferId(), err.Error())
 	}
+	a.downloadResult(command.GetTransferId(), output, err)
 }
 
 func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferCommand) error {
@@ -449,13 +544,31 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		credential.ArtifactID != command.GetArtifactIdentity() || credential.DestPath != command.GetDestPath() {
 		return fmt.Errorf("transfer command does not match credential")
 	}
+	if err := a.verifyCredential(credential); err != nil {
+		return err
+	}
+	if command.GetOp() == agentv1.TransferOp_TRANSFER_OP_START && (credential.Operation != "start" || credential.Identity != command.GetArtifactIdentity() || credential.TreeDigest == "" || credential.SourceDigest != credential.TreeDigest) {
+		return fmt.Errorf("download.transfer_identity_unbound")
+	}
 	nodeCert := a.certSnapshot()
 	if nodeCert == nil {
 		return fmt.Errorf("node certificate not loaded")
 	}
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{*nodeCert},
-		RootCAs: a.caPool(), InsecureSkipVerify: true, VerifyPeerCertificate: a.peerVerifyChain,
+		RootCAs: a.caPool(), InsecureSkipVerify: true, VerifyPeerCertificate: func(rawCerts [][]byte, chains [][]*x509.Certificate) error {
+			if err := a.peerVerifyChain(rawCerts, chains); err != nil {
+				return err
+			}
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("peer certificate missing")
+			}
+			certificate, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil || !contains(certificate.DNSNames, credential.SourceNode) {
+				return fmt.Errorf("peer source identity mismatch")
+			}
+			return nil
+		},
 		NextProtos: []string{"h2"},
 	}
 	httpClient := &http.Client{Transport: &http2.Transport{TLSClientConfig: tlsConfig}}
@@ -466,7 +579,16 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 	if err != nil {
 		return fmt.Errorf("manifest: %w", err)
 	}
-	staging := filepath.Join(a.cfg.TransferDir(), ".untrusted-"+command.GetTransferId())
+	if len(manifestResponse.Msg.GetFiles()) > 100000 || manifestResponse.Msg.GetTreeDigest() != credential.SourceDigest && credential.SourceDigest != "" {
+		return fmt.Errorf("download.transfer_manifest_changed")
+	}
+	if credential.SourceDigest == "" {
+		credential.SourceDigest = manifestResponse.Msg.GetTreeDigest()
+	}
+	staging, checkpoint, err := a.transferCheckpoint(command, credential)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(staging, 0o755); err != nil {
 		return err
 	}
@@ -483,22 +605,11 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 			return err
 		}
-		offset := uint64(0)
-		if info, err := os.Stat(destination); err == nil && uint64(info.Size()) == entry.GetSize() {
-			if matchesFileDigest(destination, entry.GetSha256()) {
-				offset = entry.GetSize()
-			} else if err := os.Remove(destination); err != nil {
-				return err
-			}
-		} else if err == nil {
-			if err := os.Remove(destination); err != nil {
-				return err
-			}
-		}
-		file, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.FileMode(entry.GetMode())&0o777)
+		file, prefixHash, offset, err := checkpoint.openPrefix(ctx, destination, rel, entry.GetSize(), os.FileMode(entry.GetMode())&0o666)
 		if err != nil {
 			return err
 		}
+		done += offset
 		for offset < entry.GetSize() {
 			response, err := client.ReadChunk(ctx, connect.NewRequest(&agentv1.ReadChunkRequest{
 				TransferId: command.GetTransferId(), Credential: command.GetCredential(), Path: entry.GetPath(),
@@ -508,7 +619,7 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 				file.Close()
 				return fmt.Errorf("read %s: %w", entry.GetPath(), err)
 			}
-			if response.Msg.GetOffset() != offset || len(response.Msg.GetData()) == 0 {
+			if response.Msg.GetOffset() != offset || len(response.Msg.GetData()) == 0 || uint64(len(response.Msg.GetData())) > entry.GetSize()-offset {
 				file.Close()
 				return fmt.Errorf("invalid chunk for %s", entry.GetPath())
 			}
@@ -516,14 +627,26 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 				file.Close()
 				return err
 			}
+			_, _ = prefixHash.Write(response.Msg.GetData())
 			offset += uint64(len(response.Msg.GetData()))
 			done += uint64(len(response.Msg.GetData()))
+			if offset%(4<<20) == 0 || offset == entry.GetSize() {
+				if err := file.Sync(); err != nil {
+					file.Close()
+					return err
+				}
+				checkpoint.Prefixes[rel] = transferPrefix{Offset: offset, SHA256: "sha256:" + hex.EncodeToString(prefixHash.Sum(nil))}
+				if err := checkpoint.save(); err != nil {
+					file.Close()
+					return err
+				}
+			}
 			a.sendTransferProgress(command.GetTransferId(), done, manifestResponse.Msg.GetTotalBytes())
 		}
 		if err := file.Close(); err != nil {
 			return err
 		}
-		if !matchesFileDigest(destination, entry.GetSha256()) {
+		if "sha256:"+hex.EncodeToString(prefixHash.Sum(nil)) != entry.GetSha256() {
 			return fmt.Errorf("digest mismatch for %s", entry.GetPath())
 		}
 	}
@@ -551,30 +674,46 @@ func (a *Agent) pullTransfer(ctx context.Context, command *agentv1.TransferComma
 	if err != nil || treeDigest != manifestResponse.Msg.GetTreeDigest() {
 		return fmt.Errorf("final tree digest mismatch")
 	}
-	destinationRel, err := safeRelativePath(command.GetDestPath())
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := a.validateTransferredIdentity(ctx, command.GetArtifactIdentity(), staging, manifestResponse.Msg.GetFiles()); err != nil {
+		return err
+	}
+	final, err := a.transferDestination(command)
 	if err != nil {
 		return err
 	}
-	final := filepath.Join(a.cfg.TransferDir(), destinationRel)
-	if _, err := os.Stat(final); err == nil {
-		return fmt.Errorf("destination already exists")
-	}
-	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
+	if err := makeTransferredArtifactMountable(staging); err != nil {
 		return err
 	}
-	rootFile := len(manifestResponse.Msg.GetFiles()) == 1 && manifestResponse.Msg.GetFiles()[0].GetPath() == transferRootFile
-	if rootFile {
-		if err := os.Rename(filepath.Join(staging, transferRootFile), final); err != nil {
+	if strings.HasPrefix(command.GetArtifactIdentity(), "hf://") {
+		if err := publishHFTransfer(ctx, staging, final, manifestResponse.Msg.GetFiles()); err != nil {
 			return err
 		}
-		if err := os.Remove(staging); err != nil {
+	} else {
+		if _, err := os.Lstat(final); err == nil {
+			return fmt.Errorf("download.destination_exists")
+		} else if !os.IsNotExist(err) {
 			return err
 		}
-	} else if err := os.Rename(staging, final); err != nil {
-		return err
+		if err := os.MkdirAll(filepath.Dir(final), 0755); err != nil {
+			return err
+		}
+		rootFile := len(manifestResponse.Msg.GetFiles()) == 1 && manifestResponse.Msg.GetFiles()[0].GetPath() == transferRootFile
+		if rootFile {
+			if err := os.Link(filepath.Join(staging, transferRootFile), final); err != nil {
+				return err
+			}
+			if err := os.RemoveAll(staging); err != nil {
+				return err
+			}
+		} else if err := os.Rename(staging, final); err != nil {
+			return err
+		}
 	}
-	if err := makeTransferredArtifactMountable(final); err != nil {
-		return fmt.Errorf("make transferred artifact mountable: %w", err)
+	if err := os.Remove(checkpoint.path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_PlacementReport{
 		PlacementReport: &agentv1.PlacementReport{
@@ -598,6 +737,11 @@ func cleanupTransferStaging(root string) error {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".untrusted-") {
 			continue
 		}
+		if _, err := os.Stat(filepath.Join(root, entry.Name()+".checkpoint.json")); err == nil {
+			// This owned staging is inert until an explicit new attempt validates
+			// its content binding and each retained prefix.
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 			return err
 		}
@@ -613,14 +757,14 @@ func safeRelativePath(value string) (string, error) {
 	return clean, nil
 }
 
-func matchesFileDigest(path, want string) bool {
+func matchesFileDigest(ctx context.Context, path, want string) bool {
 	file, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, contextReader{ctx: ctx, reader: file}); err != nil {
 		return false
 	}
 	return "sha256:"+hex.EncodeToString(hash.Sum(nil)) == want

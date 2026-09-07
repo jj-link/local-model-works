@@ -14,6 +14,7 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
@@ -70,29 +71,56 @@ type RepositoryUpdateDeployment struct {
 	WorkloadIndex      int               `json:"workload_index"`
 	Variants           map[string]string `json:"variants,omitempty"`
 	DeploymentPlan     Plan              `json:"deployment_plan"`
+	CurrentPermissions []string          `json:"current_permissions"`
+	AddedPermissions   []string          `json:"added_permissions"`
+	RemovedPermissions []string          `json:"removed_permissions"`
 }
 
 // RepositoryUpdatePlan separates physical package installations from running
 // deployment replacements. Deployment state never defines installation state.
 type RepositoryUpdatePlan struct {
-	RepositoryID         string                       `json:"repository_id"`
-	TargetDigest         string                       `json:"target_digest"`
-	CurrentPermissions   []string                     `json:"current_permissions"`
-	CandidatePermissions []string                     `json:"candidate_permissions"`
-	AddedPermissions     []string                     `json:"added_permissions"`
-	RemovedPermissions   []string                     `json:"removed_permissions"`
-	InstalledDevices     []RepositoryUpdateDevice     `json:"installed_devices"`
-	RunningDeployments   []RepositoryUpdateTarget     `json:"running_deployments"`
-	Deployments          []RepositoryUpdateDeployment `json:"deployments"`
-	Diagnostics          []diag.Diagnostic            `json:"diagnostics,omitempty"`
-	Ready                bool                         `json:"ready"`
-	Digest               string                       `json:"plan_digest"`
+	RepositoryID           string                       `json:"repository_id"`
+	TargetDigest           string                       `json:"target_digest"`
+	DeploymentIDs          []string                     `json:"deployment_ids"`
+	UnchangedDeploymentIDs []string                     `json:"unchanged_deployment_ids"`
+	CurrentPermissions     []string                     `json:"current_permissions"`
+	CandidatePermissions   []string                     `json:"candidate_permissions"`
+	AddedPermissions       []string                     `json:"added_permissions"`
+	RemovedPermissions     []string                     `json:"removed_permissions"`
+	InstalledDevices       []RepositoryUpdateDevice     `json:"installed_devices"`
+	RunningDeployments     []RepositoryUpdateTarget     `json:"running_deployments"`
+	Deployments            []RepositoryUpdateDeployment `json:"deployments"`
+	Diagnostics            []diag.Diagnostic            `json:"diagnostics,omitempty"`
+	Ready                  bool                         `json:"ready"`
+	Digest                 string                       `json:"plan_digest"`
 }
 
 func (p *RepositoryUpdatePlan) PlanDigest() string {
-	copy := *p
-	copy.Digest = ""
-	encoded, _ := json.Marshal(copy)
+	// Bind the reviewed replacement contract, not live verification timestamps
+	// or progress embedded in each acquisition preview.
+	type deploymentContract struct {
+		SourceDeploymentID string `json:"source_deployment_id"`
+		SourceDigest       string `json:"source_digest"`
+		PlanDigest         string `json:"plan_digest"`
+	}
+	contract := struct {
+		RepositoryID           string               `json:"repository_id"`
+		TargetDigest           string               `json:"target_digest"`
+		DeploymentIDs          []string             `json:"deployment_ids"`
+		UnchangedDeploymentIDs []string             `json:"unchanged_deployment_ids"`
+		Deployments            []deploymentContract `json:"deployments"`
+	}{
+		RepositoryID: p.RepositoryID, TargetDigest: p.TargetDigest,
+		DeploymentIDs: p.DeploymentIDs, UnchangedDeploymentIDs: p.UnchangedDeploymentIDs,
+		Deployments: make([]deploymentContract, 0, len(p.Deployments)),
+	}
+	for _, deployment := range p.Deployments {
+		contract.Deployments = append(contract.Deployments, deploymentContract{
+			SourceDeploymentID: deployment.SourceDeploymentID, SourceDigest: deployment.SourceDigest,
+			PlanDigest: deployment.DeploymentPlan.PlanDigest(),
+		})
+	}
+	encoded, _ := json.Marshal(contract)
 	sum := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -123,109 +151,84 @@ func permissionChanges(current, candidate []string) (added, removed []string) {
 	return added, removed
 }
 
-func (s *Service) repositoryUpdatePermissions(
-	ctx context.Context,
-	repositoryID string,
-	targetDigest string,
-	candidate *recipe.RepositoryCandidate,
-) (current, target, added, removed []string, err error) {
-	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	var targetManifest *recipe.Manifest
-	if candidate != nil {
-		targetManifest = candidate.Manifest
-	} else {
-		targetRow, getErr := s.q.GetRecipe(ctx, targetDigest)
-		if getErr != nil {
-			return nil, nil, nil, nil, getErr
-		}
-		targetManifest, err = recipe.Parse([]byte(targetRow.Manifest))
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-	}
-	target = append([]string{}, targetManifest.HighRiskPermissions()...)
-
-	current = []string{}
-	if repository.CurrentDigest.Valid {
-		currentRow, getErr := s.q.GetRecipe(ctx, repository.CurrentDigest.String)
-		if getErr != nil {
-			return nil, nil, nil, nil, getErr
-		}
-		currentManifest, parseErr := recipe.Parse([]byte(currentRow.Manifest))
-		if parseErr != nil {
-			return nil, nil, nil, nil, parseErr
-		}
-		current = append(current, currentManifest.HighRiskPermissions()...)
-	}
-	added, removed = permissionChanges(current, target)
-	return current, target, added, removed, nil
+type RepositoryReplacementRequest struct {
+	TargetDigest  string   `json:"target_digest"`
+	DeploymentIDs []string `json:"deployment_ids"`
 }
 
-// PlanRepositoryUpdate preserves placements, parameters, variants, workload,
-// fabric, endpoint intent, and ignores only the source deployment's leases.
-func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID, targetDigest string) (*RepositoryUpdatePlan, error) {
+// PlanRepositoryUpdate previews replacement of explicitly selected running
+// deployments with an immutable version that is already saved in the catalog.
+func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string, request RepositoryReplacementRequest) (*RepositoryUpdatePlan, error) {
+	targetDigest := request.TargetDigest
+	if targetDigest == "" || len(request.DeploymentIDs) == 0 {
+		return nil, fmt.Errorf("%w: saved target and nonempty deployment selection are required", ErrRecipe)
+	}
+	selected := make(map[string]bool, len(request.DeploymentIDs))
+	for _, deploymentID := range request.DeploymentIDs {
+		if deploymentID == "" || selected[deploymentID] {
+			return nil, fmt.Errorf("%w: deployment selection must contain unique nonempty IDs", ErrRecipe)
+		}
+		selected[deploymentID] = true
+	}
 	targetVersion, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, targetDigest)
 	if err != nil || targetVersion.RepositoryID != repositoryID {
-		return nil, fmt.Errorf("%w: target digest is not a version of repository", ErrRecipe)
+		return nil, fmt.Errorf("%w: target digest is not a saved version of repository", ErrRecipe)
 	}
-	return s.planRepositoryUpdate(ctx, repositoryID, targetDigest, nil)
-}
-
-// PlanRepositoryUpdateCandidate previews an uninstalled compiled candidate
-// without requiring a recipe row, repository-version link, or package tree.
-func (s *Service) PlanRepositoryUpdateCandidate(ctx context.Context, repositoryID string, candidate *recipe.RepositoryCandidate) (*RepositoryUpdatePlan, error) {
-	if candidate == nil || candidate.Manifest == nil || candidate.Digest == "" {
-		return nil, fmt.Errorf("%w: invalid repository candidate", ErrRecipe)
-	}
-	return s.planRepositoryUpdate(ctx, repositoryID, candidate.Digest, candidate)
-}
-
-func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, targetDigest string, candidate *recipe.RepositoryCandidate) (*RepositoryUpdatePlan, error) {
-	currentPermissions, candidatePermissions, addedPermissions, removedPermissions, err :=
-		s.repositoryUpdatePermissions(ctx, repositoryID, targetDigest, candidate)
+	targetRow, err := s.q.GetRecipe(ctx, targetDigest)
 	if err != nil {
 		return nil, err
 	}
-	installedDevices, err := recipe.ListRepositoryInstalledDevices(ctx, s.q, repositoryID)
+	targetManifest, err := recipe.Parse([]byte(targetRow.Manifest))
 	if err != nil {
 		return nil, err
 	}
 	plan := &RepositoryUpdatePlan{
-		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: len(installedDevices) > 0,
-		CurrentPermissions: currentPermissions, CandidatePermissions: candidatePermissions,
-		AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
-		InstalledDevices: make([]RepositoryUpdateDevice, 0, len(installedDevices)),
+		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: true,
+		DeploymentIDs:          append([]string(nil), request.DeploymentIDs...),
+		UnchangedDeploymentIDs: []string{},
+		CurrentPermissions:     []string{}, CandidatePermissions: targetManifest.HighRiskPermissions(),
+		AddedPermissions: []string{}, RemovedPermissions: []string{},
+		InstalledDevices: []RepositoryUpdateDevice{}, RunningDeployments: []RepositoryUpdateTarget{},
+		Deployments: []RepositoryUpdateDeployment{},
 	}
-	if len(installedDevices) == 0 {
-		plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_not_installed", "recipe is not installed on any device"))
-	}
-	for _, device := range installedDevices {
-		plan.InstalledDevices = append(plan.InstalledDevices, RepositoryUpdateDevice{
-			NodeID: device.NodeID, NodeName: device.NodeName, NodeStatus: device.NodeStatus,
-			InstalledDigests: append([]string(nil), device.InstalledDigests...),
-		})
-		if device.NodeStatus != "online" {
-			plan.Ready = false
-			resource := "node:" + device.NodeID
-			plan.Diagnostics = append(plan.Diagnostics, diag.Diagnostic{
-				Code: "recipe.update_device_offline", Severity: "error",
-				Message:  fmt.Sprintf("installed device %s is %s", device.NodeName, device.NodeStatus),
-				Resource: &resource,
-			})
-		}
-	}
+	sort.Strings(plan.DeploymentIDs)
 	rows, err := s.q.ListRepositoryActiveDeployments(ctx, repositoryID)
 	if err != nil {
 		return nil, err
 	}
+	found := make(map[string]bool, len(selected))
 	for _, row := range rows {
-		if row.RecipeDigest == targetDigest {
+		if selected[row.ID] {
+			found[row.ID] = true
+		}
+	}
+	for _, deploymentID := range plan.DeploymentIDs {
+		if !found[deploymentID] {
+			return nil, fmt.Errorf("%w: selected deployment %s is not active in this repository", ErrRecipe, deploymentID)
+		}
+	}
+	devices := make(map[string]int)
+	for _, row := range rows {
+		if !selected[row.ID] {
 			continue
 		}
+		if row.RecipeDigest == targetDigest {
+			plan.UnchangedDeploymentIDs = append(plan.UnchangedDeploymentIDs, row.ID)
+			continue
+		}
+		sourceRow, err := s.q.GetRecipe(ctx, row.RecipeDigest)
+		if err != nil {
+			return nil, err
+		}
+		sourceManifest, err := recipe.Parse([]byte(sourceRow.Manifest))
+		if err != nil {
+			return nil, err
+		}
+		currentPermissions := sourceManifest.HighRiskPermissions()
+		addedPermissions, removedPermissions := permissionChanges(currentPermissions, plan.CandidatePermissions)
+		plan.CurrentPermissions = unionPermissions(plan.CurrentPermissions, currentPermissions)
+		plan.AddedPermissions = unionPermissions(plan.AddedPermissions, addedPermissions)
+		plan.RemovedPermissions = unionPermissions(plan.RemovedPermissions, removedPermissions)
 		placementSet := ParsePlacementSet(row.Placement)
 		placements := append([]Placement(nil), placementSet.Entries...)
 		if len(placements) == 0 {
@@ -242,10 +245,12 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 		for _, placement := range placements {
 			overrides = append(overrides, PlacementOverride{NodeID: placement.NodeID, Rank: placement.Rank})
 		}
-		deploymentPlan, planErr := s.planWithRecipe(ctx, PlanRequest{
+		deploymentPlan, planErr := s.plan(ctx, PlanRequest{
 			RecipeDigest: targetDigest, Parameters: parametersForValue(row.Parameters),
 			Placements: overrides, Variants: placementSet.Variants,
-		}, map[string]bool{row.ID: true}, candidate)
+			WorkloadIndex:     placementSet.Workload,
+			AcquisitionPolicy: AcquisitionDownloadMissing,
+		}, map[string]bool{row.ID: true})
 		if planErr != nil {
 			return nil, planErr
 		}
@@ -284,11 +289,24 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 			SourceDeploymentID: row.ID, SourceDigest: row.RecipeDigest, Parameters: parametersForValue(row.Parameters),
 			Placement: row.Placement, Fabric: fabric, WorkloadIndex: workloadIndex,
 			Variants: cloneVariants(placementSet.Variants), DeploymentPlan: *deploymentPlan,
+			CurrentPermissions: currentPermissions, AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
 		})
 		for _, placement := range placements {
 			node, nodeErr := s.q.GetNode(ctx, placement.NodeID)
 			if nodeErr != nil {
 				return nil, nodeErr
+			}
+			if index, ok := devices[node.ID]; ok {
+				plan.InstalledDevices[index].InstalledDigests = unionPermissions(plan.InstalledDevices[index].InstalledDigests, []string{row.RecipeDigest})
+			} else {
+				devices[node.ID] = len(plan.InstalledDevices)
+				plan.InstalledDevices = append(plan.InstalledDevices, RepositoryUpdateDevice{
+					NodeID: node.ID, NodeName: node.DisplayName, NodeStatus: node.Status, InstalledDigests: []string{row.RecipeDigest},
+				})
+			}
+			if node.Status != "online" {
+				plan.Ready = false
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_device_offline", fmt.Sprintf("selected device %s is %s", node.DisplayName, node.Status)))
 			}
 			plan.RunningDeployments = append(plan.RunningDeployments, RepositoryUpdateTarget{
 				SourceDeploymentID: row.ID, NodeID: placement.NodeID,
@@ -301,6 +319,11 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 			plan.Diagnostics = append(plan.Diagnostics, deploymentPlan.Diagnostics...)
 		}
 	}
+	sort.Slice(plan.Deployments, func(i, j int) bool {
+		return plan.Deployments[i].SourceDeploymentID < plan.Deployments[j].SourceDeploymentID
+	})
+	sort.Slice(plan.InstalledDevices, func(i, j int) bool { return plan.InstalledDevices[i].NodeID < plan.InstalledDevices[j].NodeID })
+	sort.Strings(plan.UnchangedDeploymentIDs)
 	sort.Slice(plan.RunningDeployments, func(i, j int) bool {
 		if plan.RunningDeployments[i].SourceDeploymentID == plan.RunningDeployments[j].SourceDeploymentID {
 			return plan.RunningDeployments[i].Rank < plan.RunningDeployments[j].Rank
@@ -309,6 +332,30 @@ func (s *Service) planRepositoryUpdate(ctx context.Context, repositoryID, target
 	})
 	plan.Digest = plan.PlanDigest()
 	return plan, nil
+}
+
+func unionPermissions(left, right []string) []string {
+	for _, value := range right {
+		found := false
+		for _, existing := range left {
+			if existing == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			left = append(left, value)
+		}
+	}
+	sort.Strings(left)
+	return left
+}
+
+func valueOrPolicy(policy string) string {
+	if policy == "" {
+		return "require-existing"
+	}
+	return policy
 }
 
 func preservedPlacementMismatch(source, target []Placement) string {
@@ -343,14 +390,15 @@ func cloneVariants(input map[string]string) map[string]string {
 }
 
 type repositoryUpdateRunInput struct {
-	RepositoryID     string                   `json:"repository_id"`
-	FromDigest       string                   `json:"from_digest"`
-	FromCommit       string                   `json:"from_commit"`
-	ToCommit         string                   `json:"to_commit"`
-	TargetDigest     string                   `json:"target_digest"`
-	InstalledDevices []RepositoryUpdateDevice `json:"installed_devices"`
-	Targets          []RepositoryUpdateTarget `json:"running_deployments"`
-	Plan             RepositoryUpdatePlan     `json:"plan"`
+	RepositoryID            string                   `json:"repository_id"`
+	FromDigest              string                   `json:"from_digest"`
+	FromCommit              string                   `json:"from_commit"`
+	ToCommit                string                   `json:"to_commit"`
+	TargetDigest            string                   `json:"target_digest"`
+	InstalledDevices        []RepositoryUpdateDevice `json:"installed_devices"`
+	Targets                 []RepositoryUpdateTarget `json:"running_deployments"`
+	Plan                    RepositoryUpdatePlan     `json:"plan"`
+	SavedVersionReplacement bool                     `json:"saved_version_replacement,omitempty"`
 }
 
 type repositoryUpdateProgress struct {
@@ -376,8 +424,9 @@ func repositoryUpdateDeviceProgressFrom(devices []RepositoryUpdateDevice) []repo
 
 // CreateRepositoryUpdate validates a fresh plan before any source deployment
 // is stopped, persists the run, and starts the restart-safe coordinator.
-func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID, targetDigest, planDigest string) (string, error) {
-	plan, err := s.PlanRepositoryUpdate(ctx, repositoryID, targetDigest)
+func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID string, request RepositoryReplacementRequest, planDigest string) (string, error) {
+	targetDigest := request.TargetDigest
+	plan, err := s.PlanRepositoryUpdate(ctx, repositoryID, request)
 	if err != nil {
 		return "", err
 	}
@@ -389,9 +438,10 @@ func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID, targ
 	}
 	input := repositoryUpdateRunInput{
 		RepositoryID: repositoryID, TargetDigest: targetDigest,
-		InstalledDevices: append([]RepositoryUpdateDevice(nil), plan.InstalledDevices...),
-		Targets:          append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
-		Plan:             *plan,
+		InstalledDevices:        append([]RepositoryUpdateDevice(nil), plan.InstalledDevices...),
+		Targets:                 append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
+		Plan:                    *plan,
+		SavedVersionReplacement: true,
 	}
 	if len(plan.Deployments) > 0 {
 		input.FromDigest = plan.Deployments[0].SourceDigest
@@ -494,7 +544,11 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 	if s.updateCancelled(ctx, runID) {
 		err = errRepositoryUpdateCancelled
 	} else {
-		err = s.installRepositoryUpdateDevices(ctx, runID, input.TargetDigest, &progress)
+		if input.SavedVersionReplacement {
+			err = s.acquireRepositoryReplacement(ctx, runID, input.Plan.Deployments)
+		} else {
+			err = s.installRepositoryUpdateDevices(ctx, runID, input.TargetDigest, &progress)
+		}
 	}
 	if err == nil && s.updateCancelled(ctx, runID) {
 		err = errRepositoryUpdateCancelled
@@ -515,7 +569,7 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 			break
 		}
 		var replacementID string
-		replacementID, err = s.ensureUpdateReplacement(ctx, runID, deployment, input.TargetDigest, &progress)
+		replacementID, err = s.ensureUpdateReplacement(ctx, runID, deployment, input.TargetDigest, input.SavedVersionReplacement, &progress)
 		if err != nil {
 			break
 		}
@@ -528,7 +582,11 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 	}
 	if err == nil {
 		_ = s.runs.SetState(ctx, runID, runs.Verifying, "", "")
-		err = recipe.ActivateRepositoryVersion(ctx, s.q, input.RepositoryID, input.TargetDigest)
+		// Older frozen ledger entries retain their original completion semantics.
+		// New saved-version replacements never select a catalog version.
+		if !input.SavedVersionReplacement {
+			err = recipe.ActivateRepositoryVersion(ctx, s.q, input.RepositoryID, input.TargetDigest)
+		}
 	}
 	if err == nil {
 		progress.Phase = "ready"
@@ -726,19 +784,44 @@ func (s *Service) stopUpdateSource(ctx context.Context, runID string, deployment
 	}
 }
 
-func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, targetDigest string, progress *repositoryUpdateProgress) (string, error) {
+func (s *Service) acquireRepositoryReplacement(ctx context.Context, runID string, deployments []RepositoryUpdateDeployment) error {
+	acquireCtx, cancel := context.WithCancel(ctx)
+	stopped := make(chan struct{})
+	defer func() { cancel(); <-stopped }()
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(repositoryUpdatePollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-acquireCtx.Done():
+				return
+			case <-ticker.C:
+				if s.updateCancelled(acquireCtx, runID) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	for _, deployment := range deployments {
+		if s.updateCancelled(ctx, runID) {
+			return errRepositoryUpdateCancelled
+		}
+		if err := s.acquirePlan(acquireCtx, &deployment.DeploymentPlan, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, targetDigest string, enforceReviewedDigest bool, progress *repositoryUpdateProgress) (string, error) {
 	for _, target := range progress.Hardware {
 		if target.SourceDeploymentID == deployment.SourceDeploymentID && target.ReplacementDeploymentID != "" {
 			return target.ReplacementDeploymentID, nil
 		}
 	}
-	expectedPlacement := placementSet{
-		Ranks: map[string]int{}, Entries: deployment.DeploymentPlan.Placements,
-		Workload: &deployment.WorkloadIndex, Variants: deployment.Variants,
-	}
-	for _, entry := range expectedPlacement.Entries {
-		expectedPlacement.Ranks[entry.NodeID] = int(entry.Rank)
-	}
+	expectedPlacement := placementSetFromPlan(&deployment.DeploymentPlan)
 	existing, existingErr := s.q.GetDeploymentByRecipeParametersPlacement(ctx, db.GetDeploymentByRecipeParametersPlacementParams{
 		RecipeDigest: targetDigest, Parameters: marshalParameters(deployment.Parameters), Placement: expectedPlacement.Marshal(),
 	})
@@ -753,15 +836,24 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 	} else if !errors.Is(existingErr, sql.ErrNoRows) {
 		return "", existingErr
 	} else {
+		policy := valueOrPolicy(deployment.DeploymentPlan.AcquisitionPolicy)
+		if !enforceReviewedDigest && deployment.DeploymentPlan.AcquisitionPolicy == "" {
+			policy = AcquisitionDownloadMissing
+		}
 		fresh, err := s.plan(ctx, PlanRequest{
 			RecipeDigest: targetDigest, Parameters: deployment.Parameters,
 			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.Variants,
+			WorkloadIndex: &deployment.WorkloadIndex, AcquisitionPolicy: policy,
 		}, nil)
 		if err != nil {
 			return "", err
 		}
-		if fresh.Digest != deployment.DeploymentPlan.Digest {
+		if enforceReviewedDigest && !replacementPlanMatchesAfterAcquisition(&deployment.DeploymentPlan, fresh) {
 			return "", fmt.Errorf("%w: replacement plan changed before create", ErrPlanStale)
+		}
+		if !fresh.Ready || preservedPlacementMismatch(deployment.DeploymentPlan.Placements, fresh.Placements) != "" ||
+			fresh.WorkloadIndex != deployment.WorkloadIndex || valueOr(fresh.Fabric, "") != deployment.Fabric {
+			return "", fmt.Errorf("%w: frozen replacement placement, workload or fabric cannot be preserved", ErrNotReady)
 		}
 		replacement, err := s.createPlanned(ctx, fresh)
 		if err != nil {
@@ -776,6 +868,44 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 	progress.Phase = "preparing"
 	s.persistUpdateProgress(ctx, runID, progress)
 	return replacementID, nil
+}
+
+// Completed acquisition can change an approved origin/peer action to exact
+// local reuse. It cannot approve different bytes, destinations or a new source.
+// Compare a projection only; retain the real fresh observations for execution.
+func replacementPlanMatchesAfterAcquisition(reviewed, fresh *Plan) bool {
+	if fresh.Acquisition == nil || reviewed.Acquisition == nil {
+		return false
+	}
+	for _, resource := range fresh.Acquisition.Resources {
+		if resource.Required && (resource.Verification.State != downloads.ResourceAvailable ||
+			resource.Verification.Stale || resource.Verification.VerifiedAt == nil) {
+			return false
+		}
+	}
+	if fresh.PlanDigest() == reviewed.PlanDigest() {
+		return true
+	}
+	normalized := *fresh
+	acquisition := *fresh.Acquisition
+	acquisition.Resources = append([]downloads.Resource(nil), acquisition.Resources...)
+	normalized.Acquisition = &acquisition
+	for index := range acquisition.Resources {
+		resource := &acquisition.Resources[index]
+		if resource.Action != downloads.ActionReuse || resource.Verification.State != downloads.ResourceAvailable ||
+			resource.Verification.Stale || resource.Verification.VerifiedAt == nil {
+			continue
+		}
+		for _, approved := range reviewed.Acquisition.Resources {
+			if approved.Key != resource.Key || approved.NodeID != resource.NodeID {
+				continue
+			}
+			resource.Action, resource.SourceNode, resource.SourcePath, resource.CredentialID =
+				approved.Action, approved.SourceNode, approved.SourcePath, approved.CredentialID
+			break
+		}
+	}
+	return normalized.PlanDigest() == reviewed.PlanDigest()
 }
 
 func (s *Service) waitUpdateReplacement(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, replacementID string, progress *repositoryUpdateProgress) error {

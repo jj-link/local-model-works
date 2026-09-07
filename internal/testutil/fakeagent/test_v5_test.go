@@ -103,6 +103,7 @@ func TestV5_GpuLeaseConflict(t *testing.T) {
 	}
 	_, err = s.Srv.Deployments().Create(s.Ctx, deploy.CreateRequest{
 		RecipeDigest: digest,
+		PlanDigest:   plan.Digest,
 		Placements:   []deploy.PlacementOverride{{Rank: 0, NodeID: plA.NodeID}},
 	})
 	if !errors.Is(err, deploy.ErrNotReady) {
@@ -167,6 +168,7 @@ func TestV5_PortConflictCarriesOccupant(t *testing.T) {
 
 	_, err = s.Srv.Deployments().Create(s.Ctx, deploy.CreateRequest{
 		RecipeDigest: digest,
+		PlanDigest:   plan.Digest,
 		Placements:   []deploy.PlacementOverride{{Rank: 0, NodeID: n1}},
 	})
 	if !errors.Is(err, deploy.ErrNotReady) {
@@ -299,6 +301,16 @@ func TestV5_AgentDisconnect(t *testing.T) {
 	})
 	dep := createDep(t, s, digest)
 	dep = waitDep(t, s, dep.ID, "healthy")
+	before := make(map[int32]string)
+	for rank, container := range containersOf(a2.RT, dep) {
+		if container == nil || container.State != "running" {
+			t.Fatalf("rank %d was not running before disconnect", rank)
+		}
+		before[rank] = container.ID
+	}
+	if len(before) != 1 {
+		t.Fatalf("expected one running rank on disconnected node, got %d", len(before))
+	}
 
 	// Disconnect one rank's agent: the node is marked offline.
 	a2.Stop()
@@ -332,10 +344,47 @@ func TestV5_AgentDisconnect(t *testing.T) {
 		t.Errorf("reconcile reasons = %v, want reconnect", a2.ReconcileReasons())
 	}
 	// The container survived the whole episode on the agent side.
-	for rank, c := range containersOf(a2.RT, depGet(t, s, dep.ID)) {
-		if c == nil || c.State != "running" {
-			t.Errorf("rank %d container after reconnect = %v, want running", rank, c)
+	after := containersOf(a2.RT, depGet(t, s, dep.ID))
+	for rank, expectedID := range before {
+		container := after[rank]
+		if container == nil || container.State != "running" || container.ID != expectedID {
+			t.Errorf("rank %d changed across agent restart: got %+v, expected running ID %s", rank, container, expectedID)
 		}
+	}
+}
+
+func TestV5_HeadAgentRestartRestoresEndpoint(t *testing.T) {
+	s, agents, nodes := bootFleet(t, 1)
+	a := agents[0]
+	digest := install(t, s, FixtureRecipe{
+		Name: "head-reconnect", Version: "1.0.0", NodeCount: 1, GPUsPerRank: 1, Port: 8100,
+	})
+	dep := createDep(t, s, digest)
+	dep = waitDep(t, s, dep.ID, "healthy")
+	if dep.Endpoint == nil || dep.Endpoint.Host == "" {
+		t.Fatal("running head has no initial endpoint")
+	}
+	host, port := dep.Endpoint.Host, dep.Endpoint.Port
+	containerID := containersOf(a.RT, dep)[0].ID
+	pulls := len(a.RT.Pulls())
+
+	a.Stop()
+	Deadline(t, 15*time.Second, func() bool {
+		return s.Node(t, nodes[0]).Status == "offline"
+	}, "head agent disconnected")
+	a = a.Restart(t, "", "")
+	s.WaitOnline(t, nodes[0])
+	Deadline(t, 10*time.Second, func() bool {
+		current := depGet(t, s, dep.ID)
+		return depState(s, dep.ID) == "healthy" && current.Endpoint != nil &&
+			current.Endpoint.Host == host && current.Endpoint.Port == port
+	}, "head endpoint restored after agent process restart")
+	container := containersOf(a.RT, depGet(t, s, dep.ID))[0]
+	if container == nil || container.ID != containerID || container.State != "running" {
+		t.Fatalf("head container changed during endpoint recovery: %+v", container)
+	}
+	if len(a.RT.Pulls()) != pulls {
+		t.Fatal("endpoint recovery pulled an image")
 	}
 }
 

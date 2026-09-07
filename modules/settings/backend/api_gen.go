@@ -15,9 +15,10 @@ import (
 
 // Defines values for SecretPurpose.
 const (
-	SecretPurposeGithub      SecretPurpose = "github"
-	SecretPurposeHuggingface SecretPurpose = "huggingface"
-	SecretPurposeRegistry    SecretPurpose = "registry"
+	SecretPurposeGithub          SecretPurpose = "github"
+	SecretPurposeHuggingface     SecretPurpose = "huggingface"
+	SecretPurposeRecipeAssistant SecretPurpose = "recipe-assistant"
+	SecretPurposeRegistry        SecretPurpose = "registry"
 )
 
 // Valid indicates whether the value is a known member of the SecretPurpose enum.
@@ -26,6 +27,8 @@ func (e SecretPurpose) Valid() bool {
 	case SecretPurposeGithub:
 		return true
 	case SecretPurposeHuggingface:
+		return true
+	case SecretPurposeRecipeAssistant:
 		return true
 	case SecretPurposeRegistry:
 		return true
@@ -36,9 +39,10 @@ func (e SecretPurpose) Valid() bool {
 
 // Defines values for SecretWritePurpose.
 const (
-	SecretWritePurposeGithub      SecretWritePurpose = "github"
-	SecretWritePurposeHuggingface SecretWritePurpose = "huggingface"
-	SecretWritePurposeRegistry    SecretWritePurpose = "registry"
+	SecretWritePurposeGithub          SecretWritePurpose = "github"
+	SecretWritePurposeHuggingface     SecretWritePurpose = "huggingface"
+	SecretWritePurposeRecipeAssistant SecretWritePurpose = "recipe-assistant"
+	SecretWritePurposeRegistry        SecretWritePurpose = "registry"
 )
 
 // Valid indicates whether the value is a known member of the SecretWritePurpose enum.
@@ -47,6 +51,8 @@ func (e SecretWritePurpose) Valid() bool {
 	case SecretWritePurposeGithub:
 		return true
 	case SecretWritePurposeHuggingface:
+		return true
+	case SecretWritePurposeRecipeAssistant:
 		return true
 	case SecretWritePurposeRegistry:
 		return true

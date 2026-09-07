@@ -23,6 +23,7 @@ const (
 	EnvConfigDir       = "LMW_CONFIG_DIR"
 	EnvSessionTTL      = "LMW_SESSION_TTL"
 	EnvPublicOrigin    = "LMW_PUBLIC_ORIGIN"
+	EnvCodexBinary     = "LMW_CODEX_BINARY"
 	EnvPublicAgentURL  = "LMW_PUBLIC_AGENT_URL"
 	EnvAgentServer     = "LMW_AGENT_SERVER"
 	EnvAgentCASha256   = "LMW_AGENT_CA_SHA256"
@@ -45,6 +46,7 @@ type Server struct {
 	ServerName     string        // TLS name for the server leaf cert, default localhost
 	PublicOrigin   string        // required HTTPS browser origin, e.g. https://lmw.tailnet.ts.net
 	PublicAgentURL string        // required HTTPS mTLS agent URL, e.g. https://lmw.tailnet.ts.net:9443
+	CodexBinary    string        // native Codex CLI path; default resolves codex from PATH
 
 }
 
@@ -81,6 +83,7 @@ func LoadServer() Server {
 		ServerName:     envStr(EnvServerName, "localhost"),
 		PublicOrigin:   strings.TrimSpace(os.Getenv(EnvPublicOrigin)),
 		PublicAgentURL: strings.TrimSpace(os.Getenv(EnvPublicAgentURL)),
+		CodexBinary:    strings.TrimSpace(envStr(EnvCodexBinary, "codex")),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/runs"
+	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
 func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
@@ -19,7 +20,7 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 	h.seedRecipeUnplaced(t, newDigest, noArtifactManifest)
 	repositoryID := "https://fixtures.local/cancel\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("c", 40), true)
-	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("d", 40), false)
+	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("d", 40), true)
 
 	sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
 	if err != nil {
@@ -30,19 +31,37 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	driveDeploymentHealthy(t, h, source.ID, "node-a")
-	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, newDigest)
+	request := RepositoryReplacementRequest{TargetDigest: newDigest, DeploymentIDs: []string{source.ID}}
+	updatePlan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, newDigest, updatePlan.Digest)
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, updatePlan.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ackRecipeUpdateFetch(t, h, newDigest, "node-a")
 	ackDeploymentStop(t, h, source.ID, newDigest)
 	replacementID := waitDeploymentDigest(t, h, newDigest)
 	if err := h.svc.CancelRepositoryUpdate(ctx, runID); err != nil {
 		t.Fatal(err)
+	}
+	// Rollback retains ownership until the replacement's device confirms stop.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, sent := range h.nodes.workloadCommands() {
+			command := sent.msg.GetWorkloadCommand()
+			if command.GetDeploymentId() == replacementID && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+				h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
+			}
+		}
+		row := deploymentRow(t, h, replacementID)
+		if row.DesiredState == "stopped" && row.ObservedState == "stopped" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("replacement stop did not settle: %+v", row)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	driveDeploymentHealthy(t, h, source.ID, "node-a")
 	cancelled := waitRunState(t, h, runID, string(runs.Cancelled))
@@ -61,7 +80,7 @@ func TestRepositoryUpdateCancellationRestoresSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != oldDigest {
+	if !repository.CurrentDigest.Valid || repository.CurrentDigest.String != newDigest {
 		t.Fatalf("cancel changed repository current: %+v", repository.CurrentDigest)
 	}
 }

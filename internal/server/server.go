@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/config"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/fabric"
 	"github.com/jj-link/local-model-works/internal/jobs"
@@ -30,6 +32,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/recipe/repositorycompiler"
 	"github.com/jj-link/local-model-works/internal/recipebuilder"
+	recipeassistant "github.com/jj-link/local-model-works/internal/recipebuilder/assistant"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/servingtelemetry"
 	"github.com/jj-link/local-model-works/internal/settings"
@@ -98,7 +101,7 @@ func New(d Deps) *Server {
 	broker := commands.New()
 	runRoot := d.Cfg.RunRoot()
 	runsSvc := runs.New(d.DB, d.Q, bus, runRoot)
-	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes, d.CA)
+	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes)
 	go deploys.RunRepositoryUpdateCoordinator(d.Ctx)
 	fabrics := fabric.New(d.Q, bus)
 	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx, d.DB, d.Q)
@@ -116,7 +119,8 @@ func New(d Deps) *Server {
 	if err != nil {
 		panic(fmt.Sprintf("recipe store: %v", err))
 	}
-	recipes.SetRepositoryCompilerRegistry(repositorycompiler.NewRegistry(v))
+	compilerRegistry := repositorycompiler.NewRegistry(v)
+	recipes.SetRepositoryCompilerRegistry(compilerRegistry)
 	recipes.SetInstallHook(func() {
 		nodes.Broadcast(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_ReconcileRequest{
 			ReconcileRequest: &agentv1.ReconcileRequest{Reason: "artifact.rescan"},
@@ -124,14 +128,26 @@ func New(d Deps) *Server {
 	})
 	go recipes.RunUpdateChecker(d.Ctx, recipe.DefaultUpdateCheckInterval)
 	builder := recipebuilder.New(d.Q, d.Cfg.StateRoot, v, recipes)
+	builder.SetDB(d.DB)
+	builder.SetRepositoryCompilerRegistry(compilerRegistry)
+	if _, err := builder.ReconcileOperations(d.Ctx); err != nil {
+		panic(fmt.Sprintf("reconcile recipe draft operations: %v", err))
+	}
+	assistantManager := recipeassistant.NewCodex(d.Ctx, d.Cfg.CodexBinary, d.Cfg.StateRoot)
 	box, err := auth.NewSecretBox(d.Cfg.SecretKeyPath())
 	if err != nil {
 		panic(fmt.Sprintf("secret box: %v", err))
 	}
-	jobsReg.SetSecretBox(box)
+	downloadsSvc := downloads.New(d.DB, d.Q, runsSvc, nodes, box, d.CA, recipes, jobsReg)
+	deploys.SetDownloads(downloadsSvc)
+	if err := downloadsSvc.Reconcile(d.Ctx); err != nil {
+		panic(fmt.Sprintf("reconcile recipe downloads: %v", err))
+	}
 	env := &moduleapi.Env{
 		Ctx: d.Ctx, Q: d.Q, DB: d.DB, Bus: bus, CA: d.CA,
-		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder, Runs: runsSvc,
+		Deploy: deploys, Fabrics: fabrics, Recipes: recipes, RecipeBuilder: builder,
+		Downloads:       downloadsSvc,
+		RecipeAssistant: assistantManager, Runs: runsSvc,
 		Jobs: jobsReg, Settings: settingsReg, Secrets: box, Telemetry: telemetrySvc,
 		Nodes: nodes, Commands: broker, RunRoot: runRoot,
 	}
@@ -254,10 +270,48 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// requireAuth validates the session cookie and, for mutating requests, the
-// X-CSRF-Token against the session-bound CSRF token.
+// requireAuth keeps browser session/Origin/CSRF authentication intact and
+// admits service tokens only on their explicit read/write route allowlist.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authorization := r.Header.Get("Authorization"); authorization != "" {
+			if _, err := r.Cookie(sessionCookie); err == nil {
+				writeErr(w, http.StatusUnauthorized, "auth.mixed_credentials", "session and bearer credentials cannot be combined")
+				return
+			}
+			const prefix = "Bearer "
+			if !strings.HasPrefix(authorization, prefix) || strings.ContainsAny(strings.TrimPrefix(authorization, prefix), " \t\r\n") {
+				writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid API token")
+				return
+			}
+			token := strings.TrimPrefix(authorization, prefix)
+			if !auth.ValidateAPIToken(token) {
+				writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid API token")
+				return
+			}
+			row, err := s.q.GetAPITokenByHash(r.Context(), auth.APITokenHash(token))
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid API token")
+				return
+			}
+			var scopeList []string
+			if json.Unmarshal([]byte(row.ScopesJson), &scopeList) != nil {
+				writeErr(w, http.StatusUnauthorized, "auth.unauthorized", "missing or invalid API token")
+				return
+			}
+			principal := &auth.APITokenPrincipal{ID: row.ID, Name: row.Name, Scopes: make(map[string]struct{}, len(scopeList))}
+			for _, scope := range scopeList {
+				principal.Scopes[scope] = struct{}{}
+			}
+			required := requiredAPITokenScope(r.Method, r.URL.Path)
+			if required == "" || !principal.HasScope(required) {
+				writeErr(w, http.StatusForbidden, "auth.scope", "API token does not permit this operation")
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(auth.ContextWithAPITokenPrincipal(r.Context(), principal)))
+			return
+		}
+
 		token := ""
 		if cookie, err := r.Cookie(sessionCookie); err == nil {
 			token = cookie.Value
@@ -285,6 +339,22 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey{}, sess.Username)))
 	})
+}
+
+func requiredAPITokenScope(method, path string) string {
+	relative := strings.TrimPrefix(path, "/api/v1")
+	if method == http.MethodGet && (relative == "/deployments" ||
+		(strings.HasPrefix(relative, "/deployments/") && !strings.Contains(strings.TrimPrefix(relative, "/deployments/"), "/"))) {
+		return auth.ScopeDeploymentsRead
+	}
+	if method == http.MethodPost && relative == "/benchmarks" ||
+		method == http.MethodPost && strings.HasPrefix(relative, "/benchmarks/") && strings.HasSuffix(relative, "/cancel") {
+		return auth.ScopeBenchmarksWrite
+	}
+	if method == http.MethodGet && (relative == "/benchmarks" || strings.HasPrefix(relative, "/benchmarks/")) {
+		return auth.ScopeBenchmarksRead
+	}
+	return ""
 }
 
 // AgentAddr is the bound address of the mTLS listener (after

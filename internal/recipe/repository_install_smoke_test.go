@@ -2,33 +2,21 @@ package recipe_test
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/recipe"
-	"github.com/jj-link/local-model-works/internal/recipe/repositorycompiler"
 )
 
-func TestInstallRepositoryCommitKeepsOldVersionAndRejectsMovedHead(t *testing.T) {
+func TestImportReviewedSavesWithoutDevicesAndPreservesSameCommitVersions(t *testing.T) {
 	ctx := context.Background()
-	repositoryPath := filepath.Join(t.TempDir(), "native-repository")
-	if err := os.MkdirAll(repositoryPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gitRun(t, repositoryPath, "init", "-q"); err != nil {
-		t.Fatal(err)
-	}
-	writeNativeBundle(t, repositoryPath, "1.0.0", repositoryPath, "first")
-	c1 := commitRepository(t, repositoryPath, "c1")
-
 	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "recipe.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -45,105 +33,107 @@ func TestInstallRepositoryCommitKeepsOldVersionAndRejectsMovedHead(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.SetRepositoryCompilerRegistry(repositorycompiler.NewRegistry(validator))
-	first, err := service.Import(ctx, recipe.RecipeSource{Type: "git", Remote: repositoryPath, Revision: c1})
+	service.SetInstallHook(func() { t.Fatal("reviewed save contacted devices") })
+	sourceRoot := t.TempDir()
+	remote := "https://github.com/fixture/reviewed"
+	writeNativeBundle(t, sourceRoot, "1.0.0", remote, "saved helper")
+	manifest, _, err := recipe.PackFromDir(sourceRoot, validator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repositoryID, normalizedURL, normalizedPath, err := recipe.RepositoryIdentity(recipe.Source{URL: repositoryPath, Path: "."})
+	commit := strings.Repeat("a", 40)
+	manifest.Metadata.Source.Revision = commit
+	tree := strings.Repeat("b", 40)
+	makeSource := func(description string) recipe.RecipeSource {
+		t.Helper()
+		manifest.Metadata.Description = description
+		doc, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed, err := recipe.PackManifest(doc, map[string][]byte{"serve.sh": []byte("#!/bin/sh\necho saved helper\n")}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layout := t.TempDir()
+		if err := recipe.WriteLayout(layout, packed); err != nil {
+			t.Fatal(err)
+		}
+		return recipe.RecipeSource{Type: "local", Path: layout, Remote: remote, Revision: commit, Tree: tree, SourcePath: ".", TrackingRef: "refs/tags/stable"}
+	}
+	firstSource := makeSource("first saved configuration")
+	first, err := service.ImportReviewed(ctx, firstSource, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := queries.UpsertRecipeRepository(ctx, db.UpsertRecipeRepositoryParams{
-		ID: repositoryID, SourceUrl: normalizedURL, SourcePath: normalizedPath,
-		TrackingRef: "HEAD", CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.AttachRecipeRepositoryVersion(ctx, db.AttachRecipeRepositoryVersionParams{
-		RepositoryID: repositoryID, RecipeDigest: first.Digest, CommitSha: c1,
-		Canonical: 1, InstalledAt: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.SetRecipeRepositoryCurrent(ctx, db.SetRecipeRepositoryCurrentParams{
-		CurrentDigest: sql.NullString{String: first.Digest, Valid: true}, UpdatedAt: now, ID: repositoryID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	writeNativeBundle(t, repositoryPath, "1.1.0", repositoryPath, "second")
-	c2 := commitRepository(t, repositoryPath, "c2")
-	candidate, err := service.PreviewRepositoryCommit(ctx, repositoryID, c2)
+	repositoryID, _, _, err := recipe.RepositoryIdentity(*manifest.Metadata.Source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Digest == first.Digest {
-		t.Fatal("new commit reused the old package digest")
-	}
-	afterPreview, err := service.GetRepository(ctx, repositoryID)
+	secondSource := makeSource("operator corrected configuration at the same commit")
+	second, err := service.ImportReviewed(ctx, secondSource, repositoryID, first.Digest)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(afterPreview.Versions) != 1 || afterPreview.Current == nil || afterPreview.Current.Digest != first.Digest || afterPreview.InstalledCommit != c1 {
-		t.Fatalf("preview changed repository: %+v", afterPreview)
-	}
-	if _, err := service.Get(ctx, candidate.Digest); !errors.Is(err, recipe.ErrUnknown) {
-		t.Fatalf("preview persisted candidate recipe: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(packageRoot, strings.TrimPrefix(candidate.Digest, "sha256:"))); !os.IsNotExist(err) {
-		t.Fatalf("preview persisted candidate package: %v", err)
-	}
-	second, err := service.StageRepositoryCommit(ctx, repositoryID, c2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterStage, err := service.GetRepository(ctx, repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(afterStage.Versions) != 2 || afterStage.Current == nil ||
-		afterStage.Current.Digest != first.Digest || afterStage.InstalledCommit != c1 {
-		t.Fatalf("stage changed repository current: %+v", afterStage)
-	}
-	if _, err := os.Stat(filepath.Join(packageRoot, strings.TrimPrefix(candidate.Digest, "sha256:"))); err != nil {
-		t.Fatalf("stage did not persist candidate package: %v", err)
-	}
-	if err := recipe.ActivateRepositoryVersion(ctx, queries, repositoryID, second.Digest); err != nil {
-		t.Fatal(err)
-	}
-	if second.Digest != candidate.Digest {
-		t.Fatalf("installed digest %q != preview digest %q", second.Digest, candidate.Digest)
 	}
 	if second.Digest == first.Digest {
-		t.Fatal("new commit reused the old package digest")
-	}
-	if _, err := service.Get(ctx, first.Digest); err != nil {
-		t.Fatalf("old digest is no longer addressable: %v", err)
+		t.Fatal("changed configuration reused old digest")
 	}
 	repository, err := service.GetRepository(ctx, repositoryID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(repository.Versions) != 2 || repository.Current == nil || repository.Current.Digest != second.Digest || repository.InstalledCommit != c2 {
-		t.Fatalf("repository versions = %+v", repository)
+	if repository.Current == nil || repository.Current.Digest != second.Digest ||
+		repository.TrackingRef != "refs/tags/stable" || len(repository.Versions) != 2 || len(repository.InstalledDevices) != 0 {
+		t.Fatalf("reviewed save = %+v", repository)
 	}
-
-	writeNativeBundle(t, repositoryPath, "1.2.0", repositoryPath, "third")
-	_ = commitRepository(t, repositoryPath, "c3")
-	_, err = service.InstallRepositoryCommit(ctx, repositoryID, c2)
-	var packError *recipe.PackError
-	if !errors.As(err, &packError) || packError.Code != "recipe.update_stale" {
-		t.Fatalf("moved HEAD error = %v", err)
+	for _, version := range repository.Versions {
+		if version.CommitSHA != commit || version.TreeSHA != tree || version.Canonical != (version.Recipe.Digest == second.Digest) {
+			t.Fatalf("same-commit canonical link = %+v", version)
+		}
 	}
-	repositoryAfterStale, err := service.GetRepository(ctx, repositoryID)
+	var provenance recipe.RecipeSource
+	if err := json.Unmarshal(second.Source, &provenance); err != nil {
+		t.Fatal(err)
+	}
+	if provenance.Type != "git" || provenance.Remote != remote || provenance.Path != "." || provenance.Revision != commit || provenance.Tree != tree ||
+		provenance.TrackingRef != "refs/tags/stable" {
+		t.Fatalf("saved provenance = %+v", provenance)
+	}
+	if _, err := service.ReadPackage(ctx, first.Digest); err != nil {
+		t.Fatalf("old package lost: %v", err)
+	}
+	if replay, err := service.ImportReviewed(ctx, secondSource, repositoryID, first.Digest); err != nil || replay.Digest != second.Digest {
+		t.Fatalf("current result replay = %+v, %v", replay, err)
+	}
+	staleSource := makeSource("stale editor")
+	if _, err := service.ImportReviewed(ctx, staleSource, repositoryID, first.Digest); !packErrorCode(err, "recipe.update_stale") {
+		t.Fatalf("stale save error = %v", err)
+	}
+	if _, err := service.ImportReviewed(ctx, firstSource, repositoryID, first.Digest); !packErrorCode(err, "recipe.update_stale") {
+		t.Fatalf("old digest replay undid newer selection: %v", err)
+	}
+	if _, err := service.ImportReviewed(ctx, staleSource, "", ""); !packErrorCode(err, "recipe.repository_exists") {
+		t.Fatalf("duplicate addition error = %v", err)
+	}
+	after, err := service.GetRepository(ctx, repositoryID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repositoryAfterStale.Current == nil || repositoryAfterStale.Current.Digest != second.Digest || len(repositoryAfterStale.Versions) != 2 {
-		t.Fatalf("stale update changed repository: %+v", repositoryAfterStale)
+	if after.Current == nil || after.Current.Digest != second.Digest || len(after.Versions) != 2 {
+		t.Fatalf("rejected save mutated repository: %+v", after)
 	}
+	deployments, err := queries.ListDeployments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 0 {
+		t.Fatalf("save created deployments: %+v", deployments)
+	}
+}
+
+func packErrorCode(err error, code string) bool {
+	var packError *recipe.PackError
+	return errors.As(err, &packError) && packError.Code == code
 }
 
 func writeNativeBundle(t *testing.T, root, version, remote, marker string) {
@@ -169,7 +159,7 @@ workloads:
       digest: %s
     command: [/bin/sh, /lmw/assets/serve.sh]
     args: []
-    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
+    resources: {pids: 64}
 assets: [serve.sh]
 `, version, remote, digest, digest)
 	if err := os.WriteFile(filepath.Join(root, "recipe.yaml"), []byte(manifest), 0o644); err != nil {
@@ -178,19 +168,4 @@ assets: [serve.sh]
 	if err := os.WriteFile(filepath.Join(root, "serve.sh"), []byte("#!/bin/sh\necho "+marker+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func commitRepository(t *testing.T, root, message string) string {
-	t.Helper()
-	if _, err := gitRun(t, root, "add", "-A"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gitRun(t, root, "commit", "-q", "-m", message); err != nil {
-		t.Fatal(err)
-	}
-	commit, err := gitOutput(t, root, "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return commit
 }

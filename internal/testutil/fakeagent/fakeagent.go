@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +331,13 @@ func StartAgent(t *testing.T, s *Server, o AgentOpts) *Agent {
 	if o.StateRoot == "" {
 		o.StateRoot = t.TempDir() + "/lmw-agent"
 	}
+	if o.CacheRoots == nil {
+		root := filepath.Join(o.StateRoot, "cache")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		o.CacheRoots = []string{root}
+	}
 	if o.Hostname == "" {
 		o.Hostname = "node-" + t.Name()
 	}
@@ -380,6 +388,16 @@ func runtimeFor(stateRoot string) *FakeRuntime {
 		return rt
 	}
 	rt := NewFakeRuntime()
+	for _, image := range []struct{ reference, digest string }{
+		{"ghcr.io/localmodelworks/spark-serve", ImageServeDig},
+		{"ghcr.io/localmodelworks/worker", ImageSmallDig},
+	} {
+		rt.SeedImage(runtime.ImageInfo{
+			Reference: image.reference + "@" + image.digest, Digest: image.digest,
+			IndexDigest: image.digest, ManifestDigest: image.digest,
+			Platform: goruntime.GOOS + "/" + goruntime.GOARCH, SizeBytes: 1024,
+		})
+	}
 	rts[stateRoot] = rt
 	return rt
 }

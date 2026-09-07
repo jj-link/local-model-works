@@ -179,6 +179,41 @@ func errorCodes(diags []recipe.Diagnostic) map[string]bool {
 	return out
 }
 
+func TestRecipeRejectsWorkloadResourceControls(t *testing.T) {
+	validator, err := recipe.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := loadDoc(t, filepath.Join("testdata", "pass-single-node"))
+	diagnostics, err := validator.Validate(baseline)
+	if err != nil || len(errorCodes(diagnostics)) != 0 {
+		t.Fatalf("unrestricted recipe: diagnostics=%+v, error=%v", diagnostics, err)
+	}
+	for field, value := range map[string]any{
+		"cpu": 8, "memoryBytes": int64(64 << 30), "cpusetCpus": "5-9,15-19",
+	} {
+		t.Run(field, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal(baseline, &document); err != nil {
+				t.Fatal(err)
+			}
+			workload := document["workloads"].([]any)[0].(map[string]any)
+			workload["resources"].(map[string]any)[field] = value
+			encoded, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagnostics, err := validator.Validate(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !errorCodes(diagnostics)["recipe.schema"] {
+				t.Fatalf("removed resource control %q accepted: %+v", field, diagnostics)
+			}
+		})
+	}
+}
+
 func TestRecipeFixtures(t *testing.T) {
 	env := newFixtureEnv(t)
 	entries, err := os.ReadDir("testdata")

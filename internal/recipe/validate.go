@@ -3,6 +3,7 @@ package recipe
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -63,13 +64,20 @@ func (v *Validator) Validate(doc []byte) ([]Diagnostic, error) {
 		return []Diagnostic{errDiag("recipe.parse", "recipe is not valid JSON: "+err.Error(), "")}, nil
 	}
 	var diags []Diagnostic
-	if verr := v.schema.Validate(raw); verr != nil {
-		for _, line := range strings.Split(verr.Error(), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
+	if validationErr := v.schema.Validate(raw); validationErr != nil {
+		var structured *jsonschema.ValidationError
+		if !errors.As(validationErr, &structured) {
+			return []Diagnostic{errDiag("recipe.schema", validationErr.Error(), "")}, nil
+		}
+		output := structured.BasicOutput()
+		for _, unit := range output.Errors {
+			if unit.Error == nil {
 				continue
 			}
-			diags = append(diags, errDiag("recipe.schema", line, ""))
+			diags = append(diags, errDiag("recipe.schema", unit.Error.String(), unit.InstanceLocation))
+		}
+		if len(diags) == 0 && output.Error != nil {
+			diags = append(diags, errDiag("recipe.schema", output.Error.String(), output.InstanceLocation))
 		}
 		return diags, nil
 	}

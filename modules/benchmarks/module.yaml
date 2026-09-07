@@ -12,6 +12,13 @@ settingsSchema:
   type: object
   additionalProperties: false
   properties:
+    harbor_runner_image:
+      type: string
+      pattern: '^(?:.+@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64})$'
+    max_concurrency:
+      type: integer
+      minimum: 1
+      maximum: 32
     default_prompts_per_language:
       type: integer
       minimum: 1

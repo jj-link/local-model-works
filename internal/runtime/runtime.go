@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"github.com/jj-link/local-model-works/internal/downloads"
 )
 
 // MountSpec is one explicit bind mount.
@@ -43,29 +45,31 @@ type HostPreparationSpec struct {
 // ContainerSpec is the typed, JSON-stable workload description sent to an
 // agent inside a WorkloadCommand.
 type ContainerSpec struct {
-	Name            string            `json:"name"`
-	Image           string            `json:"image"`
-	ImageDigest     string            `json:"imageDigest,omitempty"`
-	Entrypoint      []string          `json:"entrypoint,omitempty"`
-	Cmd             []string          `json:"cmd"`
-	Env             []string          `json:"env,omitempty"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	WorkingDir      string            `json:"workingDir,omitempty"`
-	NetworkMode     string            `json:"networkMode"` // bridge | host | none
-	Ports           []PortSpec        `json:"ports,omitempty"`
-	ReadonlyRootfs  bool              `json:"readonlyRootfs"`
-	NoNewPrivileges bool              `json:"noNewPrivileges"`
-	CapDrop         []string          `json:"capDrop,omitempty"`
-	ShmBytes        int64             `json:"shmBytes,omitempty"`
-	TmpfsBytes      int64             `json:"tmpfsBytes,omitempty"`
-	PidsLimit       int               `json:"pidsLimit,omitempty"`
-	MemoryBytes     int64             `json:"memoryBytes,omitempty"`
-	CPU             float64           `json:"cpu,omitempty"`
-	CPUSetCpus      string            `json:"cpusetCpus,omitempty"`
-	Mounts          []MountSpec       `json:"mounts,omitempty"`
-	GPUDeviceIDs    []string          `json:"gpuDeviceIDs,omitempty"`
-	GPUsAll         bool              `json:"gpusAll,omitempty"`
-	RDMAPaths       []string          `json:"rdmaPaths,omitempty"`
+	Name                 string                   `json:"name"`
+	Image                string                   `json:"image"`
+	ImageDigest          string                   `json:"imageDigest,omitempty"`
+	AcquisitionPolicy    string                   `json:"acquisitionPolicy,omitempty"`
+	ImagePlatform        string                   `json:"imagePlatform,omitempty"`
+	AcquisitionResources []downloads.ResourceSpec `json:"acquisitionResources,omitempty"`
+	Entrypoint           []string                 `json:"entrypoint,omitempty"`
+	Cmd                  []string                 `json:"cmd"`
+	Env                  []string                 `json:"env,omitempty"`
+	Labels               map[string]string        `json:"labels,omitempty"`
+	WorkingDir           string                   `json:"workingDir,omitempty"`
+	NetworkMode          string                   `json:"networkMode"` // bridge | host | none
+	Ports                []PortSpec               `json:"ports,omitempty"`
+	ReadonlyRootfs       bool                     `json:"readonlyRootfs"`
+	NoNewPrivileges      bool                     `json:"noNewPrivileges"`
+	CapDrop              []string                 `json:"capDrop,omitempty"`
+	ShmBytes             int64                    `json:"shmBytes,omitempty"`
+	TmpfsBytes           int64                    `json:"tmpfsBytes,omitempty"`
+	PidsLimit            int                      `json:"pidsLimit,omitempty"`
+	MemoryBytes          int64                    `json:"memoryBytes,omitempty"`
+	CPU                  float64                  `json:"cpu,omitempty"`
+	Mounts               []MountSpec              `json:"mounts,omitempty"`
+	GPUDeviceIDs         []string                 `json:"gpuDeviceIDs,omitempty"`
+	GPUsAll              bool                     `json:"gpusAll,omitempty"`
+	RDMAPaths            []string                 `json:"rdmaPaths,omitempty"`
 	// Ulimits carries per-resource rlimits (e.g. memlock, stack). Required for
 	// RoCE/NCCL workloads: the container drops all capabilities, so the default
 	// RLIMIT_MEMLOCK (8 KiB) makes ibv_reg_mr_iova2 fail with ENOMEM.
@@ -92,6 +96,10 @@ type Runtime interface {
 	Ping(ctx context.Context) (version string, err error)
 	// Pull fetches an image by reference (optionally digest-pinned).
 	Pull(ctx context.Context, spec *PullSpec) error
+	// InspectImage checks local engine content only; it must never pull.
+	InspectImage(ctx context.Context, reference, platform string) (*ImageInfo, error)
+	// ImageStorage reports the engine's actual storage filesystem.
+	ImageStorage(ctx context.Context) (*ImageStorageInfo, error)
 	// PrepareHost applies the bounded host-memory controls on a managed spec.
 	PrepareHost(ctx context.Context, spec *ContainerSpec) error
 	// Create materializes a stopped container from the spec.
@@ -116,14 +124,42 @@ type Runtime interface {
 
 // PullSpec identifies an image pull.
 type PullSpec struct {
-	Reference string `json:"reference"`
-	Auth      *Auth  `json:"auth,omitempty"`
+	Reference string                  `json:"reference"`
+	Auth      *Auth                   `json:"auth,omitempty"`
+	Platform  string                  `json:"platform,omitempty"`
+	Progress  func(ImagePullProgress) `json:"-"`
 }
 
 // Auth is registry credential material.
 type Auth struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	RegistryToken string `json:"registryToken,omitempty"`
+	ServerAddress string `json:"serverAddress,omitempty"`
+}
+
+type ImageInfo struct {
+	Reference      string `json:"reference"`
+	Digest         string `json:"digest"`
+	IndexDigest    string `json:"index_digest,omitempty"`
+	ManifestDigest string `json:"manifest_digest,omitempty"`
+	Platform       string `json:"platform"`
+	SizeBytes      int64  `json:"size_bytes"`
+}
+
+type ImageStorageInfo struct {
+	Root       string `json:"root"`
+	Filesystem string `json:"filesystem"`
+	TotalBytes uint64 `json:"total_bytes"`
+	FreeBytes  uint64 `json:"free_bytes"`
+}
+
+// ImagePullProgress is per engine layer; counters are not image-wide totals.
+type ImagePullProgress struct {
+	Layer      string
+	Phase      string
+	BytesDone  int64
+	BytesTotal int64
 }
 
 // Label keys for LMW-managed containers. Only containers carrying the

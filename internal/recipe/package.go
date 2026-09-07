@@ -312,7 +312,7 @@ func PersistPackage(root string, res *PackResult) (string, bool, error) {
 		if err := VerifyLayout(final); err != nil {
 			return "", false, fmt.Errorf("stored package verification: %w", err)
 		}
-		if err := verifyExtractedAssets(final); err != nil {
+		if err := VerifyExtractedAssets(final); err != nil {
 			return "", false, fmt.Errorf("stored assets verification: %w", err)
 		}
 		return final, false, nil
@@ -334,7 +334,7 @@ func PersistPackage(root string, res *PackResult) (string, bool, error) {
 	if err := UnpackLayer(res.layerBytes, assets); err != nil {
 		return "", false, err
 	}
-	if err := verifyExtractedAssets(tmp); err != nil {
+	if err := VerifyExtractedAssets(tmp); err != nil {
 		return "", false, err
 	}
 	if err := freezeAssets(assets); err != nil {
@@ -364,7 +364,7 @@ func freezeAssets(root string) error {
 	})
 }
 
-func verifyExtractedAssets(packageDir string) error {
+func VerifyExtractedAssets(packageDir string) error {
 	res, err := ReadLayout(packageDir)
 	if err != nil {
 		return err

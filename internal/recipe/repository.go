@@ -46,6 +46,7 @@ type Repository struct {
 	ObservedHeadCommit string                      `json:"observed_head_commit,omitempty"`
 	ObservedHeadTree   string                      `json:"observed_head_tree,omitempty"`
 	HeadCheckedAt      string                      `json:"head_checked_at,omitempty"`
+	HeadCheckError     string                      `json:"head_check_error,omitempty"`
 	UpdateAvailable    bool                        `json:"update_available"`
 	UpdateSupported    bool                        `json:"update_supported"`
 	UpdateDiagnostic   string                      `json:"update_diagnostic,omitempty"`
@@ -97,6 +98,7 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 		ObservedHeadCommit: nullStrValue(row.ObservedHeadCommit),
 		ObservedHeadTree:   nullStrValue(row.ObservedHeadTree),
 		HeadCheckedAt:      nullStrValue(row.HeadCheckedAt),
+		HeadCheckError:     row.HeadCheckError,
 		Versions:           make([]RepositoryVersion, 0, len(versionRows)),
 		CreatedAt:          row.CreatedAt,
 		UpdatedAt:          row.UpdatedAt,
@@ -147,16 +149,13 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 	if supporter, ok := s.repositoryCompilers.(interface{ SupportsRepository(string) bool }); ok {
 		repository.UpdateSupported = supporter.SupportsRepository(repository.ID)
 	}
-	if repository.Current != nil {
-		var installedSource RecipeSource
-		if json.Unmarshal(repository.Current.Source, &installedSource) == nil && installedSource.Type == "git" {
-			repository.UpdateSupported = true
-		}
+	if row.SourceUrl != "" && sha40.MatchString(repository.InstalledCommit) {
+		_, repository.UpdateSupported = normalizeGitHubRemote(row.SourceUrl)
 	}
 	if repository.UpdateSupported {
 		repository.UpdateDiagnostic = ""
 	}
-	repository.UpdateAvailable = repository.ObservedHeadCommit != "" && !strings.EqualFold(repository.ObservedHeadCommit, repository.InstalledCommit)
+	repository.UpdateAvailable = row.HeadCheckError == "" && repository.ObservedHeadCommit != "" && !strings.EqualFold(repository.ObservedHeadCommit, repository.InstalledCommit)
 	return repository, nil
 }
 
@@ -227,11 +226,7 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-func attachRepositoryVersion(ctx context.Context, q *db.Queries, manifest *Manifest, digest, treeSHA, installedAt string) error {
-	return attachRepositoryVersionWithCurrent(ctx, q, manifest, digest, treeSHA, installedAt, true)
-}
-
-func attachRepositoryVersionWithCurrent(ctx context.Context, q *db.Queries, manifest *Manifest, digest, treeSHA, installedAt string, setCurrent bool) error {
+func attachRepositoryVersion(ctx context.Context, q *db.Queries, manifest *Manifest, digest, treeSHA, installedAt, trackingRef string) error {
 	if manifest.Metadata.Source == nil || manifest.Metadata.Source.URL == "" || manifest.Metadata.Source.Revision == "" {
 		return nil
 	}
@@ -247,8 +242,11 @@ func attachRepositoryVersionWithCurrent(ctx context.Context, q *db.Queries, mani
 		installedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if trackingRef == "" {
+		trackingRef = "HEAD"
+	}
 	if err := q.UpsertRecipeRepository(ctx, db.UpsertRecipeRepositoryParams{
-		ID: id, SourceUrl: sourceURL, SourcePath: sourcePath, TrackingRef: "HEAD",
+		ID: id, SourceUrl: sourceURL, SourcePath: sourcePath, TrackingRef: trackingRef,
 		CreatedAt: installedAt, UpdatedAt: now,
 	}); err != nil {
 		return err
@@ -263,9 +261,6 @@ func attachRepositoryVersionWithCurrent(ctx context.Context, q *db.Queries, mani
 		TreeSha: nullableString(treeSHA), Canonical: 1, InstalledAt: installedAt,
 	}); err != nil {
 		return err
-	}
-	if !setCurrent {
-		return nil
 	}
 	return q.SetRecipeRepositoryCurrent(ctx, db.SetRecipeRepositoryCurrentParams{
 		CurrentDigest: nullableString(digest), UpdatedAt: now, ID: id,

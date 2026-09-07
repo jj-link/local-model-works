@@ -1,6 +1,7 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "~/lib/api";
 import { rangePolicy, type TelemetryRange } from "~/lib/telemetry";
+import { isRunTerminal } from "~/lib/format";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,10 @@ export const qk = {
   nodes: ["nodes"] as const,
   recipeDrafts: ["recipe-drafts"] as const,
   recipeDraft: (id: string) => ["recipe-drafts", id] as const,
+  recipeDraftList: (filters: { repository_id?: string; package_digest?: string }) => ["recipe-drafts", "list", filters] as const,
+  recipeComparison: (id: string) => ["recipe-drafts", id, "comparison"] as const,
+  recipeDownloads: (digest: string) => ["recipes", digest, "downloads"] as const,
+  recipeAvailability: (digest: string, selection: api.RecipeAvailabilityRequest) => ["recipes", digest, "availability", selection] as const,
   node: (id: string) => ["nodes", id] as const,
   fabrics: ["fabrics"] as const,
   fabric: (id: string) => ["fabrics", id] as const,
@@ -43,6 +48,9 @@ export const qk = {
   run: (id: string) => ["runs", id] as const,
   benchmarkRuns: ["benchmarks", "runs"] as const,
   benchmarkResults: ["benchmarks", "results"] as const,
+  benchmarkCatalog: ["benchmarks", "catalog"] as const,
+  benchmarkRun: (id: string) => ["benchmarks", "run", id] as const,
+  benchmarkTrials: (id: string) => ["benchmarks", "trials", id] as const,
   secrets: ["secrets"] as const,
   moduleSettings: (id: string) => ["modules", id, "settings"] as const,
   enrollmentTokens: ["enrollment-tokens"] as const,
@@ -244,6 +252,49 @@ export function useBenchmarkResults() {
   return useQuery({ queryKey: qk.benchmarkResults, queryFn: ({ signal }) => api.listBenchmarkResults({ signal }), staleTime: CATALOG });
 }
 
+export function useBenchmarkCatalog() {
+  return useQuery({ queryKey: qk.benchmarkCatalog, queryFn: ({ signal }) => api.getBenchmarkCatalog({ signal }), staleTime: CATALOG });
+}
+
+export function useBenchmarkRun(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.benchmarkRun(id ?? ""),
+    queryFn: ({ signal }) => api.getBenchmark(id as string, { signal }),
+    enabled: Boolean(id),
+    staleTime: LIVE,
+    refetchInterval: (query) =>
+      query.state.data && isRunTerminal(query.state.data.run.state) ? false : LIVE,
+  });
+}
+
+export function useBenchmarkTrials(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.benchmarkTrials(id ?? ""),
+    queryFn: ({ signal }) => api.listBenchmarkTrials(id as string, { signal }),
+    enabled: Boolean(id),
+    staleTime: LIVE,
+    refetchInterval: () => {
+      const summary = queryClient.getQueryData<{ run: { state: string } }>(
+        qk.benchmarkRun(id ?? ""),
+      );
+      return summary && isRunTerminal(summary.run.state) ? false : LIVE;
+    },
+  });
+}
+
+export function useCancelBenchmark() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.cancelBenchmark(runId),
+    onSuccess: (r) => {
+      invalidates(qk.benchmarkRuns, qk.runs({}), qk.benchmarkResults)(qc);
+      qc.setQueryData<api.Run>(qk.run(r.id), r);
+      void qc.invalidateQueries({ queryKey: qk.benchmarkRun(r.id) });
+      void qc.invalidateQueries({ queryKey: qk.benchmarkTrials(r.id) });
+    },
+  });
+}
+
 export function useSecrets() {
   return useQuery({ queryKey: qk.secrets, queryFn: ({ signal }) => api.listSecrets({ signal }), staleTime: CATALOG });
 }
@@ -266,12 +317,25 @@ export function useEnrollmentTokens(enabled = true) {
   });
 }
 
-export function useRecipeDrafts() {
-  return useQuery({ queryKey: qk.recipeDrafts, queryFn: ({ signal }) => api.listRecipeDrafts({ signal }) });
+export function useRecipeDrafts(filters: { repository_id?: string; package_digest?: string } = {}) {
+  return useQuery({ queryKey: qk.recipeDraftList(filters), queryFn: ({ signal }) => api.listRecipeDrafts({ ...filters, signal }) });
 }
 
 export function useRecipeDraft(id: string) {
   return useQuery({ queryKey: qk.recipeDraft(id), queryFn: ({ signal }) => api.getRecipeDraft(id, { signal }), enabled: Boolean(id) });
+}
+
+export function useRecipeComparison(id: string) {
+  return useQuery({ queryKey: qk.recipeComparison(id), queryFn: ({ signal }) => api.compareRecipeDraft(id, { signal }), enabled: Boolean(id) });
+}
+
+export function useRecipeDownloads(digest: string) {
+  return useQuery({ queryKey: qk.recipeDownloads(digest), queryFn: ({ signal }) => api.listRecipeDownloads(digest, { signal }), enabled: Boolean(digest), staleTime: LIVE,
+    refetchInterval: (query) => query.state.data?.some((run) => !["succeeded", "failed", "cancelled", "interrupted"].includes(run.state)) ? 1000 : false });
+}
+
+export function useRecipeAvailability(digest: string, selection: api.RecipeAvailabilityRequest = {}) {
+  return useQuery({ queryKey: qk.recipeAvailability(digest, selection), queryFn: ({ signal }) => api.getRecipeAvailability(digest, selection, { signal }), enabled: Boolean(digest), staleTime: LIVE });
 }
 /* ------------------------------------------------------------------ */
 /* mutations                                                           */
@@ -370,28 +434,32 @@ export function useCheckRecipeUpdates() {
   });
 }
 
-export function usePlanRecipeRepositoryUpdate() {
-  const qc = useQueryClient();
+export function usePlanRecipeRepositoryReplacement() {
   return useMutation({
-    mutationFn: ({ id, expected_head_commit }: { id: string; expected_head_commit: string }) =>
-      api.planRecipeRepositoryUpdate(id, { expected_head_commit }),
-    onSuccess: (_plan, request) => {
-      invalidates(qk.recipeRepositories)(qc);
-      invalidates(qk.recipeRepository(request.id))(qc);
-    },
+    mutationFn: ({ id, ...body }: { id: string } & api.RecipeRepositoryReplacementPlanRequest) =>
+      api.planRecipeRepositoryReplacement(id, body),
   });
 }
 
-export function useStartRecipeRepositoryUpdate() {
+export function useStartRecipeRepositoryReplacement() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & api.RecipeRepositoryUpdateRequest) =>
-      api.startRecipeRepositoryUpdate(id, body),
+    mutationFn: ({ id, ...body }: { id: string } & api.RecipeRepositoryReplacementRequest) =>
+      api.startRecipeRepositoryReplacement(id, body),
     onSuccess: (accepted) => {
       invalidates(qk.recipeRepositories)(qc);
       invalidates(qk.deployments)(qc);
       invalidates(qk.run(accepted.run_id))(qc);
+      invalidates(qk.runs({ module: "library" }))(qc);
     },
+  });
+}
+
+export function useCheckRecipeRepositoryUpdates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.checkRecipeRepositoryUpdates,
+    onSuccess: (_status, id) => invalidates(qk.recipeRepository(id), qk.recipeRepositories)(qc),
   });
 }
 

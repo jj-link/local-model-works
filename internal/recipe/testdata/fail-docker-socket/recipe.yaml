@@ -27,6 +27,6 @@ workloads:
       - serve
     args: []
     resources:
-      cpu: 1
-      memoryBytes: 16777216
+      
+      
       pids: 64

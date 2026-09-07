@@ -28,7 +28,7 @@ func transferTestService(t *testing.T) (*transferService, *transferCred, context
 	if err := os.WriteFile(filepath.Join(source, "model.bin"), []byte("model bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	agent := &Agent{cfg: config.Agent{StateRoot: t.TempDir()}, nodeID: "source-node", caPEM: certificateAuthority.PEMCert()}
+	agent := &Agent{cfg: config.Agent{StateRoot: t.TempDir(), CacheRoots: []string{filepath.Dir(source)}}, nodeID: "source-node", caPEM: certificateAuthority.PEMCert()}
 	credential := &transferCred{
 		TransferID: "transfer-1", RunID: "run-1", SourceNode: "source-node", DestNode: "dest-node",
 		ArtifactID: "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

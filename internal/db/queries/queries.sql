@@ -192,14 +192,14 @@ ORDER BY r.installed_at DESC, r.digest DESC;
 -- name: ListRecipeRepositories :many
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at
+       created_at, updated_at, head_check_error
 FROM recipe_repositories
 ORDER BY updated_at DESC, id;
 
 -- name: GetRecipeRepository :one
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at
+       created_at, updated_at, head_check_error
 FROM recipe_repositories
 WHERE id = ?;
 
@@ -251,7 +251,6 @@ INSERT INTO recipe_repositories (
     id, source_url, source_path, tracking_ref, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_url, source_path) DO UPDATE SET
-    tracking_ref = excluded.tracking_ref,
     updated_at = excluded.updated_at;
 
 -- name: AttachRecipeRepositoryVersion :exec
@@ -279,6 +278,18 @@ UPDATE recipe_repositories
 SET tracking_ref = ?, observed_head_commit = ?, observed_head_tree = ?,
     head_checked_at = ?, updated_at = ?
 WHERE id = ?;
+
+-- name: RecordRecipeRepositoryCheck :exec
+UPDATE recipe_repositories
+SET observed_head_commit = CASE WHEN sqlc.arg(check_error) = '' THEN sqlc.narg(head_commit) ELSE observed_head_commit END,
+    observed_head_tree = CASE WHEN sqlc.arg(check_error) = '' THEN NULL ELSE observed_head_tree END,
+    head_checked_at = sqlc.arg(checked_at), head_check_error = sqlc.arg(check_error),
+    updated_at = sqlc.arg(checked_at)
+WHERE id = sqlc.arg(id);
+
+-- name: CompareRecipeRepositoryCurrent :execrows
+UPDATE recipe_repositories SET current_digest = current_digest
+WHERE id = sqlc.arg(id) AND current_digest = sqlc.arg(expected_digest);
 
 
 -- name: DeleteRecipe :exec
@@ -474,14 +485,16 @@ UPDATE runs SET progress = ? WHERE id = ?;
 -- name: GetModuleSettings :one
 SELECT module, settings, version, updated_at FROM module_settings WHERE module = ?;
 
--- name: PutModuleSettings :exec
+-- name: InsertModuleSettings :exec
 INSERT INTO module_settings (module, settings, version)
-VALUES (?, ?, ?)
-ON CONFLICT (module)
-DO UPDATE SET settings = excluded.settings,
-              version = excluded.version,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE module_settings.version = ?;
+VALUES (?, ?, ?);
+
+-- name: UpdateModuleSettings :execrows
+UPDATE module_settings
+SET settings = ?,
+    version = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE module = ? AND version = @previous_version;
 
 -- name: CreateSecret :exec
 INSERT INTO secrets (id, name, purpose, nonce, ciphertext)
@@ -539,7 +552,7 @@ WHERE id = ?;
 UPDATE transfers SET bytes_done = ?, bytes_total = COALESCE(?, bytes_total),
                      state = 'transferring',
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE id = ?;
+WHERE id = ? AND state IN ('pending', 'transferring');
 
 -- name: InsertBenchmarkResult :exec
 INSERT INTO benchmark_results (run_id, language, endpoint, model, requests,
@@ -560,6 +573,65 @@ SELECT id, run_id, language, endpoint, model, requests, successes, prompt_tokens
        completion_tokens, total_tokens, wall_seconds, tokens_per_second, latency,
        first_token, grading, quantization, reasoning, result_path, created_at
 FROM benchmark_results WHERE run_id = ? ORDER BY language;
+
+-- name: InsertBenchmarkRunResult :exec
+INSERT INTO benchmark_run_results (
+    run_id, benchmark_id, benchmark_version, harness,
+    generation_deployment_id, verification_deployment_id,
+    execution_node_id, task_count, candidate_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id) DO NOTHING;
+
+-- name: CompleteBenchmarkRunResult :exec
+UPDATE benchmark_run_results
+SET passed_count = ?,
+    pass_at_1 = ?,
+    verifier_pass_rate = ?,
+    oracle_pass_rate = ?,
+    prompt_tokens = ?,
+    completion_tokens = ?,
+    total_tokens = ?,
+    wall_seconds = ?,
+    summary_artifact_id = ?,
+    bundle_artifact_id = ?,
+    metrics_json = ?
+WHERE run_id = ?;
+
+-- name: GetBenchmarkRunResult :one
+SELECT run_id, benchmark_id, benchmark_version, harness,
+       generation_deployment_id, verification_deployment_id,
+       execution_node_id, task_count, candidate_count, passed_count, pass_at_1,
+       verifier_pass_rate, oracle_pass_rate, prompt_tokens,
+       completion_tokens, total_tokens, wall_seconds,
+       summary_artifact_id, bundle_artifact_id, metrics_json, created_at
+FROM benchmark_run_results
+WHERE run_id = ?;
+
+-- name: ListBenchmarkRunResults :many
+SELECT run_id, benchmark_id, benchmark_version, harness,
+       generation_deployment_id, verification_deployment_id,
+       execution_node_id, task_count, candidate_count, passed_count, pass_at_1,
+       verifier_pass_rate, oracle_pass_rate, prompt_tokens,
+       completion_tokens, total_tokens, wall_seconds,
+       summary_artifact_id, bundle_artifact_id, metrics_json, created_at
+FROM benchmark_run_results
+ORDER BY created_at DESC, run_id DESC;
+
+-- name: DeleteBenchmarkTrialResultsByRun :exec
+DELETE FROM benchmark_trial_results WHERE run_id = ?;
+
+-- name: InsertBenchmarkTrialResult :exec
+INSERT INTO benchmark_trial_results (
+    run_id, task_id, candidate_index, official_pass, verifier_selected,
+    verifier_score, trajectory_path, metrics_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: ListBenchmarkTrialResultsByRun :many
+SELECT run_id, task_id, candidate_index, official_pass, verifier_selected,
+       verifier_score, trajectory_path, metrics_json, created_at
+FROM benchmark_trial_results
+WHERE run_id = ?
+ORDER BY task_id, candidate_index;
 
 -- name: InsertTelemetry5s :exec
 INSERT OR REPLACE INTO telemetry_5s (node_id, ts, payload) VALUES (?, ?, ?);
@@ -664,3 +736,18 @@ SELECT s.deployment_id, s.ts, s.payload FROM serving_telemetry_5s s
 JOIN (SELECT deployment_id, MAX(ts) ts FROM serving_telemetry_5s GROUP BY deployment_id) latest
   ON latest.deployment_id = s.deployment_id AND latest.ts = s.ts
 ORDER BY s.deployment_id;
+
+-- name: CreateAPIToken :exec
+INSERT INTO api_tokens(id,name,token_hash,scopes_json) VALUES(?,?,?,?);
+
+-- name: GetAPITokenByHash :one
+SELECT id,name,scopes_json FROM api_tokens WHERE token_hash=? AND revoked_at IS NULL;
+
+-- name: GetAPITokenByName :one
+SELECT id,name,token_hash,scopes_json,created_at,revoked_at FROM api_tokens WHERE name=?;
+
+-- name: RotateAPIToken :execrows
+UPDATE api_tokens SET token_hash=?,scopes_json=?,revoked_at=NULL WHERE name=?;
+
+-- name: RevokeAPIToken :execrows
+UPDATE api_tokens SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE name=? AND revoked_at IS NULL;

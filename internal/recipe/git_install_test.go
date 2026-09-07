@@ -7,9 +7,7 @@ package recipe_test
 //     packer computes for the same directory.
 //  2. Re-installing C1 is idempotent (same digest, one store entry).
 //  3. After the source repo is deleted entirely, the installed digest still
-//     resolves: manifest bytes come from the store, and the deploy launch
-//     path (plan + create, what the scheduler calls) succeeds from the
-//     digest alone.
+//     resolves: manifest and helper bytes come from the immutable store.
 //  4. Recreating the repo at the same path with a changed recipe (C2 ≠ C1)
 //     does not disturb the installed package: re-resolving by digest D
 //     yields byte-identical manifest and assets (no re-fetch, no drift);
@@ -23,20 +21,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
-	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/recipe"
-	"github.com/jj-link/local-model-works/internal/runs"
-	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
-
-// onlineNodes is a live node sender for the launch half of the proof.
-type onlineNodes struct{}
-
-func (onlineNodes) Send(string, *agentv1.ServerMessage) bool { return true }
-func (onlineNodes) Online(string) bool                       { return true }
 
 const immutableRecipeV1 = `apiVersion: localmodelworks/v1alpha1
 kind: Recipe
@@ -61,7 +49,7 @@ workloads:
     args:
       - --flag
       - one
-    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
+    resources: {pids: 64}
 assets:
   - serve.sh
 `
@@ -89,7 +77,7 @@ workloads:
     args:
       - --flag
       - two
-    resources: {cpu: 1, memoryBytes: 16777216, pids: 64}
+    resources: {pids: 64}
 assets:
   - serve.sh
 `
@@ -103,7 +91,7 @@ func TestGitInstallImmutability(t *testing.T) {
 		t.Fatalf("validator: %v", err)
 	}
 
-	// Fresh recipe store + deploy service over one migrated database.
+	// Fresh recipe store over one migrated database.
 	dbh, err := db.Open(ctx, filepath.Join(t.TempDir(), "lmw-immut.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -117,11 +105,6 @@ func TestGitInstallImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recipe service: %v", err)
 	}
-	caCA, err := ca.New()
-	if err != nil {
-		t.Fatalf("ca: %v", err)
-	}
-	dep := deploy.New(dbh, q, bus, runs.New(dbh, q, bus, t.TempDir()), onlineNodes{}, caCA)
 
 	repo := filepath.Join(t.TempDir(), "source")
 	pkgDir := filepath.Join(repo, "pkg")
@@ -247,28 +230,6 @@ func TestGitInstallImmutability(t *testing.T) {
 	}
 	if !bytes.Equal(detail.Manifest, storedManifest) {
 		t.Fatalf("installed manifest bytes drifted after source deletion")
-	}
-	// Drive the real launch path (plan + create) by digest. No source fetch
-	// is possible because the repository no longer exists.
-	if err := q.CreateNode(ctx, db.CreateNodeParams{ID: "node1", DisplayName: "node1", Labels: "{}"}); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
-	if err := q.SetNodeStatus(ctx, db.SetNodeStatusParams{Status: "online", ID: "node1"}); err != nil {
-		t.Fatalf("node status: %v", err)
-	}
-	plan, err := dep.Plan(ctx, deploy.PlanRequest{RecipeDigest: d})
-	if err != nil {
-		t.Fatalf("plan from installed digest: %v", err)
-	}
-	if !plan.Ready || len(plan.Placements) != 1 || plan.Placements[0].NodeID != "node1" {
-		t.Fatalf("plan from installed digest not ready: %+v", plan)
-	}
-	created, err := dep.Create(ctx, deploy.CreateRequest{RecipeDigest: d})
-	if err != nil {
-		t.Fatalf("create from installed digest: %v", err)
-	}
-	if _, err := dep.Get(ctx, created.ID); err != nil {
-		t.Fatalf("get created deployment: %v", err)
 	}
 
 	// 5. Recreate the repo at the same path, change the recipe, commit C2.

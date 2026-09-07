@@ -24,7 +24,7 @@ func TestPlacementCandidatesEnumerateAndValidateEveryHFRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(validSnapshot, "config.json"), []byte(`{"model_type":"test"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	validDigest, _, err := digestFile(filepath.Join(validSnapshot, "config.json"))
+	validDigest, _, err := digestFile(t.Context(), filepath.Join(validSnapshot, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPlacementCandidatesRecognizeRootHubLayout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(snapshot, "config.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	digest, _, err := digestFile(filepath.Join(snapshot, "config.json"))
+	digest, _, err := digestFile(t.Context(), filepath.Join(snapshot, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

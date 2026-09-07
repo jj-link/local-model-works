@@ -19,12 +19,14 @@ import (
 	"github.com/jj-link/local-model-works/internal/commands"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/events"
 	"github.com/jj-link/local-model-works/internal/fabric"
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/recipebuilder"
+	recipeassistant "github.com/jj-link/local-model-works/internal/recipebuilder/assistant"
 	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/telemetry"
@@ -64,9 +66,11 @@ type Env struct {
 	Bus           *events.EventBus
 	CA            *ca.CA
 	Deploy        *deploy.Service
+	Downloads     *downloads.Service
 	Fabrics       *fabric.Service
 	Recipes       *recipe.Service
 	RecipeBuilder *recipebuilder.Service
+	RecipeAssistant *recipeassistant.Codex
 	Runs          *runs.Service
 	Jobs          *jobs.Registry
 	Settings      *settings.Registry

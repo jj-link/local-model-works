@@ -415,6 +415,7 @@ func isSha40(s string) bool {
 func dirSize(ctx context.Context, root, contain string) int64 {
 	contain = filepath.Clean(contain)
 	var size int64
+	seen := map[string]bool{}
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -434,6 +435,10 @@ func dirSize(ctx context.Context, root, contain string) int64 {
 		if rl != contain && !strings.HasPrefix(rl, contain+string(filepath.Separator)) {
 			return nil
 		}
+		if seen[rl] {
+			return nil
+		}
+		seen[rl] = true
 		if fi, serr := os.Stat(target); serr == nil && fi.Mode().IsRegular() {
 			size += fi.Size()
 		}
@@ -464,14 +469,11 @@ func regularTreeSize(ctx context.Context, root string) int64 {
 // reportPlacements validates every discovered immutable snapshot before it
 // becomes schedulable.
 func (a *Agent) reportPlacements(ctx context.Context) {
-	for _, root := range a.cfg.CacheRoots {
-		for _, candidate := range placementCandidates(ctx, root) {
-			a.sendPlacement(candidate)
-		}
-	}
+	a.rescanPlacements(ctx)
 }
 
 func (a *Agent) sendPlacement(candidate placementCandidate) {
+	a.rememberPlacement(candidate)
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_PlacementReport{
 		PlacementReport: &agentv1.PlacementReport{
 			ArtifactId:  candidate.Identity,

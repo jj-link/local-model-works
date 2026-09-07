@@ -65,6 +65,7 @@ message AgentMessage {
     RotateCertificateRequest rotate_certificate = 9;
     Ack ack = 10;
     ArtifactProgress artifact_progress = 11;
+    DownloadProgress download_progress = 12;
   }
 }
 
@@ -79,6 +80,7 @@ message ServerMessage {
     Close close = 7;
     ArtifactCommand artifact_command = 8;
     ExtensionCommand extension_command = 9;
+    DownloadCommand download_command = 10;
   }
 }
 
@@ -114,6 +116,17 @@ message Inventory {
   // Routable host:port of the peer-transfer listener (bind address is
   // config-local; this is what a remote source dials).
   string peer_listen = 9;
+  // Explicit feature negotiation; downloads-v1 is required for DownloadCommand
+  // and non-legacy TransferCommand operations.
+  repeated string protocol_features = 10;
+  DownloadRoots download_roots = 11;
+}
+
+// Exact configured acquisition destinations reported by the enrolled agent.
+message DownloadRoots {
+  string recipe_root = 1;
+  string image_root = 2;
+  string platform = 3;
 }
 
 message DockerInfo {
@@ -348,6 +361,39 @@ message ArtifactProgress {
   uint32 files_total = 8;
 }
 
+enum DownloadOp {
+  // Invalid for every download command; agents must reject it.
+  DOWNLOAD_OP_UNSPECIFIED = 0;
+  DOWNLOAD_OP_INSPECT = 1;
+  DOWNLOAD_OP_FETCH = 2;
+  DOWNLOAD_OP_CANCEL = 3;
+}
+
+// Acquisition only: never creates/starts containers or executes repository code.
+// Results use CommandResult.output_json with internal/downloads.CommandOutput.
+message DownloadCommand {
+  string command_id = 1;
+  string item_id = 2;
+  DownloadOp op = 3;
+  // Strict, bounded internal/downloads.ResourceSpec JSON; data only.
+  bytes resource_json = 4;
+  // Transient scoped credentials, mTLS only. Never persist or log this field.
+  bytes credential_json = 5;
+  // Original command to stop; required for CANCEL.
+  string target_command_id = 6;
+}
+
+message DownloadProgress {
+  string item_id = 1;
+  string command_id = 2;
+  string phase = 3;
+  uint64 bytes_done = 4;
+  optional uint64 bytes_total = 5;
+  uint32 files_done = 6;
+  optional uint32 files_total = 7;
+  string current_file = 8;
+}
+
 message RotateCertificateRequest {
   // Requested when the current node certificate has < 30 days remaining.
   string current_serial = 1;
@@ -402,6 +448,17 @@ message TransferCommand {
   string src_path = 6;
   string dest_path = 7;
   uint32 timeout_seconds = 8;
+  // Unspecified retains legacy START semantics; explicit ops need downloads-v1.
+  TransferOp op = 9;
+  // Existing transfer to cancel or inspect; required for CANCEL and STATUS.
+  string target_transfer_id = 10;
+}
+
+enum TransferOp {
+  TRANSFER_OP_UNSPECIFIED = 0;
+  TRANSFER_OP_START = 1;
+  TRANSFER_OP_CANCEL = 2;
+  TRANSFER_OP_STATUS = 3;
 }
 
 message ReconcileRequest {

@@ -22,8 +22,8 @@ workloads:
       - --mode
       - ${setting.mode}
     resources:
-      cpu: 1
-      memoryBytes: 16777216
+      
+      
       pids: 64
 parameters:
   - name: gpu_util

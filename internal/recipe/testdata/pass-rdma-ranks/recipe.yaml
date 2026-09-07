@@ -54,7 +54,7 @@ workloads:
       - network.host
       - memory.shm-large
     resources:
-      cpu: 2
-      memoryBytes: 4294967296
+      
+      
       shmBytes: 2147483648
       pids: 1024

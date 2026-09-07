@@ -1,6 +1,0 @@
-{
-  "outcome": "fail",
-  "kind": "validator",
-  "code": "recipe.schema",
-  "note": "resources.cpusetCpus pattern rejects malformed CPU-affinity syntax."
-}

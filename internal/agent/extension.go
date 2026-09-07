@@ -109,7 +109,11 @@ func (a *Agent) handleExtension(ctx context.Context, command *agentv1.ExtensionC
 	}
 	execCtx, cancel := context.WithTimeout(operationCtx, timeout)
 	defer cancel()
-	if err := a.rt.Pull(execCtx, &runtime.PullSpec{Reference: runtime.ImageRef(&spec)}); err != nil {
+	if err := a.ensureWorkloadImage(execCtx, &spec); err != nil {
+		a.extensionResult(command.GetCommandId(), false, 0, err.Error(), nil)
+		return
+	}
+	if err := a.checkExistingResources(execCtx, &spec); err != nil {
 		a.extensionResult(command.GetCommandId(), false, 0, err.Error(), nil)
 		return
 	}

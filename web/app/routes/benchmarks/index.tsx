@@ -17,7 +17,8 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { useBenchmarkResults, useBenchmarkRuns } from "~/lib/queries";
+import { useBenchmarkResults, useBenchmarkCatalog } from "~/lib/queries";
+import type { BenchmarkLanguageResult } from "~/lib/api";
 import { EmptyState } from "~/components/empty-state";
 import { BenchmarkDialog, BENCHMARK_LANGUAGES } from "~/components/dialogs/benchmark-dialog";
 import { TrendChart, type TrendSeries } from "~/components/trend-chart";
@@ -27,39 +28,42 @@ const LANGUAGES = ["all", ...BENCHMARK_LANGUAGES];
 
 export default function BenchmarksRoute() {
   const { data: results, isPending, isError, error, refetch } = useBenchmarkResults();
-  const { data: runs } = useBenchmarkRuns();
+  const { data: catalog } = useBenchmarkCatalog();
   const [language, setLanguage] = useState("all");
-  const [deployment, setDeployment] = useState("all");
+  const [benchmarkId, setBenchmarkId] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const deploymentOf = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of runs ?? []) if (r.deployment_id) m.set(r.id, r.deployment_id);
-    return m;
-  }, [runs]);
-
-  const deployments = useMemo(() => {
-    const set = new Set<string>();
+  // Flatten run results into language rows (legacy one-shot shape).
+  const rows = useMemo(() => {
+    const list: (BenchmarkLanguageResult & { benchmark_id: string; benchmark_version: string; pass_at_1: number | null; verifier_pass_rate: number | null })[] = [];
     for (const r of results ?? []) {
-      const d = deploymentOf.get(r.run_id);
-      if (d) set.add(d);
-    }
-    return [...set].sort();
-  }, [results, deploymentOf]);
-
-  const filtered = useMemo(() => {
-    const list = [...(results ?? [])].sort(
-      (a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-    );
-    return list.filter((r) => {
-      if (language !== "all" && r.language !== language) return false;
-      if (deployment !== "all") {
-        const d = deploymentOf.get(r.run_id);
-        if (d !== deployment) return false;
+      for (const l of r.result.language_results ?? []) {
+        list.push({
+          ...l,
+          benchmark_id: r.result.benchmark_id,
+          benchmark_version: r.result.benchmark_version,
+          pass_at_1: r.result.pass_at_1 ?? null,
+          verifier_pass_rate: r.result.verifier_pass_rate ?? null,
+        });
       }
-      return true;
-    });
-  }, [results, language, deployment, deploymentOf]);
+    }
+    return list.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  }, [results]);
+
+  const benchmarkOptions = useMemo(
+    () => [...new Set((results ?? []).map((r) => r.result.benchmark_id))].sort(),
+    [results],
+  );
+
+  const filtered = useMemo(
+    () =>
+      rows.filter((r) => {
+        if (language !== "all" && r.language !== language) return false;
+        if (benchmarkId !== "all" && r.benchmark_id !== benchmarkId) return false;
+        return true;
+      }),
+    [rows, language, benchmarkId],
+  );
 
   const series: TrendSeries[] = useMemo(() => {
     if (language === "all") return [];
@@ -79,41 +83,44 @@ export default function BenchmarksRoute() {
     <div className="grid gap-4">
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div className="lmw-panel">
-          <header className="lmw-panel-head">
-            <h1 className="lmw-label">benchmark results</h1>
-            <span className="font-mono text-[11px] text-faint">{filtered.length} rows</span>
-            <Select value={deployment} onValueChange={setDeployment}>
-              <SelectTrigger className="h-7 w-40 font-mono text-xs" aria-label="Filter by deployment">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">all deployments</SelectItem>
-                {deployments.map((d) => (
-                  <SelectItem key={d} value={d}>
-                    {shortId(d)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="h-7 w-32 font-mono text-xs" aria-label="Filter by language">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LANGUAGES.map((l) => (
-                  <SelectItem key={l} value={l}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button size="sm" className="ml-auto" onClick={() => setDialogOpen(true)}>
-              <Gauge aria-hidden /> run benchmark
-            </Button>
+          <header className="lmw-panel-head flex-wrap">
+            <h1 className="lmw-title">
+              <Gauge className="size-4" aria-hidden /> Benchmark results
+            </h1>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Select value={language} onValueChange={setLanguage}>
+                <SelectTrigger className="w-32" aria-label="Language filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.map((lang) => (
+                    <SelectItem key={lang} value={lang}>
+                      {lang}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={benchmarkId} onValueChange={setBenchmarkId}>
+                <SelectTrigger className="w-40" aria-label="Benchmark filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">all benchmarks</SelectItem>
+                  {benchmarkOptions.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" className="ml-auto" onClick={() => setDialogOpen(true)}>
+                <Gauge aria-hidden /> run benchmark
+              </Button>
+            </div>
           </header>
 
           {isPending ? (
-            <p className="px-3 py-8 text-center font-mono text-xs text-faint">loading results…</p>
+            <p className="px-3 py-8 text-center font-mono text-xs text-faint">loading results...</p>
           ) : isError ? (
             <EmptyState
               className="m-3"
@@ -125,7 +132,11 @@ export default function BenchmarksRoute() {
             <EmptyState
               className="m-3"
               title="No benchmark results"
-              hint="Run a benchmark against a healthy deployment: six oneshot languages, deterministic prompts, per-language grading."
+              hint={
+                catalog?.benchmarks?.length
+                  ? "Launch a pinned benchmark from the catalog: terminal-bench or the six-language grader."
+                  : "Run a benchmark against a healthy deployment: six oneshot languages, deterministic prompts, per-language grading."
+              }
             />
           ) : (
             <div className="overflow-x-auto">
@@ -134,11 +145,11 @@ export default function BenchmarksRoute() {
                   <TableRow>
                     <TableHead>Time</TableHead>
                     <TableHead>Run</TableHead>
-                    <TableHead>Model</TableHead>
+                    <TableHead>Benchmark</TableHead>
                     <TableHead>Language</TableHead>
-                    <TableHead className="text-right">Tokens/s</TableHead>
-                    <TableHead className="text-right">p50</TableHead>
-                    <TableHead className="text-right">p90</TableHead>
+                    <TableHead className="text-right">tok/s</TableHead>
+                    <TableHead className="text-right">pass@1</TableHead>
+                    <TableHead className="text-right">verifier</TableHead>
                     <TableHead className="text-right">OK</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -153,18 +164,18 @@ export default function BenchmarksRoute() {
                           {shortId(r.run_id)}
                         </Link>
                       </TableCell>
-                      <TableCell className="max-w-40 truncate font-mono text-xs text-muted">
-                        {r.model ?? r.endpoint ?? "—"}
+                      <TableCell className="font-mono text-xs">
+                        {r.benchmark_id}@{r.benchmark_version}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{r.language}</TableCell>
                       <TableCell className="text-right font-mono text-xs tnum text-violet">
                         {r.tokens_per_second != null ? number(r.tokens_per_second, 1) : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs tnum text-muted">
-                        {r.latency_ms?.p50 != null ? `${number(r.latency_ms.p50)}ms` : "—"}
+                        {r.pass_at_1 != null ? `${Math.round(r.pass_at_1 * 100)}%` : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs tnum text-muted">
-                        {r.latency_ms?.p90 != null ? `${number(r.latency_ms.p90)}ms` : "—"}
+                        {r.verifier_pass_rate != null ? `${Math.round(r.verifier_pass_rate * 100)}%` : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs tnum">
                         {r.successes != null && r.requests != null ? (

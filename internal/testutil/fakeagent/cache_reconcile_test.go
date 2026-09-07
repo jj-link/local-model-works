@@ -25,6 +25,7 @@ func seedCompletedSnapshot(t *testing.T, modelRoot, revision, identity string) {
 	}
 	sum := sha256.Sum256(body)
 	manifest, err := json.Marshal(map[string]any{
+		"version":  2,
 		"identity": identity,
 		"files": []map[string]any{{
 			"path": "config.json", "size": len(body), "digest": fmt.Sprintf("sha256:%x", sum),

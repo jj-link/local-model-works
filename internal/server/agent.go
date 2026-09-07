@@ -71,6 +71,7 @@ func (s *Server) StartAgentListener(ctx context.Context) (string, error) {
 		})
 	})
 	mux.Get("/packages/{digest}/layer", s.handlePackageLayer)
+	mux.Get("/packages/{digest}/{part:manifest|config}", s.handlePackageMetadata)
 	if p, h := agentv1connect.NewEnrollmentServiceHandler(s); p != "" {
 		mux.Mount(p, h)
 	}
@@ -294,7 +295,9 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 	s.deploys.Converge(ctx, nodeID)
 
 	// Writer pump: outbound messages until the stream or the conn closes.
+	writerDone := make(chan struct{})
 	go func() {
+		defer close(writerDone)
 		for {
 			select {
 			case <-conn.Done():
@@ -306,6 +309,13 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			}
 		}
 	}()
+	defer func() {
+		conn.Close()
+		// Connect finalizes the response when Session returns; no writer may
+		// still be using it at that point.
+		<-writerDone
+	}()
+	go s.env.Downloads.OnReconnect(ctx, nodeID)
 
 	// Watchdog: a silent-but-open connection goes offline after the
 	// heartbeat timeout.
@@ -352,20 +362,17 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 					ID:           nodeID,
 				})
 			}
-			// The session start captured the row; a node approved while
-			// connected needs a re-check before it is promoted to online.
-			online := node.Status != "pending"
-			if !online {
-				if cur, err := s.q.GetNode(ctx, nodeID); err == nil {
-					online = cur.Status != "pending"
+			// Approval and watchdog recovery can occur without a new stream.
+			// Recovery reconciles cancellation barriers, never acquisition.
+			cur, err := s.q.GetNode(ctx, nodeID)
+			if err == nil && cur.Status != "pending" {
+				if err := s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
+					Status: "online", LastHeartbeat: sql.NullString{String: dbTime(now), Valid: true}, ID: nodeID,
+				}); err == nil && cur.Status == "offline" {
+					go s.env.Downloads.OnReconnect(ctx, nodeID)
 				}
 			}
-			if online {
-				_ = s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
-					Status: "online", LastHeartbeat: sql.NullString{String: dbTime(now), Valid: true}, ID: nodeID,
-				})
-			}
-			_ = stream.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_HeartbeatAck{
+			conn.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_HeartbeatAck{
 				HeartbeatAck: &agentv1.HeartbeatAck{
 					ServerTime:          timestamppb.New(now),
 					TelemetryIntervalMs: 5000,
@@ -386,6 +393,12 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			payload := telemetry.NodePayloadFromProto(body.Telemetry)
 			_ = s.telemetry.IngestNode(ctx, nodeID, body.Telemetry.GetAt().AsTime(), payload)
 		case *agentv1.AgentMessage_CommandResult:
+			if s.env.Downloads.OnResult(ctx, nodeID, body.CommandResult) {
+				continue
+			}
+			if s.deploys.OnTransferCommandResult(ctx, nodeID, body.CommandResult) {
+				continue
+			}
 			s.bus.Publish(ctx, "run.command_result", nodeID, mustJSON(body.CommandResult))
 			s.commands.Deliver(body.CommandResult)
 			s.deploys.OnCommandResult(ctx, body.CommandResult)
@@ -397,6 +410,8 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			s.applyPlacementReport(ctx, nodeID, body.PlacementReport)
 		case *agentv1.AgentMessage_TransferProgress:
 			s.applyTransferProgress(ctx, nodeID, body.TransferProgress)
+		case *agentv1.AgentMessage_DownloadProgress:
+			s.env.Downloads.OnProgress(ctx, nodeID, body.DownloadProgress)
 		case *agentv1.AgentMessage_ArtifactProgress:
 			s.deploys.OnArtifactProgress(ctx, body.ArtifactProgress)
 		case *agentv1.AgentMessage_RotateCertificate:
@@ -423,6 +438,7 @@ func (s *Server) markOffline(ctx context.Context, nodeID string) {
 		}
 		s.bus.Publish(ctx, "node.offline", nodeID, nil)
 		s.deploys.MarkNodeOffline(ctx, nodeID)
+		s.env.Downloads.OnDisconnect(ctx, nodeID)
 	}
 }
 
@@ -559,6 +575,13 @@ func optionalSQLString(value string) sql.NullString {
 }
 
 func (s *Server) applyTransferProgress(ctx context.Context, nodeID string, tp *agentv1.TransferProgress) {
+	if s.env.Downloads.OnTransferProgress(ctx, nodeID, tp) {
+		return
+	}
+	transfer, err := s.q.GetTransfer(ctx, tp.GetTransferId())
+	if err != nil || transfer.DestNode != nodeID || (transfer.State != "pending" && transfer.State != "transferring") {
+		return
+	}
 	bytesTotal := int64(0)
 	if tp.GetBytesTotal() > 0 {
 		bytesTotal = int64(tp.GetBytesTotal())

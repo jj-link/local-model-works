@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,18 +21,17 @@ import (
 // advertises a man-in-the-middle relay address, and the artifact row both
 // sides report against.
 type transferFixture struct {
-	t            *testing.T
-	s            *Server
-	fx           *HFFixture
-	src          *Agent
-	dst          *Agent
-	srcNode      string
-	dstNode      string
-	art          db.Artifact
-	srcBind      string // source's real peer listener (pre-reserved)
-	destRel      string // destination-relative transfer root
-	total        int64  // transferred byte count of the model repository
-	lastTransfer string
+	t       *testing.T
+	s       *Server
+	fx      *HFFixture
+	src     *Agent
+	dst     *Agent
+	srcNode string
+	dstNode string
+	art     db.Artifact
+	srcBind string // source's real peer listener (pre-reserved)
+	destRel string // destination-relative transfer root
+	total   int64  // transferred byte count of the model repository
 }
 
 func completeHFFixture(t *testing.T, fixture *HFFixture, identity string) {
@@ -55,7 +55,7 @@ func completeHFFixture(t *testing.T, fixture *HFFixture, identity string) {
 			"path": name, "size": len(data), "digest": fmt.Sprintf("sha256:%x", sum),
 		})
 	}
-	manifest, err := json.Marshal(map[string]any{"identity": identity, "files": files})
+	manifest, err := json.Marshal(map[string]any{"version": 2, "identity": identity, "files": files})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +82,7 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 	})
 	dst := StartAgent(t, s, AgentOpts{
 		Hostname: "spark-dst", Token: tokD, IP: "10.0.0.22/24",
+		CacheRoots: []string{t.TempDir()},
 	})
 	ns, nd := src.NodeID(), dst.NodeID()
 	s.ApproveNode(t, ns)
@@ -110,6 +111,9 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 	completeHFFixture(t, fx, art.Identity)
 	var total int64
 	for _, file := range WalkTree(t, fx.ModelDir) {
+		if strings.HasPrefix(file.Path, "refs/") {
+			continue
+		}
 		info, err := os.Lstat(filepath.Join(fx.ModelDir, filepath.FromSlash(file.Path)))
 		if err != nil {
 			t.Fatal(err)
@@ -134,11 +138,33 @@ func bootTransferFixture(t *testing.T, phase1RelayAddr string) *transferFixture 
 
 // dstTree is the destination's transfer root for the fixture's destRel.
 func (f *transferFixture) dstTree() string {
-	return filepath.Join(f.dst.cfg.TransferDir(), f.destRel)
+	return filepath.Join(f.dst.cfg.CacheRoots[0], f.destRel)
 }
 
 func (f *transferFixture) stagingTree() string {
-	return filepath.Join(f.dst.cfg.TransferDir(), ".untrusted-"+f.lastTransfer)
+	root := filepath.Dir(f.dstTree())
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".checkpoint.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var checkpoint struct {
+			Identity    string `json:"identity"`
+			Destination string `json:"destination"`
+		}
+		if json.Unmarshal(data, &checkpoint) == nil && checkpoint.Identity == f.art.Identity && checkpoint.Destination == f.dstTree() {
+			return filepath.Join(root, strings.TrimSuffix(entry.Name(), ".checkpoint.json"))
+		}
+	}
+	f.t.Fatal("transfer did not persist its owned checkpoint")
+	return ""
 }
 
 // startProxied creates the MITM relay advertised by the source and points it
@@ -156,7 +182,6 @@ func (f *transferFixture) startProxied(t *testing.T, proxyAddr string, threshold
 	if err != nil {
 		t.Fatalf("start transfer: %v", err)
 	}
-	f.lastTransfer = tid
 	t.Logf("transfer %s via relay %s (threshold %d of %d bytes)", tid, proxyAddr, threshold, f.total)
 	return p
 }
@@ -246,8 +271,8 @@ func TestV6_TransferInterruptResume(t *testing.T) {
 
 	row := f.waitDestValid(40 * time.Second)
 
-	// Destination repository matches the source, including relative symlinks.
-	srcInv := WalkTree(t, f.fx.ModelDir)
+	// Copy only immutable content, not mutable upstream revision aliases.
+	srcInv := slices.DeleteFunc(WalkTree(t, f.fx.ModelDir), func(file TreeInventory) bool { return strings.HasPrefix(file.Path, "refs/") })
 	dstInv := WalkTree(t, dstTree)
 	CompareTrees(t, "source", srcInv, "destination", dstInv)
 	destinationSnapshot := filepath.Join(dstTree, "snapshots", f.fx.Sha40)
@@ -272,14 +297,8 @@ func TestV6_TransferInterruptResume(t *testing.T) {
 	}
 }
 
-// TestV6_TransferCorruptionHealedByResend proves the designed corruption
-// behavior: a shard corrupted on the destination while a transfer is
-// interrupted is healed by the resume, which re-sends every file in full
-// (the receiver rewrites each file from the stream — transfer.go os.Create
-// — and reports the placement only after the complete re-transfer). The
-// interruption is a hard agent stop with the stream still held, so the
-// receiver's failure cleanup (RemoveAll) has not yet run and the corrupted
-// file genuinely survives until the re-send overwrites it.
+// Corruption in owned interrupted staging invalidates its recorded prefix, so
+// an explicitly resumed attempt re-fetches that file rather than publishing it.
 func TestV6_TransferCorruptionHealedByResend(t *testing.T) {
 	// Reserve the phase-1 relay's port before the agents boot (the
 	// destination advertises it; the source dials it).
@@ -309,9 +328,8 @@ func TestV6_TransferCorruptionHealedByResend(t *testing.T) {
 		t.Fatalf("corrupt shard A: %v", err)
 	}
 
-	// Hard-stop the destination agent while the stream is still held: the
-	// interrupted receiver stays connected, so its RemoveAll cleanup has not
-	// run and the corrupted file survives the interruption.
+	// Stop the destination while the stream is held. Only inert, owned staging
+	// remains; restart cannot resume it without the next explicit transfer.
 	f.dst.Stop()
 	Deadline(t, 15*time.Second, func() bool {
 		return f.s.Node(t, f.dstNode).Status == "offline"
@@ -338,7 +356,7 @@ func TestV6_TransferCorruptionHealedByResend(t *testing.T) {
 	if !bytes.Equal(after, original) {
 		t.Fatalf("corrupted shard survived the resume re-send")
 	}
-	srcInv := WalkTree(t, f.fx.ModelDir)
+	srcInv := slices.DeleteFunc(WalkTree(t, f.fx.ModelDir), func(file TreeInventory) bool { return strings.HasPrefix(file.Path, "refs/") })
 	dstInv := WalkTree(t, dstTree)
 	CompareTrees(t, "source", srcInv, "destination", dstInv)
 	if ds := Validate(filepath.Join(dstTree, "snapshots", f.fx.Sha40), dstTree); len(ds) != 0 {

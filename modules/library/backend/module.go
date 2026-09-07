@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -84,13 +85,39 @@ var importOutputSchema = json.RawMessage(`{
 
 var draftInputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
-  "required":["remote","revision"],"additionalProperties":false,
-  "properties":{"remote":{"type":"string","minLength":1},"revision":{"type":"string","minLength":1},"path":{"type":"string"}}
+  "required":["draft_id","operation_id"],"additionalProperties":false,
+  "properties":{"draft_id":{"type":"string","minLength":1},"operation_id":{"type":"string","minLength":1}}
+}`)
+var installInputSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "required":["draft_id","operation_id","package_digest","acknowledged_warnings"],"additionalProperties":false,
+  "properties":{
+    "draft_id":{"type":"string","minLength":1},"operation_id":{"type":"string","minLength":1},
+    "package_digest":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+    "acknowledged_warnings":{"type":"array","items":{"type":"string"},"uniqueItems":true}
+  }
 }`)
 var draftOutputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
-  "required":["id","version","state"],"properties":{
-    "id":{"type":"string"},"version":{"type":"integer"},"state":{"type":"string"}
+  "required":["draft_id","version"],"properties":{
+    "draft_id":{"type":"string"},"version":{"type":"integer"},
+    "package_digest":{"type":"string"},"recipe":{"type":"object"}
+  }
+}`)
+var generationInputSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "required":["draft_id","operation_id","approval","provider"],"additionalProperties":false,
+  "properties":{
+    "draft_id":{"type":"string","minLength":1},"operation_id":{"type":"string","minLength":1},
+    "approval":{"type":"object"},"provider":{"type":"object"}
+  }
+}`)
+var resolveInputSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "required":["draft_id","operation_id"],"additionalProperties":false,
+  "properties":{
+    "draft_id":{"type":"string","minLength":1},"operation_id":{"type":"string","minLength":1},
+    "credentials":{"type":"array"},"file_checksums":{"type":"array"}
   }
 }`)
 
@@ -113,6 +140,41 @@ func (m *Module) RegisterJobs(reg *jobs.Registry) {
 		InputSchema: draftInputSchema, OutputSchema: draftOutputSchema, Executor: m.draftJob,
 	}); err != nil {
 		panic(fmt.Sprintf("library draft job: %v", err))
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-change", Title: "Prepare recipe changes",
+		InputSchema: draftInputSchema, OutputSchema: draftOutputSchema, Executor: m.changeJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library change job: %v", err))
+	}
+	if m.env.Downloads != nil {
+		if err := reg.Register("library", m.env.Downloads.JobSpec()); err != nil {
+			panic(fmt.Sprintf("library download job: %v", err))
+		}
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-generate", Title: "Generate recipe proposal",
+		InputSchema: generationInputSchema, OutputSchema: draftOutputSchema, Executor: m.generationJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library generation job: %v", err))
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-resolve", Title: "Resolve recipe references",
+		InputSchema: resolveInputSchema, OutputSchema: draftOutputSchema, Executor: m.resolveJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library resolve job: %v", err))
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-package", Title: "Package recipe draft",
+		InputSchema: draftInputSchema, OutputSchema: draftOutputSchema, Executor: m.packageJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library package job: %v", err))
+	}
+	if err := reg.Register("library", jobs.Spec{
+		Kind: "recipe-install", Title: "Install recipe draft",
+		InputSchema: installInputSchema, OutputSchema: draftOutputSchema, Executor: m.installJob,
+	}); err != nil {
+		panic(fmt.Sprintf("library install job: %v", err))
 	}
 }
 
@@ -139,21 +201,127 @@ func (m *Module) importJob(ctx context.Context, c *jobs.Context) (map[string]any
 	return out, nil
 }
 
-func (m *Module) draftJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
-	source := recipebuilder.GitSource{}
-	raw, _ := json.Marshal(job.Input)
-	if err := json.Unmarshal(raw, &source); err != nil {
-		return nil, err
-	}
-	job.Logf("inspecting pinned Git source %s at %s", source.Remote, source.Revision)
-	draft, err := m.env.RecipeBuilder.CreateFromGit(ctx, source)
+type draftOperationInput struct {
+	DraftID              string   `json:"draft_id"`
+	OperationID          string   `json:"operation_id"`
+	PackageDigest        string   `json:"package_digest,omitempty"`
+	AcknowledgedWarnings []string `json:"acknowledged_warnings,omitempty"`
+}
+
+func (m *Module) generationJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	return m.executeGeneration(ctx, job)
+}
+func (m *Module) resolveJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	var operation draftOperationInput
+	var input recipebuilder.ResolveRequest
+	raw, err := json.Marshal(job.Input)
 	if err != nil {
 		return nil, err
 	}
-	output := map[string]any{}
-	raw, _ = json.Marshal(draft)
-	_ = json.Unmarshal(raw, &output)
-	return output, nil
+	if err := json.Unmarshal(raw, &operation); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil, err
+	}
+	resolver := &recipebuilder.ReferenceResolver{ResolveSecret: func(ctx context.Context, secretID, purpose string) (string, error) {
+		secret, err := m.env.Q.GetSecret(ctx, secretID)
+		if err != nil {
+			return "", err
+		}
+		if secret.Purpose != purpose {
+			return "", fmt.Errorf("secret purpose %q does not match %q", secret.Purpose, purpose)
+		}
+		return m.env.Secrets.Open(secret.ID, 1, secret.Nonce, secret.Ciphertext)
+	}}
+	draft, err := m.env.RecipeBuilder.ResolveReferences(ctx, operation.DraftID, operation.OperationID, job.RunID,
+		input, resolver, m.draftProgress(ctx, job, operation))
+	if err != nil {
+		_, _ = m.env.RecipeBuilder.FailOperation(ctx, operation.DraftID, operation.OperationID, err)
+		return nil, err
+	}
+	return draftJobOutput(draft, nil), nil
+}
+
+func (m *Module) draftJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	input, err := decodeDraftOperationInput(job.Input)
+	if err != nil {
+		return nil, err
+	}
+	progress := m.draftProgress(ctx, job, input)
+	draft, err := m.env.RecipeBuilder.Inspect(ctx, input.DraftID, input.OperationID, job.RunID, progress)
+	if err != nil {
+		_, _ = m.env.RecipeBuilder.FailOperation(ctx, input.DraftID, input.OperationID, err)
+		return nil, err
+	}
+	return draftJobOutput(draft, nil), nil
+}
+
+func (m *Module) packageJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	input, err := decodeDraftOperationInput(job.Input)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := m.env.RecipeBuilder.Package(ctx, input.DraftID, input.OperationID, job.RunID,
+		m.draftProgress(ctx, job, input))
+	if err != nil {
+		_, _ = m.env.RecipeBuilder.FailOperation(ctx, input.DraftID, input.OperationID, err)
+		return nil, err
+	}
+	return draftJobOutput(draft, nil), nil
+}
+
+func (m *Module) installJob(ctx context.Context, job *jobs.Context) (map[string]any, error) {
+	input, err := decodeDraftOperationInput(job.Input)
+	if err != nil {
+		return nil, err
+	}
+	installed, err := m.env.RecipeBuilder.Install(ctx, input.DraftID, input.OperationID, job.RunID,
+		input.PackageDigest, input.AcknowledgedWarnings, m.draftProgress(ctx, job, input))
+	if err != nil {
+		_, _ = m.env.RecipeBuilder.FailOperation(ctx, input.DraftID, input.OperationID, err)
+		return nil, err
+	}
+	draft, err := m.env.RecipeBuilder.Get(ctx, input.DraftID)
+	if err != nil {
+		return nil, err
+	}
+	return draftJobOutput(draft, installed), nil
+}
+
+func decodeDraftOperationInput(input map[string]any) (draftOperationInput, error) {
+	var decoded draftOperationInput
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return decoded, err
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return decoded, err
+	}
+	return decoded, nil
+}
+
+func (m *Module) draftProgress(ctx context.Context, job *jobs.Context,
+	input draftOperationInput) func(string, string) {
+	return func(phase, message string) {
+		job.Logf("%s: %s", phase, message)
+		_ = m.env.RecipeBuilder.ReportOperationProgress(ctx, input.DraftID, input.OperationID, phase, message)
+		_ = m.env.Runs.SetProgress(ctx, job.RunID, map[string]any{
+			"draft_id": input.DraftID, "operation_id": input.OperationID,
+			"phase": phase, "message": message, "updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+}
+
+func draftJobOutput(draft *recipebuilder.Draft, installed *recipe.Recipe) map[string]any {
+	output := map[string]any{"draft_id": draft.ID, "version": draft.Version}
+	if draft.PackageDigest != "" {
+		output["package_digest"] = draft.PackageDigest
+	}
+	if installed != nil {
+		output["recipe"] = installed
+	}
+	return output
 }
 
 // RegisterSettings declares the operator settings from the manifest's frozen
@@ -206,25 +374,26 @@ func (m *Module) listRecipes(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
-type repositoryUpdatePlanRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
-}
-
-type repositoryUpdateRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
-	PlanDigest         string `json:"plan_digest"`
+type repositoryReplacementRequest struct {
+	deploy.RepositoryReplacementRequest
+	PlanDigest string `json:"plan_digest"`
 }
 
 type repositoryUpdatePlanView struct {
-	PlanDigest           string                          `json:"plan_digest"`
-	Ready                bool                            `json:"ready"`
-	CurrentPermissions   []string                        `json:"current_permissions"`
-	CandidatePermissions []string                        `json:"candidate_permissions"`
-	AddedPermissions     []string                        `json:"added_permissions"`
-	RemovedPermissions   []string                        `json:"removed_permissions"`
-	InstalledDevices     []deploy.RepositoryUpdateDevice `json:"installed_devices"`
-	RunningDeployments   []deploy.RepositoryUpdateTarget `json:"running_deployments"`
-	Diagnostics          []diag.Diagnostic               `json:"diagnostics"`
+	PlanDigest             string                              `json:"plan_digest"`
+	Ready                  bool                                `json:"ready"`
+	RepositoryID           string                              `json:"repository_id"`
+	TargetDigest           string                              `json:"target_digest"`
+	DeploymentIDs          []string                            `json:"deployment_ids"`
+	UnchangedDeploymentIDs []string                            `json:"unchanged_deployment_ids"`
+	Deployments            []deploy.RepositoryUpdateDeployment `json:"deployments"`
+	CurrentPermissions     []string                            `json:"current_permissions"`
+	CandidatePermissions   []string                            `json:"candidate_permissions"`
+	AddedPermissions       []string                            `json:"added_permissions"`
+	RemovedPermissions     []string                            `json:"removed_permissions"`
+	InstalledDevices       []deploy.RepositoryUpdateDevice     `json:"installed_devices"`
+	RunningDeployments     []deploy.RepositoryUpdateTarget     `json:"running_deployments"`
+	Diagnostics            []diag.Diagnostic                   `json:"diagnostics"`
 }
 
 func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryUpdatePlanView {
@@ -246,6 +415,9 @@ func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryU
 	}
 	return repositoryUpdatePlanView{
 		PlanDigest: plan.Digest, Ready: plan.Ready,
+		RepositoryID: plan.RepositoryID, TargetDigest: plan.TargetDigest,
+		DeploymentIDs: plan.DeploymentIDs, UnchangedDeploymentIDs: plan.UnchangedDeploymentIDs,
+		Deployments:        plan.Deployments,
 		CurrentPermissions: currentPermissions, CandidatePermissions: candidatePermissions,
 		AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
 		InstalledDevices: installedDevices, RunningDeployments: runningDeployments,
@@ -273,36 +445,13 @@ func (m *Module) getRecipeRepository(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, repository)
 }
 
-func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
-	var request repositoryUpdatePlanRequest
-	if err := httpx.DecodeBody(r, &request); err != nil || request.ExpectedHeadCommit == "" {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "expected_head_commit is required")
+func (m *Module) planRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {
+	var request deploy.RepositoryReplacementRequest
+	if err := httpx.DecodeBody(r, &request); err != nil || request.TargetDigest == "" || len(request.DeploymentIDs) == 0 {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "target_digest and explicit deployment_ids are required")
 		return
 	}
-	repositoryID := chi.URLParam(r, "id")
-	repository, err := m.env.Recipes.GetRepository(r.Context(), repositoryID)
-	if err != nil {
-		writeRecipeUpdateError(w, err)
-		return
-	}
-	if !repository.UpdateSupported {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, recipe.RepositoryUnsupportedCode, "repository has no deterministic compiler")
-		return
-	}
-	if repository.ObservedHeadCommit == "" || !strings.EqualFold(repository.ObservedHeadCommit, request.ExpectedHeadCommit) {
-		httpx.WriteErr(w, http.StatusConflict, "recipe.update_stale", "observed repository HEAD changed; refresh updates")
-		return
-	}
-	if len(repository.InstalledDevices) == 0 {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
-		return
-	}
-	candidate, err := m.env.Recipes.PreviewRepositoryCommit(r.Context(), repositoryID, request.ExpectedHeadCommit)
-	if err != nil {
-		writeRecipeUpdateError(w, err)
-		return
-	}
-	plan, err := m.env.Deploy.PlanRepositoryUpdateCandidate(r.Context(), repositoryID, candidate)
+	plan, err := m.env.Deploy.PlanRepositoryUpdate(r.Context(), chi.URLParam(r, "id"), request)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
@@ -310,38 +459,13 @@ func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Reque
 	httpx.WriteJSON(w, http.StatusOK, repositoryUpdatePlanResponse(plan))
 }
 
-func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
-	var request repositoryUpdateRequest
-	if err := httpx.DecodeBody(r, &request); err != nil || request.ExpectedHeadCommit == "" || request.PlanDigest == "" {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "expected_head_commit and plan_digest are required")
+func (m *Module) startRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {
+	var request repositoryReplacementRequest
+	if err := httpx.DecodeBody(r, &request); err != nil || request.TargetDigest == "" || len(request.DeploymentIDs) == 0 || request.PlanDigest == "" {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "target_digest, explicit deployment_ids and plan_digest are required")
 		return
 	}
-	repositoryID := chi.URLParam(r, "id")
-	repository, err := m.env.Recipes.GetRepository(r.Context(), repositoryID)
-	if err != nil {
-		writeRecipeUpdateError(w, err)
-		return
-	}
-	if !repository.UpdateSupported {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, recipe.RepositoryUnsupportedCode, "repository has no deterministic compiler")
-		return
-	}
-	if repository.ObservedHeadCommit == "" || !strings.EqualFold(repository.ObservedHeadCommit, request.ExpectedHeadCommit) {
-		httpx.WriteErr(w, http.StatusConflict, "recipe.update_stale", "observed repository HEAD changed; refresh updates")
-		return
-	}
-	if len(repository.InstalledDevices) == 0 {
-		httpx.WriteErr(w, http.StatusUnprocessableEntity, "recipe.update_not_installed", "recipe is not installed on any device")
-		return
-	}
-	installed, err := m.env.Recipes.StageRepositoryCommit(
-		r.Context(), repositoryID, request.ExpectedHeadCommit,
-	)
-	if err != nil {
-		writeRecipeUpdateError(w, err)
-		return
-	}
-	runID, err := m.env.Deploy.CreateRepositoryUpdate(r.Context(), repositoryID, installed.Digest, request.PlanDigest)
+	runID, err := m.env.Deploy.CreateRepositoryUpdate(r.Context(), chi.URLParam(r, "id"), request.RepositoryReplacementRequest, request.PlanDigest)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
@@ -349,10 +473,21 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"run_id": runID})
 }
 
+func (m *Module) checkRecipeRepositoryUpdates(w http.ResponseWriter, r *http.Request) {
+	status, err := m.env.Recipes.CheckRepositoryUpdates(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, status)
+}
+
 func writeRecipeUpdateError(w http.ResponseWriter, err error) {
 	var packError *recipe.PackError
 	switch {
 	case errors.As(err, &packError) && packError.Code == "recipe.update_stale":
+		httpx.WriteErr(w, http.StatusPreconditionFailed, packError.Code, packError.Message)
+	case errors.As(err, &packError) && packError.Code == "recipe.repository_exists":
 		httpx.WriteErr(w, http.StatusConflict, packError.Code, packError.Message)
 	case errors.As(err, &packError) && packError.Code == recipe.RepositoryUnsupportedCode:
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, packError.Code, packError.Message)
@@ -391,8 +526,8 @@ func (m *Module) importRecipeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // getRecipe — GET /recipes/{digest}: full manifest plus cached update status.
-func (m *Module) getRecipe(w http.ResponseWriter, r *http.Request) {
-	detail, err := m.env.Recipes.Get(r.Context(), chi.URLParam(r, "digest"))
+func (m *Module) getRecipe(w http.ResponseWriter, r *http.Request, digest string) {
+	detail, err := m.env.Recipes.Get(r.Context(), digest)
 	if err != nil {
 		httpx.HandleErr(w, mapRecipeError(err))
 		return
@@ -414,8 +549,7 @@ func (m *Module) checkRecipeUpdates(w http.ResponseWriter, r *http.Request) {
 
 // deleteRecipe — DELETE /recipes/{digest}: uninstall, blocked while any
 // deployment or run references it. If-Match must carry the digest.
-func (m *Module) deleteRecipe(w http.ResponseWriter, r *http.Request) {
-	digest := chi.URLParam(r, "digest")
+func (m *Module) deleteRecipe(w http.ResponseWriter, r *http.Request, digest string) {
 	if r.Header.Get("If-Match") == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "invalid.if_match", "If-Match header is required")
 		return
@@ -608,9 +742,9 @@ func (m *Module) createTransfer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	if req.ArtifactID == "" || req.SourceNode == "" || req.DestNode == "" || req.DestPath == "" {
+	if req.ArtifactID == "" || req.SourceNode == "" || req.DestNode == "" {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable",
-			"artifact_id, source_node, dest_node, and dest_path are required")
+			"artifact_id, source_node, and dest_node are required")
 		return
 	}
 	art, err := m.env.Q.GetArtifact(r.Context(), req.ArtifactID)
@@ -669,8 +803,7 @@ var transferTerminal = map[string]bool{
 	"complete": true, "failed": true, "cancelled": true, "succeeded": true,
 }
 
-// cancelTransfer — DELETE /transfers/{id}: mark the transfer cancelled;
-// the agent's resumable temporary state is preserved for a later retry.
+// cancelTransfer requests device quiescence before reporting cancellation.
 func (m *Module) cancelTransfer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	t, err := m.env.Q.GetTransfer(r.Context(), id)
@@ -686,11 +819,11 @@ func (m *Module) cancelTransfer(w http.ResponseWriter, r *http.Request) {
 		httpx.HandleErr(w, fmt.Errorf("%w: transfer is already %s", httpx.ErrConflict, t.State))
 		return
 	}
-	if err := m.env.Q.UpdateTransferState(r.Context(), db.UpdateTransferStateParams{
-		State:      "cancelled",
-		Diagnostic: sql.NullString{String: "cancelled by operator", Valid: true},
-		ID:         id,
-	}); err != nil {
+	owned, err := m.env.Downloads.CancelTransfer(r.Context(), id)
+	if !owned && err == nil {
+		err = m.env.Deploy.CancelTransfer(r.Context(), id)
+	}
+	if err != nil {
 		httpx.HandleErr(w, err)
 		return
 	}

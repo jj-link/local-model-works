@@ -107,82 +107,93 @@ func (s *Service) checkUpdates(ctx context.Context, maxAge time.Duration, force 
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	heads := make(map[string]gitHead, len(repositories))
+	heads := make(map[string]gitHead)
 	statuses := make([]UpdateStatus, 0, len(repositories))
-
 	for _, repository := range repositories {
 		if !repository.CurrentDigest.Valid {
 			continue
 		}
-		versions, err := s.q.ListRecipeRepositoryVersions(ctx, repository.ID)
+		if _, ok := normalizeGitHubRemote(repository.SourceUrl); !ok {
+			continue
+		}
+		version, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, repository.CurrentDigest.String)
 		if err != nil {
 			return nil, err
 		}
-		installedCommit := ""
-		for _, version := range versions {
-			if version.RecipeDigest == repository.CurrentDigest.String {
-				installedCommit = version.CommitSha
-				break
-			}
-		}
-		if installedCommit == "" {
-			continue
-		}
-		remote, ok := normalizeGitHubRemote(repository.SourceUrl)
-		if !ok || !sha40.MatchString(installedCommit) {
-			continue
-		}
-
 		if !force && repository.HeadCheckedAt.Valid {
 			checkedAt, parseErr := time.Parse(time.RFC3339Nano, repository.HeadCheckedAt.String)
-			if parseErr == nil && maxAge > 0 && now.Sub(checkedAt) < maxAge {
-				statuses = append(statuses, updateStatusFromRepository(repository, installedCommit))
+			if parseErr == nil && maxAge > 0 && time.Since(checkedAt) < maxAge {
+				statuses = append(statuses, updateStatusFromRepository(repository, version.CommitSha))
 				continue
 			}
 		}
-
-		head, resolved := heads[remote]
-		if !resolved {
-			resolveCtx, cancel := context.WithTimeout(ctx, gitUpdateCheckTimeout)
-			head.ref, head.revision, head.err = s.resolveGitHead(resolveCtx, remote)
-			cancel()
-			heads[remote] = head
+		status, err := s.checkRepositoryUpdates(ctx, repository.ID, heads)
+		if err != nil {
+			return nil, err
 		}
-
-		status := UpdateStatus{
-			State:             "current",
-			RepositoryID:      repository.ID,
-			Remote:            repository.SourceUrl,
-			TrackingRef:       head.ref,
-			Path:              repository.SourcePath,
-			InstalledRevision: installedCommit,
-			CheckedAt:         now.Format(time.RFC3339Nano),
-		}
-		if head.err != nil {
-			status.State = "error"
-			status.TrackingRef = repository.TrackingRef
-			status.Error = head.err.Error()
-		} else {
-			status.CandidateRevision = head.revision
-			if !strings.EqualFold(head.revision, installedCommit) {
-				status.State = "available"
-			}
-			if err := s.q.SetRecipeRepositoryHead(ctx, db.SetRecipeRepositoryHeadParams{
-				TrackingRef:        head.ref,
-				ObservedHeadCommit: nullableString(head.revision),
-				ObservedHeadTree:   sql.NullString{},
-				HeadCheckedAt:      nullableString(status.CheckedAt),
-				UpdatedAt:          status.CheckedAt,
-				ID:                 repository.ID,
-			}); err != nil {
-				return nil, err
-			}
-		}
-		statuses = append(statuses, status)
-		s.bus.Publish(ctx, "recipe.update_checked", repository.ID, mustJSON(status))
+		statuses = append(statuses, *status)
 	}
 	return statuses, nil
+}
+
+// CheckRepositoryUpdates records the outcome of checking this repository's
+// tracked branch/tag, including failures. A failed check never means current.
+func (s *Service) CheckRepositoryUpdates(ctx context.Context, repositoryID string) (*UpdateStatus, error) {
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
+	return s.checkRepositoryUpdates(ctx, repositoryID, make(map[string]gitHead))
+}
+
+func (s *Service) checkRepositoryUpdates(ctx context.Context, repositoryID string, heads map[string]gitHead) (*UpdateStatus, error) {
+	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
+	if errorsIsNoRows(err) {
+		return nil, ErrUnknown
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !repository.CurrentDigest.Valid {
+		return nil, ErrUnknown
+	}
+	version, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, repository.CurrentDigest.String)
+	if err != nil {
+		return nil, err
+	}
+	status := updateStatusFromRepository(repository, version.CommitSha)
+	status.CheckedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	status.State, status.Error = "current", ""
+	remote, supported := normalizeGitHubRemote(repository.SourceUrl)
+	head := gitHead{}
+	key := remote + "\x00" + repository.TrackingRef
+	if !supported {
+		head.err = fmt.Errorf("repository update checking requires a supported HTTPS GitHub source")
+	} else if cached, ok := heads[key]; ok {
+		head = cached
+	} else {
+		resolveCtx, cancel := context.WithTimeout(ctx, gitUpdateCheckTimeout)
+		if repository.TrackingRef == "" || repository.TrackingRef == "HEAD" {
+			head.ref, head.revision, head.err = s.resolveGitHead(resolveCtx, remote)
+		} else {
+			head.revision, head.err = s.resolveGitRef(resolveCtx, remote, repository.TrackingRef)
+		}
+		cancel()
+		heads[key] = head
+	}
+	if head.err != nil {
+		status.State, status.Error = "error", head.err.Error()
+	} else {
+		status.CandidateRevision = head.revision
+		if !strings.EqualFold(head.revision, version.CommitSha) {
+			status.State = "available"
+		}
+	}
+	if err := s.q.RecordRecipeRepositoryCheck(ctx, db.RecordRecipeRepositoryCheckParams{
+		ID: repositoryID, CheckError: status.Error, HeadCommit: nullableString(head.revision), CheckedAt: nullableString(status.CheckedAt),
+	}); err != nil {
+		return nil, err
+	}
+	s.bus.Publish(ctx, "recipe.update_checked", repositoryID, mustJSON(status))
+	return &status, nil
 }
 
 func updateStatusFromRepository(row db.RecipeRepository, installedCommit string) UpdateStatus {
@@ -195,9 +206,13 @@ func updateStatusFromRepository(row db.RecipeRepository, installedCommit string)
 		InstalledRevision: installedCommit,
 		CandidateRevision: nullStrValue(row.ObservedHeadCommit),
 		CheckedAt:         nullStrValue(row.HeadCheckedAt),
+		Error:             row.HeadCheckError,
 	}
 	if row.ObservedHeadCommit.Valid && !strings.EqualFold(row.ObservedHeadCommit.String, installedCommit) {
 		status.State = "available"
+	}
+	if row.HeadCheckError != "" {
+		status.State = "error"
 	}
 	return status
 }

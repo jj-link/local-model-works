@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/auth"
 	"github.com/jj-link/local-model-works/internal/db"
+	"github.com/jj-link/local-model-works/internal/id"
 	"github.com/jj-link/local-model-works/internal/migrate"
 )
 
@@ -64,6 +67,9 @@ func usage() {
 Usage:
   lmw admin create --state DIR [--username NAME] [--password-stdin]
   lmw admin browser-login --state DIR [--username NAME]
+  lmw admin api-token create --state DIR --name NAME --scope SCOPE... --output-file FILE
+  lmw admin api-token rotate --state DIR --name NAME --output-file FILE
+  lmw admin api-token revoke --state DIR --name NAME
   lmw recipe validate <dir>
   lmw recipe pack <dir> --output <oci-layout>
   lmw recipe init --from-git <url> --revision <ref> [--path <path>] --output <dir>
@@ -83,9 +89,12 @@ func runAdmin(args []string) error {
 		fmt.Print(`Usage:
   lmw admin create --state DIR [--username NAME] [--password-stdin]
   lmw admin browser-login --state DIR [--username NAME]
+  lmw admin api-token create --state DIR --name NAME --scope SCOPE... --output-file FILE
+  lmw admin api-token rotate --state DIR --name NAME --output-file FILE
+  lmw admin api-token revoke --state DIR --name NAME
 
-Creates the sole operator account before first start, or mints a one-use,
-60-second browser login token for a local automation process.
+Creates the sole operator account, mints a one-use 60-second browser login
+token, or manages narrowly scoped service API credentials.
 `)
 		return nil
 	}
@@ -94,8 +103,10 @@ Creates the sole operator account before first start, or mints a one-use,
 		return runAdminCreate(args[1:], os.Stdin, os.Stdout)
 	case "browser-login":
 		return runAdminBrowserLogin(args[1:], os.Stdout)
+	case "api-token":
+		return runAdminAPIToken(args[1:], os.Stdout)
 	default:
-		return fmt.Errorf("unknown admin action %q (want create or browser-login)", args[0])
+		return fmt.Errorf("unknown admin action %q (want create, browser-login, or api-token)", args[0])
 	}
 }
 
@@ -220,6 +231,208 @@ func runAdminBrowserLogin(args []string, stdout io.Writer) error {
 	return json.NewEncoder(stdout).Encode(map[string]string{
 		"token": token, "expires_at": expires.Format(time.RFC3339Nano),
 	})
+}
+
+type scopeFlags []string
+
+func (s *scopeFlags) String() string { return strings.Join(*s, ",") }
+func (s *scopeFlags) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+func runAdminAPIToken(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("admin api-token: action is required (create, rotate, or revoke)")
+	}
+	switch args[0] {
+	case "create":
+		return runAdminAPITokenCreate(args[1:], stdout)
+	case "rotate":
+		return runAdminAPITokenRotate(args[1:], stdout)
+	case "revoke":
+		return runAdminAPITokenRevoke(args[1:], stdout)
+	default:
+		return fmt.Errorf("admin api-token: unknown action %q", args[0])
+	}
+}
+
+func parseAPITokenTarget(action string, args []string, scopes *scopeFlags, requireOutput bool) (state, name, output string, err error) {
+	fs := flag.NewFlagSet("admin api-token "+action, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	stateFlag := fs.String("state", "/var/lib/local-model-works", "server state root")
+	nameFlag := fs.String("name", "", "stable service token name")
+	outputFlag := fs.String("output-file", "", "credential output file")
+	if scopes != nil {
+		fs.Var(scopes, "scope", "allowed scope (repeatable)")
+	}
+	if err := fs.Parse(args); err != nil {
+		return "", "", "", err
+	}
+	if fs.NArg() != 0 {
+		return "", "", "", fmt.Errorf("admin api-token %s: unexpected arguments: %s", action, strings.Join(fs.Args(), " "))
+	}
+	state = filepath.Clean(strings.TrimSpace(*stateFlag))
+	name = strings.TrimSpace(*nameFlag)
+	output = filepath.Clean(strings.TrimSpace(*outputFlag))
+	if state == "" || state == "." {
+		return "", "", "", fmt.Errorf("admin api-token %s: --state must name a directory", action)
+	}
+	if name == "" || len(name) > 128 || strings.ContainsAny(name, " \t\r\n") {
+		return "", "", "", fmt.Errorf("admin api-token %s: --name must be 1-128 non-whitespace characters", action)
+	}
+	if requireOutput && (output == "" || output == ".") {
+		return "", "", "", fmt.Errorf("admin api-token %s: --output-file is required", action)
+	}
+	return state, name, output, nil
+}
+
+func runAdminAPITokenCreate(args []string, stdout io.Writer) error {
+	var requested scopeFlags
+	state, name, output, err := parseAPITokenTarget("create", args, &requested, true)
+	if err != nil {
+		return err
+	}
+	scopes, err := auth.ValidateAPIScopes(requested)
+	if err != nil {
+		return fmt.Errorf("admin api-token create: %w", err)
+	}
+	if _, err := os.Lstat(output); err == nil {
+		return fmt.Errorf("admin api-token create: output file already exists")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("admin api-token create: inspect output file: %w", err)
+	}
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(state, "lmw.db"))
+	if err != nil {
+		return fmt.Errorf("admin api-token create: %w", err)
+	}
+	defer sqlDB.Close()
+	q := db.New(sqlDB)
+	if _, err := q.GetAPITokenByName(ctx, name); err == nil {
+		return fmt.Errorf("admin api-token create: token name already exists")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("admin api-token create: lookup token name: %w", err)
+	}
+	token, err := auth.NewAPIToken()
+	if err != nil {
+		return fmt.Errorf("admin api-token create: %w", err)
+	}
+	tokenID, err := id.New()
+	if err != nil {
+		return fmt.Errorf("admin api-token create: %w", err)
+	}
+	scopesJSON, _ := json.Marshal(scopes)
+	if err := q.CreateAPIToken(ctx, db.CreateAPITokenParams{
+		ID: tokenID, Name: name, TokenHash: auth.APITokenHash(token), ScopesJson: string(scopesJSON),
+	}); err != nil {
+		return fmt.Errorf("admin api-token create: persist token: %w", err)
+	}
+	if err := writeNewCredential(output, token); err != nil {
+		return fmt.Errorf("admin api-token create: %w", err)
+	}
+	fmt.Fprintf(stdout, "API token %s created; credential written to %s\n", name, output)
+	return nil
+}
+
+func runAdminAPITokenRotate(args []string, stdout io.Writer) error {
+	state, name, output, err := parseAPITokenTarget("rotate", args, nil, true)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(output)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("admin api-token rotate: output file must be an existing regular 0600 file")
+	}
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(state, "lmw.db"))
+	if err != nil {
+		return fmt.Errorf("admin api-token rotate: %w", err)
+	}
+	defer sqlDB.Close()
+	q := db.New(sqlDB)
+	existing, err := q.GetAPITokenByName(ctx, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("admin api-token rotate: token name does not exist")
+	}
+	if err != nil {
+		return fmt.Errorf("admin api-token rotate: lookup token name: %w", err)
+	}
+	token, err := auth.NewAPIToken()
+	if err != nil {
+		return fmt.Errorf("admin api-token rotate: %w", err)
+	}
+	affected, err := q.RotateAPIToken(ctx, db.RotateAPITokenParams{
+		TokenHash: auth.APITokenHash(token), ScopesJson: existing.ScopesJson, Name: name,
+	})
+	if err != nil {
+		return fmt.Errorf("admin api-token rotate: persist token: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("admin api-token rotate: token name does not exist")
+	}
+	if err := replaceCredential(output, token); err != nil {
+		return fmt.Errorf("admin api-token rotate: %w", err)
+	}
+	fmt.Fprintf(stdout, "API token %s rotated; credential replaced at %s\n", name, output)
+	return nil
+}
+
+func runAdminAPITokenRevoke(args []string, stdout io.Writer) error {
+	state, name, _, err := parseAPITokenTarget("revoke", args, nil, false)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	sqlDB, err := db.Open(ctx, filepath.Join(state, "lmw.db"))
+	if err != nil {
+		return fmt.Errorf("admin api-token revoke: %w", err)
+	}
+	defer sqlDB.Close()
+	affected, err := db.New(sqlDB).RevokeAPIToken(ctx, name)
+	if err != nil {
+		return fmt.Errorf("admin api-token revoke: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("admin api-token revoke: active token name does not exist")
+	}
+	fmt.Fprintf(stdout, "API token %s revoked\n", name)
+	return nil
+}
+
+func writeNewCredential(path, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create credential directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create credential file: %w", err)
+	}
+	if _, err := io.WriteString(file, token+"\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write credential file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync credential file: %w", err)
+	}
+	return file.Close()
+}
+
+func replaceCredential(path, token string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return fmt.Errorf("open credential file: %w", err)
+	}
+	if _, err := io.WriteString(file, token+"\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write credential file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync credential file: %w", err)
+	}
+	return file.Close()
 }
 
 func readAdminPassword(stdin io.Reader, stdout io.Writer, fromStdin bool) (string, error) {

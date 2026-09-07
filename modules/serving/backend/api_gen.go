@@ -68,6 +68,60 @@ func (e DeploymentObservedState) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentCreateRequestAcquisitionPolicy.
+const (
+	DeploymentCreateRequestAcquisitionPolicyDownloadMissing DeploymentCreateRequestAcquisitionPolicy = "download-missing"
+	DeploymentCreateRequestAcquisitionPolicyRequireExisting DeploymentCreateRequestAcquisitionPolicy = "require-existing"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentCreateRequestAcquisitionPolicy enum.
+func (e DeploymentCreateRequestAcquisitionPolicy) Valid() bool {
+	switch e {
+	case DeploymentCreateRequestAcquisitionPolicyDownloadMissing:
+		return true
+	case DeploymentCreateRequestAcquisitionPolicyRequireExisting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeploymentPlanAcquisitionPolicy.
+const (
+	DeploymentPlanAcquisitionPolicyDownloadMissing DeploymentPlanAcquisitionPolicy = "download-missing"
+	DeploymentPlanAcquisitionPolicyRequireExisting DeploymentPlanAcquisitionPolicy = "require-existing"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentPlanAcquisitionPolicy enum.
+func (e DeploymentPlanAcquisitionPolicy) Valid() bool {
+	switch e {
+	case DeploymentPlanAcquisitionPolicyDownloadMissing:
+		return true
+	case DeploymentPlanAcquisitionPolicyRequireExisting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeploymentPlanRequestAcquisitionPolicy.
+const (
+	DeploymentPlanRequestAcquisitionPolicyDownloadMissing DeploymentPlanRequestAcquisitionPolicy = "download-missing"
+	DeploymentPlanRequestAcquisitionPolicyRequireExisting DeploymentPlanRequestAcquisitionPolicy = "require-existing"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentPlanRequestAcquisitionPolicy enum.
+func (e DeploymentPlanRequestAcquisitionPolicy) Valid() bool {
+	switch e {
+	case DeploymentPlanRequestAcquisitionPolicyDownloadMissing:
+		return true
+	case DeploymentPlanRequestAcquisitionPolicyRequireExisting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DiagnosticSeverity.
 const (
 	DiagnosticSeverityError   DiagnosticSeverity = "error"
@@ -104,21 +158,96 @@ func (e ImagePreviewAction) Valid() bool {
 	}
 }
 
+// Defines values for RecipeDownloadResourceAction.
+const (
+	RecipeDownloadResourceActionDownloadOrigin RecipeDownloadResourceAction = "download-origin"
+	RecipeDownloadResourceActionPeerCopy       RecipeDownloadResourceAction = "peer-copy"
+	RecipeDownloadResourceActionReuse          RecipeDownloadResourceAction = "reuse"
+	RecipeDownloadResourceActionValidateLocal  RecipeDownloadResourceAction = "validate-local"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDownloadResourceAction enum.
+func (e RecipeDownloadResourceAction) Valid() bool {
+	switch e {
+	case RecipeDownloadResourceActionDownloadOrigin:
+		return true
+	case RecipeDownloadResourceActionPeerCopy:
+		return true
+	case RecipeDownloadResourceActionReuse:
+		return true
+	case RecipeDownloadResourceActionValidateLocal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDownloadResourceKind.
+const (
+	Artifact RecipeDownloadResourceKind = "artifact"
+	Image    RecipeDownloadResourceKind = "image"
+	Recipe   RecipeDownloadResourceKind = "recipe"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDownloadResourceKind enum.
+func (e RecipeDownloadResourceKind) Valid() bool {
+	switch e {
+	case Artifact:
+		return true
+	case Image:
+		return true
+	case Recipe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeResourceVerificationState.
+const (
+	RecipeResourceVerificationStateAvailable RecipeResourceVerificationState = "available"
+	RecipeResourceVerificationStateInvalid   RecipeResourceVerificationState = "invalid"
+	RecipeResourceVerificationStateMissing   RecipeResourceVerificationState = "missing"
+	RecipeResourceVerificationStatePartial   RecipeResourceVerificationState = "partial"
+	RecipeResourceVerificationStateUnknown   RecipeResourceVerificationState = "unknown"
+	RecipeResourceVerificationStateVerifying RecipeResourceVerificationState = "verifying"
+)
+
+// Valid indicates whether the value is a known member of the RecipeResourceVerificationState enum.
+func (e RecipeResourceVerificationState) Valid() bool {
+	switch e {
+	case RecipeResourceVerificationStateAvailable:
+		return true
+	case RecipeResourceVerificationStateInvalid:
+		return true
+	case RecipeResourceVerificationStateMissing:
+		return true
+	case RecipeResourceVerificationStatePartial:
+		return true
+	case RecipeResourceVerificationStateUnknown:
+		return true
+	case RecipeResourceVerificationStateVerifying:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TransferPreviewAction.
 const (
-	DownloadOrigin TransferPreviewAction = "download-origin"
-	PeerCopy       TransferPreviewAction = "peer-copy"
-	ReconcileLocal TransferPreviewAction = "reconcile-local"
+	TransferPreviewActionDownloadOrigin TransferPreviewAction = "download-origin"
+	TransferPreviewActionPeerCopy       TransferPreviewAction = "peer-copy"
+	TransferPreviewActionReconcileLocal TransferPreviewAction = "reconcile-local"
 )
 
 // Valid indicates whether the value is a known member of the TransferPreviewAction enum.
 func (e TransferPreviewAction) Valid() bool {
 	switch e {
-	case DownloadOrigin:
+	case TransferPreviewActionDownloadOrigin:
 		return true
-	case PeerCopy:
+	case TransferPreviewActionPeerCopy:
 		return true
-	case ReconcileLocal:
+	case TransferPreviewActionReconcileLocal:
 		return true
 	default:
 		return false
@@ -184,6 +313,8 @@ type DeploymentObservedState string
 
 // DeploymentCreateRequest defines model for DeploymentCreateRequest.
 type DeploymentCreateRequest struct {
+	AcquisitionPolicy *DeploymentCreateRequestAcquisitionPolicy `json:"acquisition_policy,omitempty"`
+
 	// LaunchProfileId Saved profile to apply; mutually exclusive with variants/parameters
 	LaunchProfileId *string `json:"launch_profile_id,omitempty"`
 
@@ -194,17 +325,23 @@ type DeploymentCreateRequest struct {
 		Rank   int                `json:"rank"`
 	} `json:"placements,omitempty"`
 
-	// PlanDigest Distinguishes an unchanged plan from the one previewed
-	PlanDigest   *string `json:"plan_digest,omitempty"`
-	RecipeDigest string  `json:"recipe_digest"`
+	// PlanDigest Required digest of the explicitly reviewed plan, including its acquisition policy.
+	PlanDigest   string `json:"plan_digest"`
+	RecipeDigest string `json:"recipe_digest"`
 
 	// Variants Optional artifact name -> selected model variant. Must match the previewed plan.
-	Variants *map[string]string `json:"variants,omitempty"`
+	Variants      *map[string]string `json:"variants,omitempty"`
+	WorkloadIndex *int               `json:"workload_index,omitempty"`
 }
+
+// DeploymentCreateRequestAcquisitionPolicy defines model for DeploymentCreateRequest.AcquisitionPolicy.
+type DeploymentCreateRequestAcquisitionPolicy string
 
 // DeploymentPlan defines model for DeploymentPlan.
 type DeploymentPlan struct {
-	Conflicts *[]struct {
+	Acquisition       *RecipeDownloadPlan             `json:"acquisition,omitempty"`
+	AcquisitionPolicy DeploymentPlanAcquisitionPolicy `json:"acquisition_policy"`
+	Conflicts         *[]struct {
 		DeploymentId *openapi_types.UUID `json:"deployment_id,omitempty"`
 		OccupiedBy   *string             `json:"occupied_by,omitempty"`
 		Resource     *string             `json:"resource,omitempty"`
@@ -216,11 +353,12 @@ type DeploymentPlan struct {
 		Path  *string `json:"path,omitempty"`
 		Port  *int    `json:"port,omitempty"`
 	} `json:"endpoint,omitempty"`
-	Fabric          *string                   `json:"fabric,omitempty"`
-	HostPreparation *[]HostPreparationPreview `json:"host_preparation,omitempty"`
-	Images          *[]ImagePreview           `json:"images,omitempty"`
+	Fabric           *string                   `json:"fabric,omitempty"`
+	HostPreparation  *[]HostPreparationPreview `json:"host_preparation,omitempty"`
+	Images           *[]ImagePreview           `json:"images,omitempty"`
+	MissingResources *[]RecipeDownloadResource `json:"missing_resources,omitempty"`
 
-	// Parameters Effective launch settings for this plan
+	// Parameters Effective launch parameters for this plan
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 	Placements []struct {
 		AcceleratorIndex int                `json:"accelerator_index"`
@@ -231,7 +369,7 @@ type DeploymentPlan struct {
 	} `json:"placements"`
 
 	// PlanDigest Opaque digest for this previewed plan; pass to create to pin it
-	PlanDigest *string `json:"plan_digest,omitempty"`
+	PlanDigest string `json:"plan_digest"`
 	Ports      *[]struct {
 		ContainerPort int                `json:"container_port"`
 		HostPort      int                `json:"host_port"`
@@ -256,8 +394,14 @@ type DeploymentPlan struct {
 	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
 
+// DeploymentPlanAcquisitionPolicy defines model for DeploymentPlan.AcquisitionPolicy.
+type DeploymentPlanAcquisitionPolicy string
+
 // DeploymentPlanRequest defines model for DeploymentPlanRequest.
 type DeploymentPlanRequest struct {
+	// AcquisitionPolicy Require exact local resources, or acquire missing resources through shared downloads before launch.
+	AcquisitionPolicy *DeploymentPlanRequestAcquisitionPolicy `json:"acquisition_policy,omitempty"`
+
 	// LaunchProfileId Saved profile to apply; mutually exclusive with variants/parameters
 	LaunchProfileId *string `json:"launch_profile_id,omitempty"`
 
@@ -273,7 +417,13 @@ type DeploymentPlanRequest struct {
 
 	// Variants Optional artifact name -> selected model variant. Omit for the recipe default.
 	Variants *map[string]string `json:"variants,omitempty"`
+
+	// WorkloadIndex Optional explicit workload selection; otherwise selected from compatible fleet inventory.
+	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
+
+// DeploymentPlanRequestAcquisitionPolicy Require exact local resources, or acquire missing resources through shared downloads before launch.
+type DeploymentPlanRequestAcquisitionPolicy string
 
 // Diagnostic defines model for Diagnostic.
 type Diagnostic struct {
@@ -342,6 +492,84 @@ type LaunchProfileUpsert struct {
 	RecipeDigest *string            `json:"recipe_digest,omitempty"`
 	Variants     *map[string]string `json:"variants,omitempty"`
 }
+
+// RecipeDownloadPlan defines model for RecipeDownloadPlan.
+type RecipeDownloadPlan struct {
+	Diagnostics   []Diagnostic             `json:"diagnostics"`
+	PlanDigest    string                   `json:"plan_digest"`
+	Ready         bool                     `json:"ready"`
+	RecipeDigest  string                   `json:"recipe_digest"`
+	Resources     []RecipeDownloadResource `json:"resources"`
+	Storage       []RecipeDownloadStorage  `json:"storage"`
+	Targets       []RecipeDownloadTarget   `json:"targets"`
+	Variants      map[string]string        `json:"variants"`
+	WorkloadIndex int                      `json:"workload_index"`
+}
+
+// RecipeDownloadResource defines model for RecipeDownloadResource.
+type RecipeDownloadResource struct {
+	Action         RecipeDownloadResourceAction `json:"action"`
+	BytesRemaining *int64                       `json:"bytes_remaining,omitempty"`
+	BytesTotal     *int64                       `json:"bytes_total,omitempty"`
+	CredentialId   *string                      `json:"credential_id,omitempty"`
+	Destination    string                       `json:"destination"`
+	Identity       string                       `json:"identity"`
+	IndexDigest    *string                      `json:"index_digest,omitempty"`
+	Key            string                       `json:"key"`
+	Kind           RecipeDownloadResourceKind   `json:"kind"`
+	ManifestDigest *string                      `json:"manifest_digest,omitempty"`
+	NodeId         string                       `json:"node_id"`
+	Platform       *string                      `json:"platform,omitempty"`
+	Required       bool                         `json:"required"`
+	SizeBytes      *int64                       `json:"size_bytes,omitempty"`
+	Source         struct {
+		Digest    *string `json:"digest,omitempty"`
+		Reference *string `json:"reference,omitempty"`
+		Revision  *string `json:"revision,omitempty"`
+		Type      string  `json:"type"`
+		Url       *string `json:"url,omitempty"`
+	} `json:"source"`
+	SourceNode   *string                    `json:"source_node,omitempty"`
+	SourcePath   *string                    `json:"source_path,omitempty"`
+	Verification RecipeResourceVerification `json:"verification"`
+}
+
+// RecipeDownloadResourceAction defines model for RecipeDownloadResource.Action.
+type RecipeDownloadResourceAction string
+
+// RecipeDownloadResourceKind defines model for RecipeDownloadResource.Kind.
+type RecipeDownloadResourceKind string
+
+// RecipeDownloadStorage defines model for RecipeDownloadStorage.
+type RecipeDownloadStorage struct {
+	AvailableBytes *int64   `json:"available_bytes,omitempty"`
+	Destination    string   `json:"destination"`
+	Filesystem     string   `json:"filesystem"`
+	NodeId         string   `json:"node_id"`
+	RequiredBytes  *int64   `json:"required_bytes,omitempty"`
+	ReserveBytes   int64    `json:"reserve_bytes"`
+	ResourceKeys   []string `json:"resource_keys"`
+	StagingBytes   *int64   `json:"staging_bytes,omitempty"`
+	Sufficient     *bool    `json:"sufficient,omitempty"`
+	TotalBytes     *int64   `json:"total_bytes,omitempty"`
+}
+
+// RecipeDownloadTarget defines model for RecipeDownloadTarget.
+type RecipeDownloadTarget struct {
+	CacheRoot *string `json:"cache_root,omitempty"`
+	NodeId    string  `json:"node_id"`
+}
+
+// RecipeResourceVerification defines model for RecipeResourceVerification.
+type RecipeResourceVerification struct {
+	Diagnostics *[]Diagnostic                   `json:"diagnostics,omitempty"`
+	Stale       bool                            `json:"stale"`
+	State       RecipeResourceVerificationState `json:"state"`
+	VerifiedAt  *time.Time                      `json:"verified_at,omitempty"`
+}
+
+// RecipeResourceVerificationState defines model for RecipeResourceVerification.State.
+type RecipeResourceVerificationState string
 
 // ServingPayload defines model for ServingPayload.
 type ServingPayload struct {

@@ -2,9 +2,7 @@ package deploy
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,9 +17,9 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
-	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/events"
 	fabriccfg "github.com/jj-link/local-model-works/internal/fabric"
 	"github.com/jj-link/local-model-works/internal/id"
@@ -48,12 +46,15 @@ type inflightCmd struct {
 
 // Service is the deployment domain service.
 type Service struct {
-	db    *sql.DB
-	q     *db.Queries
-	bus   *events.EventBus
-	runs  *runs.Service
-	nodes NodeSender
-	ca    *ca.CA
+	db               *sql.DB
+	q                *db.Queries
+	bus              *events.EventBus
+	runs             *runs.Service
+	nodes            NodeSender
+	downloads        acquisitionService
+	acquisitionLive  map[string]bool
+	acquisitionLocks map[string]*sync.Mutex
+	transferMu       sync.Mutex
 
 	mu       sync.Mutex
 	inflight map[string]*inflightCmd
@@ -68,19 +69,20 @@ type Service struct {
 	readinessProbe     func(context.Context, db.GetDeploymentRow) (bool, string)
 }
 
-func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender, ca *ca.CA) *Service {
+func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service, nodes NodeSender) *Service {
 	service := &Service{
 		db:                 dbh,
 		q:                  q,
 		bus:                bus,
 		runs:               runsSvc,
 		nodes:              nodes,
-		ca:                 ca,
 		inflight:           map[string]*inflightCmd{},
 		transferInflight:   map[string]string{},
 		rankStates:         map[string]map[int32]string{},
 		updateLive:         map[string]bool{},
 		updateFetchWaiters: map[string]chan error{},
+		acquisitionLive:    map[string]bool{},
+		acquisitionLocks:   map[string]*sync.Mutex{},
 	}
 	service.readinessProbe = service.readinessPassed
 	return service
@@ -94,44 +96,29 @@ func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
 }
 
 func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool) (*Plan, error) {
-	return s.planWithRecipe(ctx, req, ignoredDeployments, nil)
-}
-
-func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, recipeCandidate *recipe.RepositoryCandidate) (*Plan, error) {
-	var (
-		m             *recipe.Manifest
-		recipeName    string
-		recipeVersion string
-	)
-	if recipeCandidate == nil {
-		row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
-		}
-		m, err = recipe.Parse([]byte(row.Manifest))
-		if err != nil {
-			return nil, fmt.Errorf("recipe manifest: %w", err)
-		}
-		recipeName = row.Name
-		recipeVersion = row.Version
-	} else {
-		if recipeCandidate.Manifest == nil || recipeCandidate.Digest != req.RecipeDigest {
-			return nil, fmt.Errorf("%w: invalid repository candidate", ErrRecipe)
-		}
-		m = recipeCandidate.Manifest
-		recipeName = m.Metadata.Name
-		recipeVersion = m.Metadata.Version
+	policy, err := acquisitionPolicy(req.AcquisitionPolicy)
+	if err != nil {
+		return nil, err
+	}
+	row, err := s.q.GetRecipe(ctx, req.RecipeDigest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrRecipe, req.RecipeDigest)
+	}
+	m, err := recipe.Parse([]byte(row.Manifest))
+	if err != nil {
+		return nil, fmt.Errorf("recipe manifest: %w", err)
 	}
 	variants, values, err := resolveSettings(ctx, s, m, req.RecipeDigest, req)
 	if err != nil {
 		return nil, err
 	}
 	plan := &Plan{
-		RecipeDigest:  req.RecipeDigest,
-		RecipeName:    recipeName,
-		RecipeVersion: recipeVersion,
-		Settings:      values,
-		Variants:      variants,
+		RecipeDigest:      req.RecipeDigest,
+		RecipeName:        row.Name,
+		RecipeVersion:     row.Version,
+		Parameters:        values,
+		AcquisitionPolicy: policy,
+		Variants:          variants,
 	}
 
 	nodes, err := s.q.ListNodes(ctx)
@@ -158,7 +145,13 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		w   *recipe.Workload
 		try bool
 	)
-	if len(nodes) == 0 && len(m.Workloads) > 0 {
+	if req.WorkloadIndex != nil {
+		if *req.WorkloadIndex < 0 || *req.WorkloadIndex >= len(m.Workloads) {
+			return nil, fmt.Errorf("%w: workload index is outside the recipe", ErrNoTarget)
+		}
+		wi, w, try = *req.WorkloadIndex, &m.Workloads[*req.WorkloadIndex], true
+	}
+	if !try && len(nodes) == 0 && len(m.Workloads) > 0 {
 		wi, w, try = 0, &m.Workloads[0], true
 	}
 	for i := range m.Workloads {
@@ -559,7 +552,7 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 			RequireSwap:      w.HostPreparation.RequireSwap,
 			SwappinessTarget: w.HostPreparation.Swappiness,
 			DropPageCache:    w.HostPreparation.DropPageCache,
-			HelperImage:      runtime.HostPreparationImage,
+			HelperImage:      downloads.HostPreparationImage,
 		}
 		payload, known := loadPayload(placement.NodeID)
 		if !known || payload.Memory == nil {
@@ -699,153 +692,9 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 			plan.Endpoint = ep
 		}
 	}
-	requiredByNode := map[string]int64{}
-	for _, a := range m.Artifacts {
-		src, srcErr := a.EffectiveSource(variants[a.Name])
-		if srcErr != nil {
-			return nil, fmt.Errorf("artifact %s: %w", a.Name, srcErr)
-		}
-		identity, identityErr := artifactidentity.Canonical(
-			src.Type, src.Identity, src.Revision, src.Digest,
-		)
-		if identityErr != nil {
-			return nil, fmt.Errorf("artifact %s: %w", a.Name, identityErr)
-		}
-		dest := a.Mount
-		if dest == "" {
-			dest = "/var/lib/lmw/artifacts/" + a.Name
-		}
-		art, aerr := s.q.GetArtifactByIdentity(ctx, identity)
-		if aerr != nil {
-			for _, placement := range placements {
-				requiredByNode[placement.NodeID] += a.SizeBytes
-			}
-			plan.Transfers = append(plan.Transfers, TransferPreview{
-				ArtifactID: identity, Identity: identity, Action: PreparationDownloadOrigin,
-				SourceNode: "origin", DestNode: "all", DestPath: dest, Bytes: a.SizeBytes,
-			})
-			plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
-			plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
-				"no node holds "+identity+"; install it via the library first"))
-			continue
-		}
-		size := artifactSize(art.Metadata)
-		if size == 0 {
-			size = a.SizeBytes
-		}
-		parsed, parseErr := artifactidentity.Parse(art.Identity)
-		exactSnapshot := parseErr == nil && parsed.Kind == "model"
-		type missingPlacement struct {
-			Placement
-			hasRecord bool
-			reconcile bool
-		}
-		var missing []missingPlacement
-		for _, placement := range placements {
-			valid, hasRecord, reconcile, perr := s.artifactPlacementState(ctx, art.ID, placement.NodeID)
-			if perr != nil {
-				return nil, perr
-			}
-			if valid {
-				continue
-			}
-			reconcile = exactSnapshot && reconcile
-			missing = append(missing, missingPlacement{
-				Placement: placement, hasRecord: hasRecord, reconcile: reconcile,
-			})
-			if !reconcile {
-				requiredByNode[placement.NodeID] += size
-			}
-		}
-		if len(missing) == 0 {
-			continue
-		}
-		srcName := s.transferSourceName(ctx, art.ID)
-		originRiskAdded := false
-		addOriginRisk := func() {
-			if !originRiskAdded {
-				plan.Risks = append(plan.Risks, "artifact:"+a.Name+":origin_download")
-				originRiskAdded = true
-			}
-		}
-		if srcName == "" && !exactSnapshot {
-			plan.Diagnostics = append(plan.Diagnostics, diag.Error("artifact.unplaced",
-				"no node holds a valid copy of "+art.Identity))
-		}
-		for _, item := range missing {
-			preview := TransferPreview{
-				ArtifactID: art.ID, Identity: art.Identity,
-				DestNode: item.NodeID, DestPath: dest,
-			}
-			switch {
-			case item.reconcile:
-				preview.Action = PreparationReconcileLocal
-				preview.SourceNode = item.NodeID
-			case exactSnapshot && (item.hasRecord || srcName == ""):
-				preview.Action = PreparationDownloadOrigin
-				preview.SourceNode = "origin"
-				preview.Bytes = size
-				addOriginRisk()
-			default:
-				preview.Action = PreparationPeerCopy
-				preview.SourceNode = srcName
-				preview.Bytes = size
-			}
-			plan.Transfers = append(plan.Transfers, preview)
-		}
-	}
-
-	const storageReserveBytes int64 = 5 << 30
-	storageNodes := map[string]bool{}
-	for _, placement := range placements {
-		if storageNodes[placement.NodeID] {
-			continue
-		}
-		storageNodes[placement.NodeID] = true
-		required := requiredByNode[placement.NodeID]
-		if required == 0 {
-			continue
-		}
-		var cacheRoot string
-		var nodeInv *inventory.Inventory
-		if candidate := nodeByID[placement.NodeID]; candidate != nil {
-			nodeInv = candidate.inv
-			if candidate.inv != nil && len(candidate.inv.CacheRoots) > 0 {
-				cacheRoot = candidate.inv.CacheRoots[0].Path
-			}
-		}
-		payload, _ := loadPayload(placement.NodeID)
-		available, total, known := filesystemCapacity(payload, cacheRoot)
-		sufficient := required == 0 || known && available >= required+storageReserveBytes
-		plan.Storage = append(plan.Storage, StoragePreview{
-			NodeID: placement.NodeID, NodeName: placement.NodeName, CacheRoot: cacheRoot,
-			RequiredBytes: required, AvailableBytes: available, TotalBytes: total,
-			Known: known, Sufficient: sufficient,
-		})
-		if required > 0 && !known {
-			plan.Diagnostics = append(plan.Diagnostics, diag.Error(
-				"storage.telemetry_unavailable",
-				fmt.Sprintf("node %s has no fresh filesystem telemetry for cache root %s", placement.NodeName, cacheRoot),
-			).Res("node:"+placement.NodeID))
-		} else if !sufficient {
-			plan.Diagnostics = append(plan.Diagnostics, diag.Error(
-				"storage.insufficient",
-				fmt.Sprintf("node %s needs %d artifact bytes plus %d reserve bytes but has %d available", placement.NodeName, required, storageReserveBytes, available),
-			).Res("node:"+placement.NodeID))
-		}
-		if required > 0 {
-			writable, probed := cacheRootWritableFromInventory(nodeInv)
-			if !probed {
-				plan.Diagnostics = append(plan.Diagnostics, diag.Error(
-					"storage.cache_root_unprobed",
-					fmt.Sprintf("node %s has not reported cache-root writability; update its agent", placement.NodeName),
-				).Res("node:"+placement.NodeID))
-			} else if !writable {
-				plan.Diagnostics = append(plan.Diagnostics, diag.Error(
-					"storage.cache_root_readonly",
-					fmt.Sprintf("cache root %s on node %s is read-only to the node agent; add it to local-model-works-agent.service ReadWritePaths and restart the agent", cacheRoot, placement.NodeName),
-				).Res("node:"+placement.NodeID))
-			}
+	if len(placements) == len(rankList) {
+		if err := s.planAcquisition(ctx, plan); err != nil {
+			return nil, err
 		}
 	}
 
@@ -855,13 +704,6 @@ func (s *Service) planWithRecipe(ctx context.Context, req PlanRequest, ignoredDe
 		!diag.HasError(plan.Diagnostics)
 	plan.Digest = plan.PlanDigest()
 	return plan, nil
-}
-
-func cacheRootWritableFromInventory(inv *inventory.Inventory) (writable, probed bool) {
-	if inv == nil || len(inv.CacheRoots) == 0 {
-		return false, false
-	}
-	return inv.CacheRoots[0].Writable, true
 }
 
 func (s *Service) accelRequirement(m *recipe.Manifest) *planAccRequirement {
@@ -985,48 +827,6 @@ func matchesWorkloadAccelerator(workload *recipe.Workload, nodeCount int, accele
 	return err == nil && ok
 }
 
-// artifactPlacementState distinguishes a valid placement from an existing
-// exact snapshot that only needs its local completion manifest reconciled.
-// Any other non-valid record is a real missing/corrupt placement.
-func (s *Service) artifactPlacementState(ctx context.Context, artifactID, nodeID string) (valid, hasRecord, reconcile bool, err error) {
-	rows, err := s.q.ListPlacements(ctx, artifactID)
-	if err != nil {
-		return false, false, false, err
-	}
-	for _, row := range rows {
-		if row.NodeID != nodeID {
-			continue
-		}
-		if row.State == "valid" {
-			return true, true, false, nil
-		}
-		diagnostics := diag.Decode(row.Diagnostics)
-		return false, true,
-			len(diagnostics) == 1 && diagnostics[0].Code == "artifact.snapshot_manifest_missing",
-			nil
-	}
-	return false, false, false, nil
-}
-
-func artifactSize(metadata string) int64 {
-	if metadata == "" {
-		return 0
-	}
-	var v map[string]any
-	if err := json.Unmarshal([]byte(metadata), &v); err != nil {
-		return 0
-	}
-	switch b := v["size_bytes"].(type) {
-	case float64:
-		return int64(b)
-	case json.Number:
-		if i, err := b.Int64(); err == nil {
-			return i
-		}
-	}
-	return 0
-}
-
 func (s *Service) latestNodePayload(ctx context.Context, nodeID string) (*telemetrystore.NodePayload, bool) {
 	row, err := s.q.LatestTelemetry5s(ctx, nodeID)
 	if err != nil || time.Now().Unix()-row.Ts > 30 {
@@ -1037,47 +837,6 @@ func (s *Service) latestNodePayload(ctx context.Context, nodeID string) (*teleme
 		return nil, false
 	}
 	return &payload, true
-}
-
-func filesystemCapacity(payload *telemetrystore.NodePayload, cacheRoot string) (available, total int64, ok bool) {
-	if payload == nil || cacheRoot == "" {
-		return 0, 0, false
-	}
-	root := path.Clean(cacheRoot)
-	bestLength := -1
-	for _, filesystem := range payload.Filesystems {
-		mount := path.Clean(filesystem.MountPath)
-		contains := mount == "/" || root == mount || strings.HasPrefix(root, mount+"/")
-		if !contains || len(mount) <= bestLength || filesystem.TotalBytes < filesystem.UsedBytes {
-			continue
-		}
-		bestLength = len(mount)
-		total = int64(filesystem.TotalBytes)
-		available = int64(filesystem.TotalBytes - filesystem.UsedBytes)
-		ok = true
-	}
-	return available, total, ok
-}
-
-// transferSourceName returns the name of any node holding a valid copy of
-// the artifact ("" when none does).
-func (s *Service) transferSourceName(ctx context.Context, artifactID string) string {
-	rows, err := s.q.ListPlacements(ctx, artifactID)
-	if err != nil {
-		return ""
-	}
-	for _, r := range rows {
-		if r.State != "valid" {
-			continue
-		}
-		if !s.nodes.Online(r.NodeID) {
-			continue
-		}
-		if n, nerr := s.q.GetNode(ctx, r.NodeID); nerr == nil {
-			return n.DisplayName
-		}
-	}
-	return ""
 }
 
 func settingString(values map[string]any, key string) string {
@@ -1101,7 +860,10 @@ type placementSet struct {
 	Workload *int `json:"workload,omitempty"`
 	// Variants maps artifact name -> selected model variant, captured at plan
 	// time so render re-resolves the exact artifact identity the plan used.
-	Variants map[string]string `json:"variants,omitempty"`
+	Variants             map[string]string    `json:"variants,omitempty"`
+	AcquisitionPolicy    string               `json:"acquisition_policy"`
+	AcquisitionTargets   []downloads.Target   `json:"acquisition_targets,omitempty"`
+	AcquisitionResources []downloads.Resource `json:"acquisition_resources,omitempty"`
 }
 
 // ParsePlacementSet decodes a stored placement document; it tolerates the
@@ -1129,10 +891,15 @@ func (ps placementSet) Marshal() string {
 func placementSetFromPlan(plan *Plan) placementSet {
 	workload := plan.WorkloadIndex
 	placements := placementSet{
-		Ranks:    make(map[string]int, len(plan.Placements)),
-		Entries:  plan.Placements,
-		Workload: &workload,
-		Variants: plan.Variants,
+		Ranks:             make(map[string]int, len(plan.Placements)),
+		Entries:           plan.Placements,
+		Workload:          &workload,
+		Variants:          plan.Variants,
+		AcquisitionPolicy: plan.AcquisitionPolicy,
+	}
+	if plan.Acquisition != nil {
+		placements.AcquisitionTargets = plan.Acquisition.Targets
+		placements.AcquisitionResources = plan.Acquisition.Resources
 	}
 	for _, placement := range plan.Placements {
 		placements.Ranks[placement.NodeID] = int(placement.Rank)
@@ -1175,17 +942,22 @@ func (ps placementSet) EntryFor(rank int32) *Placement {
 // Create validates the plan digest, commits the deployment with its exact
 // resource leases, and starts the dispatch sequence.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, error) {
+	if strings.TrimSpace(req.PlanDigest) == "" {
+		return nil, fmt.Errorf("%w: an explicitly reviewed plan_digest is required", ErrPlanStale)
+	}
 	plan, err := s.Plan(ctx, PlanRequest{
-		RecipeDigest:    req.RecipeDigest,
-		Placements:      req.Placements,
-		LaunchProfileID: req.LaunchProfileID,
-		Variants:        req.Variants,
-		Parameters:      req.Parameters,
+		RecipeDigest:      req.RecipeDigest,
+		Placements:        req.Placements,
+		LaunchProfileID:   req.LaunchProfileID,
+		Variants:          req.Variants,
+		Parameters:        req.Parameters,
+		AcquisitionPolicy: req.AcquisitionPolicy,
+		WorkloadIndex:     req.WorkloadIndex,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if req.PlanDigest != "" && req.PlanDigest != plan.Digest {
+	if req.PlanDigest != plan.Digest {
 		return nil, fmt.Errorf("%w: %s != %s", ErrPlanStale, req.PlanDigest, plan.Digest)
 	}
 	if !plan.Ready {
@@ -1196,6 +968,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 }
 
 func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, error) {
+	if err := s.acquirePlan(ctx, plan, true); err != nil {
+		return nil, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -1214,7 +989,7 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 	if err := qtx.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:           depID,
 		RecipeDigest: plan.RecipeDigest,
-		Parameters:   marshalParameters(plan.Settings),
+		Parameters:   marshalParameters(plan.Parameters),
 		Placement:    ps.Marshal(),
 		Fabric:       fabric,
 	}); err != nil {
@@ -1222,9 +997,10 @@ func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, e
 		return nil, err
 	}
 	input, _ := json.Marshal(map[string]any{
-		"recipe_digest": plan.RecipeDigest,
-		"parameters":    plan.Settings,
-		"plan_digest":   plan.Digest,
+		"recipe_digest":      plan.RecipeDigest,
+		"parameters":         plan.Parameters,
+		"acquisition_policy": plan.AcquisitionPolicy,
+		"plan_digest":        plan.Digest,
 	})
 	if err := qtx.CreateRun(ctx, db.CreateRunParams{
 		ID:           runIDStr,
@@ -1637,7 +1413,8 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 	}
 	spec := &runtime.ContainerSpec{
 		Image: extension.Image.Reference, ImageDigest: extension.Image.Digest,
-		Entrypoint: extension.Command, NetworkMode: "none", ReadonlyRootfs: true,
+		AcquisitionPolicy: AcquisitionRequireExisting,
+		Entrypoint:        extension.Command, NetworkMode: "none", ReadonlyRootfs: true,
 		NoNewPrivileges: true, CapDrop: []string{"ALL"},
 		CPU: 1, MemoryBytes: 1 << 30, PidsLimit: 256, TmpfsBytes: 64 << 20,
 		Mounts: append([]runtime.MountSpec(nil), base.Mounts...),
@@ -1661,19 +1438,20 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 		spec.Env = append(spec.Env, key+"="+rendered)
 	}
 	sort.Strings(spec.Env)
+	if err := applyAcquisitionSpec(spec, ParsePlacementSet(row.Placement), placement.NodeID); err != nil {
+		return nil, err
+	}
 	return spec, nil
 }
 
-// dispatchNext sends the next workload operation for one rank according to
-// its persisted phase and the deployment's desired state. Completed phases
-// advance only on success ack (OnCommandResult) or agent state report —
-// a restart before the ack re-drives the same operation, which every op
-// tolerates: PULL is a no-op on existing images, CREATE and START tolerate
-// "exists"/"already running", STOP is idempotent.
+// dispatchReady advances one rank only after the shared acquisition gate has
+// inspected its frozen resource set. Container and extension specs prohibit
+// implicit pulls. CREATE/START tolerate existing containers; STOP is idempotent.
 //
 //	desired=running:
-//	  none          -> artifact gate, then PULL
-//	  pulled        -> CREATE
+//	  none          -> optional prepare extension
+//	  prepared      -> mark images inspected, then recheck acquisition
+//	  pulled        -> CREATE without pulling
 //	  created       -> optional HOST_PREPARE
 //	  host_prepared -> START (rank 0 waits for workers when requested)
 //	  started       -> INSPECT (running confirmation)
@@ -1681,7 +1459,7 @@ func (s *Service) renderExtensionSpec(ctx context.Context, row db.GetDeploymentR
 //	  started  -> phase stopping, then STOP
 //	  stopping -> STOP re-drive
 //	  stopped  -> nothing
-func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, runID string, pl Placement) {
+func (s *Service) dispatchReady(ctx context.Context, depID string, rank int32, runID string, pl Placement) {
 	row, err := s.q.GetDeployment(ctx, depID)
 	if err != nil {
 		return
@@ -1694,9 +1472,7 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 	case "running":
 		switch phase {
 		case PhaseNone:
-			if !s.ensureRecipePackage(ctx, row, rank, pl) || !s.ensureArtifacts(ctx, row, rank, pl) {
-				return
-			}
+			// The shared acquisition gate inspected every required resource.
 			manifest, manifestErr := s.manifestFor(ctx, row.RecipeDigest)
 			if manifestErr != nil {
 				s.failDispatch(ctx, depID, rank, runID, "recipe.manifest", manifestErr.Error())
@@ -1721,23 +1497,9 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 				s.noteDispatch(ctx, depID, diag.Error("extension.prepare_failed", err.Error()))
 			}
 		case PhasePrepared:
-			if !s.ensureRecipePackage(ctx, row, rank, pl) || !s.ensureArtifacts(ctx, row, rank, pl) {
-				return
-			}
-			spec, err := s.renderSpec(ctx, depID, rank, runID, &pl)
-			if err != nil {
-				s.noteDispatch(ctx, depID, diag.Error("artifact.mount_missing", err.Error()))
-				return
-			}
-			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "pulling_image"})
-			cmdID, _ := id.New()
-			s.inflightMark(cmdID, depID, rank, "pull")
-			if !s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_PULL, depID, runID, rank, spec) {
-				s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "waiting_for_node"})
-				s.noteDispatch(ctx, depID, diag.Error("workload.node_offline",
-					fmt.Sprintf("node %s offline; dispatch paused until reconnect", nodeID)))
-				return
-			}
+			s.setPhase(ctx, depID, rank, PhasePulled)
+			s.dispatchNext(ctx, depID, rank, runID, pl)
+			return
 		case PhasePulled:
 			spec, err := s.renderSpec(ctx, depID, rank, runID, &pl)
 			if err != nil {
@@ -1783,10 +1545,15 @@ func (s *Service) dispatchNext(ctx context.Context, depID string, rank int32, ru
 				})
 				return
 			}
+			spec, err := s.renderSpec(ctx, depID, rank, runID, &pl)
+			if err != nil {
+				s.failDispatch(ctx, depID, rank, runID, "workload.start_spec", err.Error())
+				return
+			}
 			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "starting_container"})
 			cmdID, _ := id.New()
 			s.inflightMark(cmdID, depID, rank, "start")
-			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_START, depID, runID, rank, nil)
+			_ = s.sendWorkload(nodeID, cmdID, agentv1.WorkloadOp_WORKLOAD_OP_START, depID, runID, rank, spec)
 		case PhaseStarted:
 			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "health_check"})
 			cmdID, _ := id.New()
@@ -2033,9 +1800,8 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 			return
 		}
 		if manifest.Verify != nil {
-			if err := s.sendExtension(ctx, row, pl, rank, runID, "verify", manifest.Verify); err != nil {
-				s.failDispatch(ctx, depID, rank, runID, "extension.verify_failed", err.Error())
-			}
+			s.setPhase(ctx, depID, rank, PhaseVerifying)
+			s.dispatchNext(ctx, depID, rank, runID, pl)
 			return
 		}
 		s.setPhase(ctx, depID, rank, PhaseStarted)
@@ -2116,29 +1882,6 @@ func isContainerMissing(msg string) bool {
 
 // ---------------------------------------------------------------- artifact transfers
 
-// transferCred mirrors the agent's peer-transfer credential (same JSON
-// shape); the controller CA signs canonicalJSON().
-type transferCred struct {
-	TransferID   string `json:"transfer_id"`
-	RunID        string `json:"run_id"`
-	SourceNode   string `json:"source_node"`
-	DestNode     string `json:"dest_node"`
-	ArtifactID   string `json:"artifact_id"`
-	SrcPath      string `json:"src_path"`
-	SourceDigest string `json:"source_digest"`
-	SrcSize      int64  `json:"src_size"`
-	DestPath     string `json:"dest_path"`
-	ExpUnix      int64  `json:"exp_unix"`
-	Signature    string `json:"signature"`
-}
-
-func (c *transferCred) canonicalJSON() []byte {
-	cp := *c
-	cp.Signature = ""
-	data, _ := json.Marshal(&cp)
-	return data
-}
-
 // parseTransferKey splits "depID|nodeID|artifactIdentity" (identities and
 // node/deployment ids contain no "|").
 func parseTransferKey(key string) (depID, nodeID, artifactID string, ok bool) {
@@ -2170,19 +1913,6 @@ func (s *Service) validPlacement(ctx context.Context, artifactID, nodeID string)
 		}
 	}
 	return "", false
-}
-
-func (s *Service) hasPlacementRecord(ctx context.Context, artifactID, nodeID string) bool {
-	rows, err := s.q.ListPlacements(ctx, artifactID)
-	if err != nil {
-		return false
-	}
-	for _, row := range rows {
-		if row.NodeID == nodeID {
-			return true
-		}
-	}
-	return false
 }
 
 // variantsFor parses the deployment's placement JSON and returns the
@@ -2245,149 +1975,10 @@ func decodeParameters(raw string) map[string]any {
 	return out
 }
 
-// ensureArtifacts gates container dispatch on every recipe artifact having
-// a valid placement on this rank's node. Missing copies are filled with a
-// peer transfer from a node that already holds one. Returns true when all
-// artifacts are placed; false when a transfer is in flight (placement and
-// ack events re-drive dispatch) or the deployment was failed.
-func (s *Service) ensureRecipePackage(ctx context.Context, row db.GetDeploymentRow, rank int32, placement Placement) bool {
-	identity := "recipe://" + row.RecipeDigest
-	artifact, err := s.q.GetArtifactByIdentity(ctx, identity)
-	if err != nil {
-		s.failDispatch(ctx, row.ID, rank, s.runIDFor(ctx, row.ID), "recipe.package_missing", err.Error())
-		return false
-	}
-	if _, valid := s.validPlacement(ctx, artifact.ID, placement.NodeID); valid {
-		return true
-	}
-	key := row.ID + "|" + placement.NodeID + "|" + identity
-	s.mu.Lock()
-	if s.transferInflight[key] != "" {
-		s.mu.Unlock()
-		return false
-	}
-	s.transferInflight[key] = "pending"
-	s.mu.Unlock()
-	s.setServeRankProgress(ctx, s.runIDFor(ctx, row.ID), rank, map[string]any{
-		"phase": "recipe_package", "artifact": identity,
-	})
-	commandID, _ := id.New()
-	s.inflightMark(commandID, row.ID, rank, "artifact-fetch")
-	if !s.nodes.Send(placement.NodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
-		ArtifactCommand: &agentv1.ArtifactCommand{
-			CommandId: commandID, Op: agentv1.ArtifactOp_ARTIFACT_OP_FETCH, ArtifactIdentity: identity,
-		},
-	}}) {
-		s.inflightTake(commandID)
-		s.mu.Lock()
-		delete(s.transferInflight, key)
-		s.mu.Unlock()
-		s.setServeRankProgress(ctx, s.runIDFor(ctx, row.ID), rank, map[string]any{"phase": "waiting_for_node"})
-		s.noteDispatch(ctx, row.ID, diag.Warning("workload.node_offline",
-			fmt.Sprintf("node %s is offline; recipe installation will resume after reconnect", placement.NodeID)))
-		return false
-	}
-	s.mu.Lock()
-	s.transferInflight[key] = commandID
-	s.mu.Unlock()
-	s.bus.Publish(ctx, "recipe.package_delivery", placement.NodeID, mustJSON(map[string]any{
-		"command_id": commandID, "recipe": row.RecipeDigest,
-	}))
-	return false
-}
-
-func (s *Service) ensureArtifacts(ctx context.Context, row db.GetDeploymentRow, rank int32, pl Placement) bool {
-	m, err := s.manifestFor(ctx, row.RecipeDigest)
-	if err != nil {
-		s.noteDispatch(ctx, row.ID, diag.Error("recipe.manifest", err.Error()))
-		return false
-	}
-	runID := s.runIDFor(ctx, row.ID)
-	for _, a := range m.Artifacts {
-		identity, err := canonicalArtifactIdentity(a, variantsFor(row)[a.Name])
-		if err != nil {
-			s.failDispatch(ctx, row.ID, rank, runID, "artifact.identity", err.Error())
-			return false
-		}
-		art, err := s.q.GetArtifactByIdentity(ctx, identity)
-		if err != nil {
-			s.failDispatch(ctx, row.ID, rank, runID, "artifact.unplaced",
-				"no node holds "+identity)
-			return false
-		}
-		if _, ok := s.validPlacement(ctx, art.ID, pl.NodeID); ok {
-			continue
-		}
-		if !s.nodes.Online(pl.NodeID) {
-			s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "waiting_for_node", "artifact": art.Identity})
-			s.noteDispatch(ctx, row.ID, diag.Warning("workload.node_offline",
-				fmt.Sprintf("node %s is offline; artifact preparation will resume after reconnect", pl.NodeID)))
-			return false
-		}
-		key := row.ID + "|" + pl.NodeID + "|" + art.Identity
-		s.mu.Lock()
-		if s.transferInflight[key] != "" {
-			s.mu.Unlock()
-			return false // transfer already in flight
-		}
-		s.transferInflight[key] = "pending"
-		s.mu.Unlock()
-		s.setServeRankProgress(ctx, runID, rank, map[string]any{
-			"phase": "artifact_queued", "artifact": art.Identity,
-		})
-		var tid string
-		var dispatchErr error
-		if s.hasPlacementRecord(ctx, art.ID, pl.NodeID) || s.transferSourceName(ctx, art.ID) == "" {
-			tid, dispatchErr = s.startOriginFetch(ctx, art, pl.NodeID, row.ID, rank)
-		} else {
-			tid, dispatchErr = s.startTransfer(ctx, art, "", pl.NodeID, "", row.Fabric.String, runID)
-		}
-		if dispatchErr != nil {
-			s.mu.Lock()
-			delete(s.transferInflight, key)
-			s.mu.Unlock()
-			s.failDispatch(ctx, row.ID, rank, runID, "artifact.transfer_failed", dispatchErr.Error())
-			return false
-		}
-		s.mu.Lock()
-		s.transferInflight[key] = tid
-		s.mu.Unlock()
-		s.bus.Publish(ctx, "transfer.started", pl.NodeID, mustJSON(map[string]any{
-			"transfer_id": tid, "artifact": art.Identity, "dest_node": pl.NodeID,
-		}))
-		return false
-	}
-	s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "artifacts_ready"})
-	return true
-}
-
-func (s *Service) startOriginFetch(ctx context.Context, artifact db.Artifact, nodeID, depID string, rank int32) (string, error) {
-	parsed, err := artifactidentity.Parse(artifact.Identity)
-	if err != nil || parsed.Kind != "model" {
-		return "", fmt.Errorf("artifact origin is unsupported for %s", artifact.Identity)
-	}
-	commandID, _ := id.New()
-	s.inflightMark(commandID, depID, rank, "artifact-fetch")
-	message := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
-		ArtifactCommand: &agentv1.ArtifactCommand{
-			CommandId: commandID, Op: agentv1.ArtifactOp_ARTIFACT_OP_FETCH,
-			ArtifactIdentity: artifact.Identity,
-		},
-	}}
-	if !s.nodes.Send(nodeID, message) {
-		s.inflightTake(commandID)
-		return "", fmt.Errorf("node %s is offline", nodeID)
-	}
-	s.bus.Publish(ctx, "artifact.fetch_started", nodeID, mustJSON(map[string]any{
-		"command_id": commandID, "artifact": artifact.Identity,
-	}))
-	return commandID, nil
-}
-
 // StartTransfer plans and dispatches a peer transfer of art from an
-// explicit source node to destNodeID at destPath. destPath must be a safe
-// relative path (nested paths preserved; absolute or ".." rejected); an
-// empty destPath derives it from the source placement.
+// explicit source node to destNodeID. Empty destPath selects the canonical
+// identity-derived destination. An explicit path must be relative to the first
+// configured cache root and match an allowed canonical resource destination.
 func (s *Service) StartTransfer(ctx context.Context, art db.Artifact, sourceNodeID, destNodeID, destPath string) (string, error) {
 	return s.startTransfer(ctx, art, sourceNodeID, destNodeID, destPath, "", "")
 }
@@ -2432,17 +2023,34 @@ func peerTransferAddress(listen, sourceNodeID string, bindings []fabriccfg.Membe
 	return "", errors.New("peer address is wildcard and no source fabric address is configured")
 }
 
-// startTransfer records a transfers row, signs the peer credential, and
-// sends the TransferCommand to source (streams) and destination (listener).
+// startTransfer prepares an exact inspected, signed peer tree through downloads,
+// holds its actual destination lock, and dispatches the prepared START command.
 // An empty sourceNodeID selects any online node holding a valid placement
 // (fabric-prefixed); a non-empty sourceNodeID requires that exact node.
 func (s *Service) startTransfer(ctx context.Context, art db.Artifact, sourceNodeID, destNodeID, destPath, fabric, runID string) (string, error) {
+	s.transferMu.Lock()
+	defer s.transferMu.Unlock()
 	destRel, err := safeRelPath(destPath)
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.q.GetNode(ctx, destNodeID); err != nil {
+	destNode, err := s.q.GetNode(ctx, destNodeID)
+	if err != nil {
 		return "", err
+	}
+	destination := ""
+	if destRel != "" {
+		destInventory, parseErr := inventory.Parse(destNode.Inventory.String)
+		if parseErr != nil || len(destInventory.CacheRoots) == 0 || !path.IsAbs(destInventory.CacheRoots[0].Path) || !destInventory.CacheRoots[0].Writable {
+			return "", fmt.Errorf("destination node has no configured writable cache root")
+		}
+		destination = path.Join(destInventory.CacheRoots[0].Path, destRel)
+	}
+	if s.downloads == nil {
+		return "", fmt.Errorf("shared downloads service is unavailable")
+	}
+	if !s.downloads.SupportsNode(ctx, destNodeID) {
+		return "", fmt.Errorf("destination node does not support safe transfer operations")
 	}
 	if !s.nodes.Online(destNodeID) {
 		return "", fmt.Errorf("destination node %s is offline", destNodeID)
@@ -2542,60 +2150,42 @@ func (s *Service) startTransfer(ctx context.Context, art db.Artifact, sourceNode
 		return "", fmt.Errorf("source node %s advertises no peer address (set LMW_PEER_ADVERTISE or configure a fabric address)", src.node.ID)
 	}
 	tid, _ := id.New()
-	if destRel == "" {
-		destRel = path.Base(src.pl.Path)
-	}
 	if runID == "" {
 		runID = "transfer:" + tid
 	}
-	cred := &transferCred{
-		TransferID: tid, RunID: runID,
-		SourceNode: src.node.ID, DestNode: destNodeID,
-		ArtifactID: art.Identity, SrcPath: src.pl.Path,
-		SrcSize: src.pl.SizeBytes, DestPath: destRel,
-		ExpUnix: time.Now().Add(30 * time.Minute).Unix(),
-	}
-	sig, err := s.ca.SignCA(cred.canonicalJSON())
-	if err != nil {
-		return "", fmt.Errorf("sign transfer credential: %w", err)
-	}
-	cred.Signature = sig
-	credJ, err := json.Marshal(cred)
+	prepared, err := s.downloads.PreparePeer(ctx, downloads.PeerRequest{
+		SourceNode: src.node.ID, DestinationNode: destNodeID, Identity: art.Identity,
+		SourcePath: src.pl.Path, Destination: destination, PeerAddress: peerAddr,
+		RunID: runID, TransferID: tid,
+	})
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(credJ)
+	destination = prepared.Command.DestPath
+	if err := s.downloads.Lock(ctx, destNodeID, destination, art.Identity, "", downloads.OwnerTransfer, tid, "", ""); err != nil {
+		return "", err
+	}
 	if err := s.q.CreateTransfer(ctx, db.CreateTransferParams{
 		ID:             tid,
 		ArtifactID:     art.ID,
 		SourceNode:     src.node.ID,
 		DestNode:       destNodeID,
-		DestPath:       destRel,
-		CredentialHash: sum[:],
+		DestPath:       destination,
+		CredentialHash: prepared.CredentialHash,
 	}); err != nil {
+		_ = s.downloads.Unlock(ctx, destNodeID, destination, downloads.OwnerTransfer, tid, downloads.QuiescenceNeverDispatched)
 		return "", err
-	}
-	tc := &agentv1.TransferCommand{
-		TransferId:       tid,
-		Credential:       base64.StdEncoding.EncodeToString(credJ),
-		ArtifactIdentity: art.Identity,
-		SrcPath:          src.pl.Path,
-		DestPath:         destRel,
-		TimeoutSeconds:   3600,
 	}
 	// Destination pulls directly from the source's mTLS Connect service.
 	if !s.nodes.Send(destNodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_TransferCommand{
-		TransferCommand: &agentv1.TransferCommand{
-			TransferId: tc.TransferId, Role: "dest", PeerAddress: peerAddr,
-			Credential: tc.Credential, ArtifactIdentity: tc.ArtifactIdentity,
-			SrcPath: tc.SrcPath, DestPath: tc.DestPath, TimeoutSeconds: tc.TimeoutSeconds,
-		},
+		TransferCommand: prepared.Command,
 	}}) {
 		_ = s.q.UpdateTransferState(ctx, db.UpdateTransferStateParams{
 			State:      "failed",
 			Diagnostic: sql.NullString{String: "destination node offline", Valid: true},
 			ID:         tid,
 		})
+		_ = s.downloads.Unlock(ctx, destNodeID, destination, downloads.OwnerTransfer, tid, downloads.QuiescenceNeverDispatched)
 		return "", errors.New("destination node offline")
 	}
 	return tid, nil
@@ -2731,6 +2321,7 @@ func (s *Service) releaseIfTerminal(ctx context.Context, depID, runID string) {
 // (started ranks get an INSPECT confirmation); stopping deployments
 // re-send STOP for pending ranks. Leases stay held until confirmation.
 func (s *Service) Converge(ctx context.Context, nodeID string) {
+	s.reconcileTransfers(ctx, nodeID)
 	all, err := s.q.ListDeployments(ctx)
 	if err != nil {
 		return
@@ -3068,6 +2659,34 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 		s.failWorkload(ctx, row, su)
 		return
 	}
+	placements := ParsePlacementSet(row.Placement)
+	endpoint := row.Endpoint
+	if head := placements.EntryFor(0); su.Rank == 0 && head != nil && head.NodeID == nodeID {
+		port := int(su.EndpointPort)
+		if port == 0 && su.State == "running" && (!endpoint.Valid || endpoint.String == "") {
+			// A restarted agent may no longer retain its original container spec.
+			// Recover ports from the immutable workload, without launching or acquiring.
+			if manifest, err := s.manifestFor(ctx, row.RecipeDigest); err == nil {
+				if _, workload, err := s.selectWorkload(ctx, row, manifest); err == nil && len(workload.Ports) > 0 {
+					port = workload.Ports[0].Host
+					if port == 0 {
+						port = workload.Ports[0].Container
+					}
+				}
+			}
+		}
+		if port != 0 {
+			if node, err := s.q.GetNode(ctx, nodeID); err == nil && node.Inventory.Valid {
+				var inv inventory.Inventory
+				if json.Unmarshal([]byte(node.Inventory.String), &inv) == nil {
+					if addr := firstNonLoopback(&inv); addr != "" {
+						endpoint = sql.NullString{String: net.JoinHostPort(addr, strconv.Itoa(port)), Valid: true}
+					}
+				}
+			}
+		}
+	}
+	row.Endpoint = endpoint
 	_, d := mapObserved(su.State, su.DiagnosticMessage)
 	rankState := su.State
 	if su.DiagnosticMessage != "" {
@@ -3082,21 +2701,9 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 		}
 	}
 	s.setRankState(row.ID, su.Rank, rankState)
-	placements := ParsePlacementSet(row.Placement)
 	observed := s.aggregateRankState(row.ID, placements)
 	existing := diag.Decode(row.Diagnostics)
 	existing = diag.Upsert(existing, d.Res(fmt.Sprintf("rank:%d", su.Rank)))
-	endpoint := row.Endpoint
-	if su.EndpointPort != 0 && su.Rank == 0 {
-		if n, nerr := s.q.GetNode(ctx, nodeID); nerr == nil && n.Inventory.Valid {
-			var inv inventory.Inventory
-			if json.Unmarshal([]byte(n.Inventory.String), &inv) == nil {
-				if addr := firstNonLoopback(&inv); addr != "" {
-					endpoint = sql.NullString{String: net.JoinHostPort(addr, strconv.Itoa(int(su.EndpointPort))), Valid: true}
-				}
-			}
-		}
-	}
 	_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
 		ObservedState:     observed,
 		Endpoint:          endpoint,
@@ -3249,16 +2856,31 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 		overrides = append(overrides, PlacementOverride{NodeID: e.NodeID, Rank: e.Rank})
 	}
 	plan, err := s.Plan(ctx, PlanRequest{
-		RecipeDigest: row.RecipeDigest,
-		Placements:   overrides,
-		Variants:     ps.Variants,
-		Parameters:   parametersFor(row),
+		RecipeDigest:      row.RecipeDigest,
+		Placements:        overrides,
+		Variants:          ps.Variants,
+		Parameters:        parametersFor(row),
+		AcquisitionPolicy: ps.AcquisitionPolicy,
+		WorkloadIndex:     ps.Workload,
 	})
 	if err != nil {
 		return nil, err
 	}
 	if !plan.Ready {
 		return nil, fmt.Errorf("%w: %v", ErrNotReady, diag.Decode(diag.Encode(plan.Diagnostics)))
+	}
+	if len(ps.AcquisitionResources) == 0 {
+		return nil, fmt.Errorf("%w: stopped deployment has no reviewed acquisition contract", ErrPlanStale)
+	}
+	// Restart retains the approved acquisition sources and destinations. A new
+	// inventory observation cannot silently authorize a different download.
+	plan.Acquisition = &downloads.Plan{
+		RecipeDigest: row.RecipeDigest, WorkloadIndex: plan.WorkloadIndex,
+		Variants: ps.Variants, Targets: ps.AcquisitionTargets, Resources: ps.AcquisitionResources,
+	}
+	plan.Digest = plan.PlanDigest()
+	if err := s.acquirePlan(ctx, plan, true); err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -3269,9 +2891,10 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 
 	runIDStr, _ := id.New()
 	input, _ := json.Marshal(map[string]any{
-		"recipe_digest": plan.RecipeDigest,
-		"parameters":    plan.Settings,
-		"plan_digest":   plan.Digest,
+		"recipe_digest":      plan.RecipeDigest,
+		"parameters":         plan.Parameters,
+		"acquisition_policy": plan.AcquisitionPolicy,
+		"plan_digest":        plan.Digest,
 	})
 	if err := qtx.CreateRun(ctx, db.CreateRunParams{
 		ID: runIDStr, Module: "serving", Kind: "serve", State: "queued",
@@ -3352,6 +2975,9 @@ func (s *Service) Delete(ctx context.Context, depID string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	delete(s.acquisitionLocks, depID)
+	s.mu.Unlock()
 	s.bus.Publish(ctx, "deployment.deleted", depID, mustJSON(map[string]any{"deployment_id": depID}))
 	return nil
 }
@@ -3798,8 +3424,8 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	for _, permission := range w.Permissions {
 		permissions[permission] = true
 	}
-	if w.Resources.CPU <= 0 || w.Resources.MemoryBytes <= 0 || w.Resources.Pids <= 0 {
-		return nil, fmt.Errorf("workload resources must set positive cpu, memoryBytes, and pids")
+	if w.Resources.Pids <= 0 {
+		return nil, fmt.Errorf("workload resources must set positive pids")
 	}
 	networkMode := w.NetworkMode
 	if networkMode == "" {
@@ -3810,7 +3436,8 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	}
 	spec := &runtime.ContainerSpec{
 		Name: containerName(depID, runID, rank), Image: w.Image.Reference, ImageDigest: w.Image.Digest,
-		Entrypoint: w.Command, NetworkMode: networkMode,
+		AcquisitionPolicy: AcquisitionRequireExisting,
+		Entrypoint:        w.Command, NetworkMode: networkMode,
 		ReadonlyRootfs: !permissions["rootfs.write"], NoNewPrivileges: true, CapDrop: []string{"ALL"},
 	}
 	if w.HostPreparation != nil {
@@ -3840,9 +3467,6 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		spec.Env = append(spec.Env, key+"="+rendered)
 	}
 	sort.Strings(spec.Env)
-	spec.CPU = w.Resources.CPU
-	spec.CPUSetCpus = w.Resources.CPUSetCpus
-	spec.MemoryBytes = w.Resources.MemoryBytes
 	spec.ShmBytes = w.Resources.ShmBytes
 	spec.TmpfsBytes = w.Resources.TmpfsBytes
 	spec.PidsLimit = w.Resources.Pids
@@ -3887,13 +3511,10 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 			Protocol:  proto,
 		})
 	}
-	packageArtifact, packageErr := s.q.GetArtifactByIdentity(ctx, "recipe://"+row.RecipeDigest)
-	if packageErr != nil {
-		return nil, fmt.Errorf("recipe package: %w", packageErr)
-	}
-	packagePath, packageOK := s.validPlacement(ctx, packageArtifact.ID, pl.NodeID)
-	if !packageOK {
-		return nil, fmt.Errorf("recipe package: no valid placement on node %s", pl.NodeID)
+	persisted := ParsePlacementSet(row.Placement)
+	packagePath, err := acquisitionPath(persisted, pl.NodeID, "recipe://"+row.RecipeDigest)
+	if err != nil {
+		return nil, err
 	}
 	spec.Mounts = append(spec.Mounts, runtime.MountSpec{
 		Source: filepath.Join(packagePath, "assets"), Dest: "/lmw/assets", ReadOnly: true,
@@ -3907,13 +3528,9 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		if dest == "" {
 			dest = "/var/lib/lmw/artifacts/" + a.Name
 		}
-		art, aerr := s.q.GetArtifactByIdentity(ctx, identity)
-		if aerr != nil {
-			return nil, fmt.Errorf("artifact %s: unknown identity %s", a.Name, identity)
-		}
-		source, ok := s.validPlacement(ctx, art.ID, pl.NodeID)
-		if !ok {
-			return nil, fmt.Errorf("artifact %s: no valid placement on node %s", a.Name, pl.NodeID)
+		source, err := acquisitionPath(persisted, pl.NodeID, identity)
+		if err != nil {
+			return nil, err
 		}
 		spec.Mounts = append(spec.Mounts, runtime.MountSpec{
 			Source:   source,
@@ -3935,6 +3552,9 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		runtime.LabelRecipeVersion: recipeVersion(row.RecipeDigest),
 		runtime.LabelRank:          fmt.Sprintf("%d", rank),
 		runtime.LabelModule:        "serving",
+	}
+	if err := applyAcquisitionSpec(spec, persisted, pl.NodeID); err != nil {
+		return nil, err
 	}
 	return spec, nil
 }

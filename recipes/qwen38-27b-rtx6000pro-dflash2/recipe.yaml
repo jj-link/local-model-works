@@ -109,8 +109,6 @@ workloads:
         path: /health
         port: 8000
     resources:
-      cpu: 8
-      memoryBytes: 68719476736
       pids: 4096
       shmBytes: 34359738368
       tmpfsBytes: 4294967296

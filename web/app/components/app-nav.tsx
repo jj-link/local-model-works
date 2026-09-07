@@ -13,6 +13,7 @@ import {
   PackageOpen,
   Radio,
   Server,
+  Settings,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
@@ -65,7 +66,6 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       icon: Library,
       items: [
         { id: "recipe-catalog", label: "Catalog", path: "/library/recipes", icon: Library },
-        { id: "recipe-builder", label: "Recipe Builder", path: "/library/builder", icon: FileCode2 },
         { id: "profiles-sharing", ...ROADMAP_PAGES.profiles, icon: Library },
       ],
     });
@@ -139,6 +139,14 @@ export function buildAppNavigation(enabledModuleIds: ReadonlySet<string>): AppNa
       label: "Chat",
       icon: MessageSquare,
       items: [{ id: "chat-route", label: "Chat", path: "/chat", icon: MessageSquare }],
+    });
+  }
+  if (enabledModuleIds.has("settings")) {
+    groups.push({
+      id: "settings",
+      label: "Settings",
+      icon: Settings,
+      items: [{ id: "ai-assistance", label: "Settings", path: "/settings/ai-assistance", icon: Settings }],
     });
   }
   return groups;

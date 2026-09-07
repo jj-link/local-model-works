@@ -1,0 +1,10 @@
+{
+  "task_name": "html-js-filter",
+  "trial_name": "html-js-filter__a",
+  "exception_info": null,
+  "config": {"task": {}},
+  "agent_result": {"n_input_tokens": 10, "n_cache_tokens": 2, "n_output_tokens": 4, "cost_usd": 0.1},
+  "verifier_result": {"rewards": {"reward": 1}},
+  "started_at": "2026-01-01T00:00:00Z",
+  "finished_at": "2026-01-01T00:00:02Z"
+}

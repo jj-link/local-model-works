@@ -71,6 +71,24 @@ func (e ArtifactKind) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentPlanAcquisitionPolicy.
+const (
+	DownloadMissing DeploymentPlanAcquisitionPolicy = "download-missing"
+	RequireExisting DeploymentPlanAcquisitionPolicy = "require-existing"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentPlanAcquisitionPolicy enum.
+func (e DeploymentPlanAcquisitionPolicy) Valid() bool {
+	switch e {
+	case DownloadMissing:
+		return true
+	case RequireExisting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DiagnosticSeverity.
 const (
 	DiagnosticSeverityError   DiagnosticSeverity = "error"
@@ -92,6 +110,21 @@ func (e DiagnosticSeverity) Valid() bool {
 	}
 }
 
+// Defines values for ImagePreviewAction.
+const (
+	VerifyOrPull ImagePreviewAction = "verify-or-pull"
+)
+
+// Valid indicates whether the value is a known member of the ImagePreviewAction enum.
+func (e ImagePreviewAction) Valid() bool {
+	switch e {
+	case VerifyOrPull:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlacementState.
 const (
 	PlacementStateInvalid PlacementState = "invalid"
@@ -107,6 +140,189 @@ func (e PlacementState) Valid() bool {
 	case PlacementStatePending:
 		return true
 	case PlacementStateValid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeAvailableResourceKind.
+const (
+	RecipeAvailableResourceKindArtifact RecipeAvailableResourceKind = "artifact"
+	RecipeAvailableResourceKindImage    RecipeAvailableResourceKind = "image"
+	RecipeAvailableResourceKindRecipe   RecipeAvailableResourceKind = "recipe"
+)
+
+// Valid indicates whether the value is a known member of the RecipeAvailableResourceKind enum.
+func (e RecipeAvailableResourceKind) Valid() bool {
+	switch e {
+	case RecipeAvailableResourceKindArtifact:
+		return true
+	case RecipeAvailableResourceKindImage:
+		return true
+	case RecipeAvailableResourceKindRecipe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeChangeComparisonBaseSourceStatus.
+const (
+	RecipeChangeComparisonBaseSourceStatusAvailable   RecipeChangeComparisonBaseSourceStatus = "available"
+	RecipeChangeComparisonBaseSourceStatusUnavailable RecipeChangeComparisonBaseSourceStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the RecipeChangeComparisonBaseSourceStatus enum.
+func (e RecipeChangeComparisonBaseSourceStatus) Valid() bool {
+	switch e {
+	case RecipeChangeComparisonBaseSourceStatusAvailable:
+		return true
+	case RecipeChangeComparisonBaseSourceStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeChangeComparisonFilesChange.
+const (
+	Added    RecipeChangeComparisonFilesChange = "added"
+	Modified RecipeChangeComparisonFilesChange = "modified"
+	Removed  RecipeChangeComparisonFilesChange = "removed"
+)
+
+// Valid indicates whether the value is a known member of the RecipeChangeComparisonFilesChange enum.
+func (e RecipeChangeComparisonFilesChange) Valid() bool {
+	switch e {
+	case Added:
+		return true
+	case Modified:
+		return true
+	case Removed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeChangeContextBaseSourceStatus.
+const (
+	RecipeChangeContextBaseSourceStatusAvailable   RecipeChangeContextBaseSourceStatus = "available"
+	RecipeChangeContextBaseSourceStatusUnavailable RecipeChangeContextBaseSourceStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the RecipeChangeContextBaseSourceStatus enum.
+func (e RecipeChangeContextBaseSourceStatus) Valid() bool {
+	switch e {
+	case RecipeChangeContextBaseSourceStatusAvailable:
+		return true
+	case RecipeChangeContextBaseSourceStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeChangeContextKind.
+const (
+	RecipeChangeContextKindAdd    RecipeChangeContextKind = "add"
+	RecipeChangeContextKindRepair RecipeChangeContextKind = "repair"
+	RecipeChangeContextKindUpdate RecipeChangeContextKind = "update"
+)
+
+// Valid indicates whether the value is a known member of the RecipeChangeContextKind enum.
+func (e RecipeChangeContextKind) Valid() bool {
+	switch e {
+	case RecipeChangeContextKindAdd:
+		return true
+	case RecipeChangeContextKindRepair:
+		return true
+	case RecipeChangeContextKindUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDownloadItemState.
+const (
+	RecipeDownloadItemStateCancelled    RecipeDownloadItemState = "cancelled"
+	RecipeDownloadItemStateCancelling   RecipeDownloadItemState = "cancelling"
+	RecipeDownloadItemStateChecking     RecipeDownloadItemState = "checking"
+	RecipeDownloadItemStateFailed       RecipeDownloadItemState = "failed"
+	RecipeDownloadItemStateInterrupted  RecipeDownloadItemState = "interrupted"
+	RecipeDownloadItemStatePending      RecipeDownloadItemState = "pending"
+	RecipeDownloadItemStateSucceeded    RecipeDownloadItemState = "succeeded"
+	RecipeDownloadItemStateTransferring RecipeDownloadItemState = "transferring"
+	RecipeDownloadItemStateVerifying    RecipeDownloadItemState = "verifying"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDownloadItemState enum.
+func (e RecipeDownloadItemState) Valid() bool {
+	switch e {
+	case RecipeDownloadItemStateCancelled:
+		return true
+	case RecipeDownloadItemStateCancelling:
+		return true
+	case RecipeDownloadItemStateChecking:
+		return true
+	case RecipeDownloadItemStateFailed:
+		return true
+	case RecipeDownloadItemStateInterrupted:
+		return true
+	case RecipeDownloadItemStatePending:
+		return true
+	case RecipeDownloadItemStateSucceeded:
+		return true
+	case RecipeDownloadItemStateTransferring:
+		return true
+	case RecipeDownloadItemStateVerifying:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDownloadResourceAction.
+const (
+	RecipeDownloadResourceActionDownloadOrigin RecipeDownloadResourceAction = "download-origin"
+	RecipeDownloadResourceActionPeerCopy       RecipeDownloadResourceAction = "peer-copy"
+	RecipeDownloadResourceActionReuse          RecipeDownloadResourceAction = "reuse"
+	RecipeDownloadResourceActionValidateLocal  RecipeDownloadResourceAction = "validate-local"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDownloadResourceAction enum.
+func (e RecipeDownloadResourceAction) Valid() bool {
+	switch e {
+	case RecipeDownloadResourceActionDownloadOrigin:
+		return true
+	case RecipeDownloadResourceActionPeerCopy:
+		return true
+	case RecipeDownloadResourceActionReuse:
+		return true
+	case RecipeDownloadResourceActionValidateLocal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDownloadResourceKind.
+const (
+	RecipeDownloadResourceKindArtifact RecipeDownloadResourceKind = "artifact"
+	RecipeDownloadResourceKindImage    RecipeDownloadResourceKind = "image"
+	RecipeDownloadResourceKindRecipe   RecipeDownloadResourceKind = "recipe"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDownloadResourceKind enum.
+func (e RecipeDownloadResourceKind) Valid() bool {
+	switch e {
+	case RecipeDownloadResourceKindArtifact:
+		return true
+	case RecipeDownloadResourceKindImage:
+		return true
+	case RecipeDownloadResourceKindRecipe:
 		return true
 	default:
 		return false
@@ -137,6 +353,174 @@ func (e RecipeDraftState) Valid() bool {
 	case RecipeDraftStatePackaged:
 		return true
 	case RecipeDraftStateValid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDraftAssetSelectionOrigin.
+const (
+	RecipeDraftAssetSelectionOriginGenerated RecipeDraftAssetSelectionOrigin = "generated"
+	RecipeDraftAssetSelectionOriginSource    RecipeDraftAssetSelectionOrigin = "source"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDraftAssetSelectionOrigin enum.
+func (e RecipeDraftAssetSelectionOrigin) Valid() bool {
+	switch e {
+	case RecipeDraftAssetSelectionOriginGenerated:
+		return true
+	case RecipeDraftAssetSelectionOriginSource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDraftCandidateOrigin.
+const (
+	RecipeDraftCandidateOriginGenerated RecipeDraftCandidateOrigin = "generated"
+	RecipeDraftCandidateOriginSource    RecipeDraftCandidateOrigin = "source"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDraftCandidateOrigin enum.
+func (e RecipeDraftCandidateOrigin) Valid() bool {
+	switch e {
+	case RecipeDraftCandidateOriginGenerated:
+		return true
+	case RecipeDraftCandidateOriginSource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDraftContextFileOrigin.
+const (
+	RecipeDraftContextFileOriginGenerated RecipeDraftContextFileOrigin = "generated"
+	RecipeDraftContextFileOriginSource    RecipeDraftContextFileOrigin = "source"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDraftContextFileOrigin enum.
+func (e RecipeDraftContextFileOrigin) Valid() bool {
+	switch e {
+	case RecipeDraftContextFileOriginGenerated:
+		return true
+	case RecipeDraftContextFileOriginSource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDraftDiagnosticPhase.
+const (
+	Generate RecipeDraftDiagnosticPhase = "generate"
+	Inspect  RecipeDraftDiagnosticPhase = "inspect"
+	Install  RecipeDraftDiagnosticPhase = "install"
+	Launch   RecipeDraftDiagnosticPhase = "launch"
+	Package  RecipeDraftDiagnosticPhase = "package"
+	Resolve  RecipeDraftDiagnosticPhase = "resolve"
+	Validate RecipeDraftDiagnosticPhase = "validate"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDraftDiagnosticPhase enum.
+func (e RecipeDraftDiagnosticPhase) Valid() bool {
+	switch e {
+	case Generate:
+		return true
+	case Inspect:
+		return true
+	case Install:
+		return true
+	case Launch:
+		return true
+	case Package:
+		return true
+	case Resolve:
+		return true
+	case Validate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeDraftDiagnosticSeverity.
+const (
+	RecipeDraftDiagnosticSeverityError   RecipeDraftDiagnosticSeverity = "error"
+	RecipeDraftDiagnosticSeverityWarning RecipeDraftDiagnosticSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the RecipeDraftDiagnosticSeverity enum.
+func (e RecipeDraftDiagnosticSeverity) Valid() bool {
+	switch e {
+	case RecipeDraftDiagnosticSeverityError:
+		return true
+	case RecipeDraftDiagnosticSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeGenerationRequestContentConsent.
+const (
+	True RecipeGenerationRequestContentConsent = true
+)
+
+// Valid indicates whether the value is a known member of the RecipeGenerationRequestContentConsent enum.
+func (e RecipeGenerationRequestContentConsent) Valid() bool {
+	switch e {
+	case True:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeResourceVerificationState.
+const (
+	RecipeResourceVerificationStateAvailable RecipeResourceVerificationState = "available"
+	RecipeResourceVerificationStateInvalid   RecipeResourceVerificationState = "invalid"
+	RecipeResourceVerificationStateMissing   RecipeResourceVerificationState = "missing"
+	RecipeResourceVerificationStatePartial   RecipeResourceVerificationState = "partial"
+	RecipeResourceVerificationStateUnknown   RecipeResourceVerificationState = "unknown"
+	RecipeResourceVerificationStateVerifying RecipeResourceVerificationState = "verifying"
+)
+
+// Valid indicates whether the value is a known member of the RecipeResourceVerificationState enum.
+func (e RecipeResourceVerificationState) Valid() bool {
+	switch e {
+	case RecipeResourceVerificationStateAvailable:
+		return true
+	case RecipeResourceVerificationStateInvalid:
+		return true
+	case RecipeResourceVerificationStateMissing:
+		return true
+	case RecipeResourceVerificationStatePartial:
+		return true
+	case RecipeResourceVerificationStateUnknown:
+		return true
+	case RecipeResourceVerificationStateVerifying:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeRunExcerptSelectionStream.
+const (
+	Stderr RecipeRunExcerptSelectionStream = "stderr"
+	Stdout RecipeRunExcerptSelectionStream = "stdout"
+)
+
+// Valid indicates whether the value is a known member of the RecipeRunExcerptSelectionStream enum.
+func (e RecipeRunExcerptSelectionStream) Valid() bool {
+	switch e {
+	case Stderr:
+		return true
+	case Stdout:
 		return true
 	default:
 		return false
@@ -302,6 +686,45 @@ func (e TransferState) Valid() bool {
 	}
 }
 
+// Defines values for TransferPreviewAction.
+const (
+	TransferPreviewActionDownloadOrigin TransferPreviewAction = "download-origin"
+	TransferPreviewActionPeerCopy       TransferPreviewAction = "peer-copy"
+	TransferPreviewActionReconcileLocal TransferPreviewAction = "reconcile-local"
+)
+
+// Valid indicates whether the value is a known member of the TransferPreviewAction enum.
+func (e TransferPreviewAction) Valid() bool {
+	switch e {
+	case TransferPreviewActionDownloadOrigin:
+		return true
+	case TransferPreviewActionPeerCopy:
+		return true
+	case TransferPreviewActionReconcileLocal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateRecipeChangeJSONBodyKind.
+const (
+	CreateRecipeChangeJSONBodyKindRepair CreateRecipeChangeJSONBodyKind = "repair"
+	CreateRecipeChangeJSONBodyKindUpdate CreateRecipeChangeJSONBodyKind = "update"
+)
+
+// Valid indicates whether the value is a known member of the CreateRecipeChangeJSONBodyKind enum.
+func (e CreateRecipeChangeJSONBodyKind) Valid() bool {
+	switch e {
+	case CreateRecipeChangeJSONBodyKindRepair:
+		return true
+	case CreateRecipeChangeJSONBodyKindUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Artifact defines model for Artifact.
 type Artifact struct {
 	Digest *string            `json:"digest,omitempty"`
@@ -329,6 +752,66 @@ type Compatibility struct {
 	NodeCount   *int                    `json:"nodeCount,omitempty"`
 }
 
+// DeploymentPlan defines model for DeploymentPlan.
+type DeploymentPlan struct {
+	Acquisition       *RecipeDownloadPlan             `json:"acquisition,omitempty"`
+	AcquisitionPolicy DeploymentPlanAcquisitionPolicy `json:"acquisition_policy"`
+	Conflicts         *[]struct {
+		DeploymentId *openapi_types.UUID `json:"deployment_id,omitempty"`
+		OccupiedBy   *string             `json:"occupied_by,omitempty"`
+		Resource     *string             `json:"resource,omitempty"`
+	} `json:"conflicts,omitempty"`
+	Diagnostics *[]Diagnostic `json:"diagnostics,omitempty"`
+	Endpoint    *struct {
+		Host  *string `json:"host,omitempty"`
+		Model *string `json:"model,omitempty"`
+		Path  *string `json:"path,omitempty"`
+		Port  *int    `json:"port,omitempty"`
+	} `json:"endpoint,omitempty"`
+	Fabric           *string                   `json:"fabric,omitempty"`
+	HostPreparation  *[]HostPreparationPreview `json:"host_preparation,omitempty"`
+	Images           *[]ImagePreview           `json:"images,omitempty"`
+	MissingResources *[]RecipeDownloadResource `json:"missing_resources,omitempty"`
+
+	// Parameters Effective launch parameters for this plan
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+	Placements []struct {
+		AcceleratorIndex int                `json:"accelerator_index"`
+		AcceleratorUuid  *string            `json:"accelerator_uuid,omitempty"`
+		NodeId           openapi_types.UUID `json:"node_id"`
+		NodeName         *string            `json:"node_name,omitempty"`
+		Rank             int                `json:"rank"`
+	} `json:"placements"`
+
+	// PlanDigest Opaque digest for this previewed plan; pass to create to pin it
+	PlanDigest string `json:"plan_digest"`
+	Ports      *[]struct {
+		ContainerPort int                `json:"container_port"`
+		HostPort      int                `json:"host_port"`
+		NodeId        openapi_types.UUID `json:"node_id"`
+		NodeName      *string            `json:"node_name,omitempty"`
+		Protocol      *string            `json:"protocol,omitempty"`
+	} `json:"ports,omitempty"`
+
+	// Ready false when conflicts or unmet compatibility block creation
+	Ready         bool               `json:"ready"`
+	RecipeDigest  string             `json:"recipe_digest"`
+	RecipeName    *string            `json:"recipe_name,omitempty"`
+	RecipeVersion *string            `json:"recipe_version,omitempty"`
+	Risks         *[]string          `json:"risks,omitempty"`
+	Storage       *[]StoragePreview  `json:"storage,omitempty"`
+	Transfers     *[]TransferPreview `json:"transfers,omitempty"`
+
+	// Variants Resolved per-artifact model variants
+	Variants *map[string]string `json:"variants,omitempty"`
+
+	// WorkloadIndex Workload identity for accelerator tuning
+	WorkloadIndex *int `json:"workload_index,omitempty"`
+}
+
+// DeploymentPlanAcquisitionPolicy defines model for DeploymentPlan.AcquisitionPolicy.
+type DeploymentPlanAcquisitionPolicy string
+
 // Diagnostic defines model for Diagnostic.
 type Diagnostic struct {
 	Code     string             `json:"code"`
@@ -347,6 +830,30 @@ type Error struct {
 	Details *map[string]interface{} `json:"details,omitempty"`
 	Message string                  `json:"message"`
 }
+
+// HostPreparationPreview defines model for HostPreparationPreview.
+type HostPreparationPreview struct {
+	DropPageCache     bool               `json:"drop_page_cache"`
+	HelperImage       string             `json:"helper_image"`
+	NodeId            openapi_types.UUID `json:"node_id"`
+	NodeName          *string            `json:"node_name,omitempty"`
+	RequireSwap       bool               `json:"require_swap"`
+	SwapTotalBytes    *int64             `json:"swap_total_bytes,omitempty"`
+	SwappinessCurrent int32              `json:"swappiness_current"`
+	SwappinessTarget  *int32             `json:"swappiness_target,omitempty"`
+}
+
+// ImagePreview defines model for ImagePreview.
+type ImagePreview struct {
+	Action    ImagePreviewAction `json:"action"`
+	Digest    string             `json:"digest"`
+	NodeId    openapi_types.UUID `json:"node_id"`
+	NodeName  *string            `json:"node_name,omitempty"`
+	Reference string             `json:"reference"`
+}
+
+// ImagePreviewAction defines model for ImagePreview.Action.
+type ImagePreviewAction string
 
 // Placement defines model for Placement.
 type Placement struct {
@@ -384,6 +891,106 @@ type Recipe struct {
 	VersionCount *int `json:"version_count,omitempty"`
 }
 
+// RecipeAvailability defines model for RecipeAvailability.
+type RecipeAvailability struct {
+	Devices []struct {
+		ActiveRunIds  []string     `json:"active_run_ids"`
+		Diagnostics   []Diagnostic `json:"diagnostics"`
+		LastCheckedAt *time.Time   `json:"last_checked_at,omitempty"`
+		NodeId        string       `json:"node_id"`
+		NodeName      string       `json:"node_name"`
+		Online        bool         `json:"online"`
+		OtherVersions []struct {
+			Identity          string                     `json:"identity"`
+			Kind              string                     `json:"kind"`
+			Path              string                     `json:"path"`
+			SupportedVariants *map[string]string         `json:"supported_variants,omitempty"`
+			Verification      RecipeResourceVerification `json:"verification"`
+		} `json:"other_versions"`
+		Resources          []RecipeAvailableResource `json:"resources"`
+		RunningDeployments []RecipeRunningVersion    `json:"running_deployments"`
+		RuntimeDiagnostics []Diagnostic              `json:"runtime_diagnostics"`
+	} `json:"devices"`
+	Diagnostics   []Diagnostic      `json:"diagnostics"`
+	RecipeDigest  string            `json:"recipe_digest"`
+	Variants      map[string]string `json:"variants"`
+	WorkloadIndex int               `json:"workload_index"`
+}
+
+// RecipeAvailabilityRequest defines model for RecipeAvailabilityRequest.
+type RecipeAvailabilityRequest struct {
+	LaunchProfileId *string                 `json:"launch_profile_id,omitempty"`
+	Refresh         *bool                   `json:"refresh,omitempty"`
+	Targets         *[]RecipeDownloadTarget `json:"targets,omitempty"`
+	Variants        *map[string]interface{} `json:"variants,omitempty"`
+	WorkloadIndex   *int                    `json:"workload_index,omitempty"`
+}
+
+// RecipeAvailableResource defines model for RecipeAvailableResource.
+type RecipeAvailableResource struct {
+	Destination    string                      `json:"destination"`
+	Identity       string                      `json:"identity"`
+	IndexDigest    *string                     `json:"index_digest,omitempty"`
+	Key            string                      `json:"key"`
+	Kind           RecipeAvailableResourceKind `json:"kind"`
+	ManifestDigest *string                     `json:"manifest_digest,omitempty"`
+	Platform       *string                     `json:"platform,omitempty"`
+	Required       bool                        `json:"required"`
+	Verification   RecipeResourceVerification  `json:"verification"`
+}
+
+// RecipeAvailableResourceKind defines model for RecipeAvailableResource.Kind.
+type RecipeAvailableResourceKind string
+
+// RecipeChangeComparison defines model for RecipeChangeComparison.
+type RecipeChangeComparison struct {
+	BaseCommit           *string                                `json:"base_commit,omitempty"`
+	BaseRecipeDigest     *string                                `json:"base_recipe_digest,omitempty"`
+	BaseSourceStatus     RecipeChangeComparisonBaseSourceStatus `json:"base_source_status"`
+	ConfigurationChanges []struct {
+		After  interface{} `json:"after,omitempty"`
+		Before interface{} `json:"before,omitempty"`
+		Path   string      `json:"path"`
+	} `json:"configuration_changes"`
+	Files []struct {
+		AfterSha256  *string                           `json:"after_sha256,omitempty"`
+		BeforeSha256 *string                           `json:"before_sha256,omitempty"`
+		Binary       bool                              `json:"binary"`
+		Change       RecipeChangeComparisonFilesChange `json:"change"`
+		Path         string                            `json:"path"`
+	} `json:"files"`
+	TargetCommit *string `json:"target_commit,omitempty"`
+}
+
+// RecipeChangeComparisonBaseSourceStatus defines model for RecipeChangeComparison.BaseSourceStatus.
+type RecipeChangeComparisonBaseSourceStatus string
+
+// RecipeChangeComparisonFilesChange defines model for RecipeChangeComparison.Files.Change.
+type RecipeChangeComparisonFilesChange string
+
+// RecipeChangeContext defines model for RecipeChangeContext.
+type RecipeChangeContext struct {
+	BaseAssets            *[]RecipeDraftAssetSelection        `json:"base_assets,omitempty"`
+	BaseCandidates        *[]RecipeDraftCandidate             `json:"base_candidates,omitempty"`
+	BaseCommit            *string                             `json:"base_commit,omitempty"`
+	BaseManifest          *map[string]interface{}             `json:"base_manifest,omitempty"`
+	BaseRecipeDigest      *string                             `json:"base_recipe_digest,omitempty"`
+	BaseSource            *map[string]interface{}             `json:"base_source,omitempty"`
+	BaseSourceError       *string                             `json:"base_source_error,omitempty"`
+	BaseSourceStatus      RecipeChangeContextBaseSourceStatus `json:"base_source_status"`
+	BaseTree              *string                             `json:"base_tree,omitempty"`
+	DeploymentId          *string                             `json:"deployment_id,omitempty"`
+	ExpectedCurrentDigest *string                             `json:"expected_current_digest,omitempty"`
+	Kind                  RecipeChangeContextKind             `json:"kind"`
+	RepositoryId          *string                             `json:"repository_id,omitempty"`
+}
+
+// RecipeChangeContextBaseSourceStatus defines model for RecipeChangeContext.BaseSourceStatus.
+type RecipeChangeContextBaseSourceStatus string
+
+// RecipeChangeContextKind defines model for RecipeChangeContext.Kind.
+type RecipeChangeContextKind string
+
 // RecipeDetail defines model for RecipeDetail.
 type RecipeDetail struct {
 	ArtifactCount *int           `json:"artifact_count,omitempty"`
@@ -410,33 +1017,344 @@ type RecipeDetail struct {
 	VersionCount *int `json:"version_count,omitempty"`
 }
 
+// RecipeDownloadAccepted defines model for RecipeDownloadAccepted.
+type RecipeDownloadAccepted struct {
+	RunId string `json:"run_id"`
+}
+
+// RecipeDownloadCreateRequest defines model for RecipeDownloadCreateRequest.
+type RecipeDownloadCreateRequest struct {
+	Credentials     *[]RecipeDownloadCredential `json:"credentials,omitempty"`
+	LaunchProfileId *string                     `json:"launch_profile_id,omitempty"`
+	PlanDigest      string                      `json:"plan_digest"`
+	ResumeRunId     *string                     `json:"resume_run_id,omitempty"`
+	Targets         []RecipeDownloadTarget      `json:"targets"`
+	Variants        *map[string]interface{}     `json:"variants,omitempty"`
+	WorkloadIndex   *int                        `json:"workload_index,omitempty"`
+}
+
+// RecipeDownloadCredential defines model for RecipeDownloadCredential.
+type RecipeDownloadCredential struct {
+	Host     string `json:"host"`
+	Resource string `json:"resource"`
+	SecretId string `json:"secret_id"`
+}
+
+// RecipeDownloadItem defines model for RecipeDownloadItem.
+type RecipeDownloadItem struct {
+	Checkpoint map[string]interface{} `json:"checkpoint"`
+	CommandId  *string                `json:"command_id,omitempty"`
+	Error      *struct {
+		Code      *string `json:"code,omitempty"`
+		Message   *string `json:"message,omitempty"`
+		Retryable *bool   `json:"retryable,omitempty"`
+	} `json:"error,omitempty"`
+	Id                string                  `json:"id"`
+	NodeId            string                  `json:"node_id"`
+	PredecessorItemId *string                 `json:"predecessor_item_id,omitempty"`
+	Resource          RecipeDownloadResource  `json:"resource"`
+	ResourceKey       string                  `json:"resource_key"`
+	RunId             string                  `json:"run_id"`
+	State             RecipeDownloadItemState `json:"state"`
+	TransferId        *string                 `json:"transfer_id,omitempty"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+}
+
+// RecipeDownloadItemState defines model for RecipeDownloadItem.State.
+type RecipeDownloadItemState string
+
+// RecipeDownloadPlan defines model for RecipeDownloadPlan.
+type RecipeDownloadPlan struct {
+	Diagnostics   []Diagnostic             `json:"diagnostics"`
+	PlanDigest    string                   `json:"plan_digest"`
+	Ready         bool                     `json:"ready"`
+	RecipeDigest  string                   `json:"recipe_digest"`
+	Resources     []RecipeDownloadResource `json:"resources"`
+	Storage       []RecipeDownloadStorage  `json:"storage"`
+	Targets       []RecipeDownloadTarget   `json:"targets"`
+	Variants      map[string]string        `json:"variants"`
+	WorkloadIndex int                      `json:"workload_index"`
+}
+
+// RecipeDownloadPlanRequest defines model for RecipeDownloadPlanRequest.
+type RecipeDownloadPlanRequest struct {
+	Credentials     *[]RecipeDownloadCredential `json:"credentials,omitempty"`
+	LaunchProfileId *string                     `json:"launch_profile_id,omitempty"`
+	ResumeRunId     *string                     `json:"resume_run_id,omitempty"`
+	Targets         []RecipeDownloadTarget      `json:"targets"`
+	Variants        *map[string]interface{}     `json:"variants,omitempty"`
+	WorkloadIndex   *int                        `json:"workload_index,omitempty"`
+}
+
+// RecipeDownloadResource defines model for RecipeDownloadResource.
+type RecipeDownloadResource struct {
+	Action         RecipeDownloadResourceAction `json:"action"`
+	BytesRemaining *int64                       `json:"bytes_remaining,omitempty"`
+	BytesTotal     *int64                       `json:"bytes_total,omitempty"`
+	CredentialId   *string                      `json:"credential_id,omitempty"`
+	Destination    string                       `json:"destination"`
+	Identity       string                       `json:"identity"`
+	IndexDigest    *string                      `json:"index_digest,omitempty"`
+	Key            string                       `json:"key"`
+	Kind           RecipeDownloadResourceKind   `json:"kind"`
+	ManifestDigest *string                      `json:"manifest_digest,omitempty"`
+	NodeId         string                       `json:"node_id"`
+	Platform       *string                      `json:"platform,omitempty"`
+	Required       bool                         `json:"required"`
+	SizeBytes      *int64                       `json:"size_bytes,omitempty"`
+	Source         struct {
+		Digest    *string `json:"digest,omitempty"`
+		Reference *string `json:"reference,omitempty"`
+		Revision  *string `json:"revision,omitempty"`
+		Type      string  `json:"type"`
+		Url       *string `json:"url,omitempty"`
+	} `json:"source"`
+	SourceNode   *string                    `json:"source_node,omitempty"`
+	SourcePath   *string                    `json:"source_path,omitempty"`
+	Verification RecipeResourceVerification `json:"verification"`
+}
+
+// RecipeDownloadResourceAction defines model for RecipeDownloadResource.Action.
+type RecipeDownloadResourceAction string
+
+// RecipeDownloadResourceKind defines model for RecipeDownloadResource.Kind.
+type RecipeDownloadResourceKind string
+
+// RecipeDownloadResumeRequest defines model for RecipeDownloadResumeRequest.
+type RecipeDownloadResumeRequest struct {
+	Credentials *[]RecipeDownloadCredential `json:"credentials,omitempty"`
+	PlanDigest  string                      `json:"plan_digest"`
+}
+
+// RecipeDownloadRun defines model for RecipeDownloadRun.
+type RecipeDownloadRun struct {
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Input      struct {
+		Credentials      *[]RecipeDownloadCredential `json:"credentials,omitempty"`
+		Plan             RecipeDownloadPlan          `json:"plan"`
+		PredecessorRunId *string                     `json:"predecessor_run_id,omitempty"`
+	} `json:"input"`
+	Items []RecipeDownloadItem `json:"items"`
+	RunId string               `json:"run_id"`
+	State string               `json:"state"`
+}
+
+// RecipeDownloadSelection defines model for RecipeDownloadSelection.
+type RecipeDownloadSelection struct {
+	Credentials     *[]RecipeDownloadCredential `json:"credentials,omitempty"`
+	LaunchProfileId *string                     `json:"launch_profile_id,omitempty"`
+	Targets         *[]RecipeDownloadTarget     `json:"targets,omitempty"`
+	Variants        *map[string]interface{}     `json:"variants,omitempty"`
+	WorkloadIndex   *int                        `json:"workload_index,omitempty"`
+}
+
+// RecipeDownloadStorage defines model for RecipeDownloadStorage.
+type RecipeDownloadStorage struct {
+	AvailableBytes *int64   `json:"available_bytes,omitempty"`
+	Destination    string   `json:"destination"`
+	Filesystem     string   `json:"filesystem"`
+	NodeId         string   `json:"node_id"`
+	RequiredBytes  *int64   `json:"required_bytes,omitempty"`
+	ReserveBytes   int64    `json:"reserve_bytes"`
+	ResourceKeys   []string `json:"resource_keys"`
+	StagingBytes   *int64   `json:"staging_bytes,omitempty"`
+	Sufficient     *bool    `json:"sufficient,omitempty"`
+	TotalBytes     *int64   `json:"total_bytes,omitempty"`
+}
+
+// RecipeDownloadTarget defines model for RecipeDownloadTarget.
+type RecipeDownloadTarget struct {
+	CacheRoot *string `json:"cache_root,omitempty"`
+	NodeId    string  `json:"node_id"`
+}
+
 // RecipeDraft defines model for RecipeDraft.
 type RecipeDraft struct {
-	Candidates     []map[string]interface{} `json:"candidates"`
-	CreatedAt      time.Time                `json:"created_at"`
-	Diagnostics    []map[string]interface{} `json:"diagnostics"`
-	Id             string                   `json:"id"`
-	Manifest       map[string]interface{}   `json:"manifest"`
-	PackageDigest  *string                  `json:"package_digest,omitempty"`
-	ResolvedCommit *string                  `json:"resolved_commit,omitempty"`
-	ResolvedTree   *string                  `json:"resolved_tree,omitempty"`
-	RunId          *string                  `json:"run_id,omitempty"`
-	SelectedAssets []string                 `json:"selected_assets"`
-	Source         map[string]interface{}   `json:"source"`
-	State          RecipeDraftState         `json:"state"`
-	UpdatedAt      time.Time                `json:"updated_at"`
-	Version        int                      `json:"version"`
+	AcknowledgedWarnings []string                    `json:"acknowledged_warnings"`
+	Candidates           []RecipeDraftCandidate      `json:"candidates"`
+	ChangeContext        *RecipeChangeContext        `json:"change_context,omitempty"`
+	ContextSelection     []RecipeDraftContextFile    `json:"context_selection"`
+	CreatedAt            time.Time                   `json:"created_at"`
+	Diagnostics          []RecipeDraftDiagnostic     `json:"diagnostics"`
+	Id                   string                      `json:"id"`
+	Manifest             map[string]interface{}      `json:"manifest"`
+	Operation            *RecipeDraftOperation       `json:"operation,omitempty"`
+	PackageDigest        *string                     `json:"package_digest,omitempty"`
+	ParentDraftId        *string                     `json:"parent_draft_id,omitempty"`
+	Proposal             *RecipeDraftSuggestion      `json:"proposal,omitempty"`
+	Questions            []RecipeDraftQuestion       `json:"questions"`
+	ResolvedCommit       *string                     `json:"resolved_commit,omitempty"`
+	ResolvedReferences   []RecipeResolvedReference   `json:"resolved_references"`
+	ResolvedTree         *string                     `json:"resolved_tree,omitempty"`
+	RunId                *string                     `json:"run_id,omitempty"`
+	SelectedAssets       []RecipeDraftAssetSelection `json:"selected_assets"`
+	Source               map[string]interface{}      `json:"source"`
+	State                RecipeDraftState            `json:"state"`
+	UpdatedAt            time.Time                   `json:"updated_at"`
+	Version              int                         `json:"version"`
 }
 
 // RecipeDraftState defines model for RecipeDraft.State.
 type RecipeDraftState string
 
+// RecipeDraftAssetSelection defines model for RecipeDraftAssetSelection.
+type RecipeDraftAssetSelection struct {
+	Origin *RecipeDraftAssetSelectionOrigin `json:"origin,omitempty"`
+	Path   string                           `json:"path"`
+	Sha256 string                           `json:"sha256"`
+}
+
+// RecipeDraftAssetSelectionOrigin defines model for RecipeDraftAssetSelection.Origin.
+type RecipeDraftAssetSelectionOrigin string
+
+// RecipeDraftCandidate defines model for RecipeDraftCandidate.
+type RecipeDraftCandidate struct {
+	Binary     *bool                      `json:"binary,omitempty"`
+	Origin     RecipeDraftCandidateOrigin `json:"origin"`
+	Path       string                     `json:"path"`
+	Sha256     string                     `json:"sha256"`
+	Size       int                        `json:"size"`
+	SourcePath *string                    `json:"source_path,omitempty"`
+}
+
+// RecipeDraftCandidateOrigin defines model for RecipeDraftCandidate.Origin.
+type RecipeDraftCandidateOrigin string
+
+// RecipeDraftContextFile defines model for RecipeDraftContextFile.
+type RecipeDraftContextFile struct {
+	EndLine      *int                          `json:"end_line,omitempty"`
+	Origin       *RecipeDraftContextFileOrigin `json:"origin,omitempty"`
+	Path         string                        `json:"path"`
+	Sha256       string                        `json:"sha256"`
+	SourceCommit *string                       `json:"source_commit,omitempty"`
+	StartLine    *int                          `json:"start_line,omitempty"`
+}
+
+// RecipeDraftContextFileOrigin defines model for RecipeDraftContextFile.Origin.
+type RecipeDraftContextFileOrigin string
+
+// RecipeDraftDiagnostic defines model for RecipeDraftDiagnostic.
+type RecipeDraftDiagnostic struct {
+	// Acknowledgement Exact current warning token accepted by acknowledged_warnings
+	Acknowledgement *string                       `json:"acknowledgement,omitempty"`
+	Blocking        bool                          `json:"blocking"`
+	Code            string                        `json:"code"`
+	Dismissible     bool                          `json:"dismissible"`
+	Id              string                        `json:"id"`
+	Message         string                        `json:"message"`
+	Path            *string                       `json:"path,omitempty"`
+	Phase           RecipeDraftDiagnosticPhase    `json:"phase"`
+	Remediation     string                        `json:"remediation"`
+	Resource        *string                       `json:"resource,omitempty"`
+	Retryable       bool                          `json:"retryable"`
+	Severity        RecipeDraftDiagnosticSeverity `json:"severity"`
+	SourceLine      *int                          `json:"source_line,omitempty"`
+	SourcePath      *string                       `json:"source_path,omitempty"`
+}
+
+// RecipeDraftDiagnosticPhase defines model for RecipeDraftDiagnostic.Phase.
+type RecipeDraftDiagnosticPhase string
+
+// RecipeDraftDiagnosticSeverity defines model for RecipeDraftDiagnostic.Severity.
+type RecipeDraftDiagnosticSeverity string
+
+// RecipeDraftOperation defines model for RecipeDraftOperation.
+type RecipeDraftOperation struct {
+	Id            string  `json:"id"`
+	Kind          string  `json:"kind"`
+	Message       *string `json:"message,omitempty"`
+	Phase         *string `json:"phase,omitempty"`
+	PreviousState string  `json:"previous_state"`
+	StartedAt     string  `json:"started_at"`
+	UpdatedAt     string  `json:"updated_at"`
+}
+
+// RecipeDraftOperationAccepted defines model for RecipeDraftOperationAccepted.
+type RecipeDraftOperationAccepted struct {
+	DraftId string `json:"draft_id"`
+	RunId   string `json:"run_id"`
+}
+
+// RecipeDraftQuestion defines model for RecipeDraftQuestion.
+type RecipeDraftQuestion struct {
+	Answer   *string `json:"answer,omitempty"`
+	Id       string  `json:"id"`
+	Path     *string `json:"path,omitempty"`
+	Question string  `json:"question"`
+}
+
 // RecipeDraftSource defines model for RecipeDraftSource.
 type RecipeDraftSource struct {
 	Path     *string `json:"path,omitempty"`
 	Remote   string  `json:"remote"`
-	Revision string  `json:"revision"`
+	Revision *string `json:"revision,omitempty"`
 }
+
+// RecipeDraftSuggestion defines model for RecipeDraftSuggestion.
+type RecipeDraftSuggestion struct {
+	BaseVersion int                     `json:"base_version"`
+	Diagnostics []RecipeDraftDiagnostic `json:"diagnostics"`
+	Evidence    []struct {
+		EndLine      *int    `json:"end_line,omitempty"`
+		Path         string  `json:"path"`
+		Sha256       string  `json:"sha256"`
+		SourceCommit *string `json:"source_commit,omitempty"`
+		SourcePath   *string `json:"source_path,omitempty"`
+		StartLine    *int    `json:"start_line,omitempty"`
+	} `json:"evidence"`
+	Files []struct {
+		Content    string  `json:"content"`
+		Path       string  `json:"path"`
+		SourcePath *string `json:"source_path,omitempty"`
+	} `json:"files"`
+	Id                   string                      `json:"id"`
+	Manifest             map[string]interface{}      `json:"manifest"`
+	Model                *string                     `json:"model,omitempty"`
+	PreviewSha256        *string                     `json:"preview_sha256,omitempty"`
+	ProviderId           *string                     `json:"provider_id,omitempty"`
+	ProviderVersion      *string                     `json:"provider_version,omitempty"`
+	Questions            []RecipeDraftQuestion       `json:"questions"`
+	RunId                *string                     `json:"run_id,omitempty"`
+	SelectedSourceAssets []RecipeDraftAssetSelection `json:"selected_source_assets"`
+	Summary              *string                     `json:"summary,omitempty"`
+}
+
+// RecipeGenerationPreview defines model for RecipeGenerationPreview.
+type RecipeGenerationPreview struct {
+	Destination     string                 `json:"destination"`
+	Model           string                 `json:"model"`
+	PreviewSha256   string                 `json:"preview_sha256"`
+	ProviderId      string                 `json:"provider_id"`
+	ProviderVersion string                 `json:"provider_version"`
+	Request         map[string]interface{} `json:"request"`
+	Warnings        []string               `json:"warnings"`
+}
+
+// RecipeGenerationPreviewRequest defines model for RecipeGenerationPreviewRequest.
+type RecipeGenerationPreviewRequest struct {
+	DiagnosticIds   []string                    `json:"diagnostic_ids"`
+	Instruction     *string                     `json:"instruction,omitempty"`
+	Model           *string                     `json:"model,omitempty"`
+	ProviderId      string                      `json:"provider_id"`
+	ProviderVersion string                      `json:"provider_version"`
+	RunExcerpts     []RecipeRunExcerptSelection `json:"run_excerpts"`
+}
+
+// RecipeGenerationRequest defines model for RecipeGenerationRequest.
+type RecipeGenerationRequest struct {
+	ContentConsent  RecipeGenerationRequestContentConsent `json:"content_consent"`
+	DiagnosticIds   []string                              `json:"diagnostic_ids"`
+	Instruction     *string                               `json:"instruction,omitempty"`
+	Model           *string                               `json:"model,omitempty"`
+	PreviewSha256   string                                `json:"preview_sha256"`
+	ProviderId      string                                `json:"provider_id"`
+	ProviderVersion string                                `json:"provider_version"`
+	RunExcerpts     []RecipeRunExcerptSelection           `json:"run_excerpts"`
+}
+
+// RecipeGenerationRequestContentConsent defines model for RecipeGenerationRequest.ContentConsent.
+type RecipeGenerationRequestContentConsent bool
 
 // RecipeImport defines model for RecipeImport.
 type RecipeImport struct {
@@ -455,6 +1373,7 @@ type RecipeInstalledDevice struct {
 type RecipeRepository struct {
 	CreatedAt          time.Time                 `json:"created_at"`
 	CurrentRecipe      *Recipe                   `json:"current_recipe,omitempty"`
+	HeadCheckError     *string                   `json:"head_check_error,omitempty"`
 	HeadCheckedAt      *time.Time                `json:"head_checked_at,omitempty"`
 	Id                 string                    `json:"id"`
 	InstalledCommit    *string                   `json:"installed_commit,omitempty"`
@@ -474,15 +1393,17 @@ type RecipeRepository struct {
 // RecipeRepositoryDetail defines model for RecipeRepositoryDetail.
 type RecipeRepositoryDetail = RecipeRepository
 
-// RecipeRepositoryUpdatePlanRequest defines model for RecipeRepositoryUpdatePlanRequest.
-type RecipeRepositoryUpdatePlanRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
+// RecipeRepositoryReplacementPlanRequest defines model for RecipeRepositoryReplacementPlanRequest.
+type RecipeRepositoryReplacementPlanRequest struct {
+	DeploymentIds []string `json:"deployment_ids"`
+	TargetDigest  string   `json:"target_digest"`
 }
 
-// RecipeRepositoryUpdateRequest defines model for RecipeRepositoryUpdateRequest.
-type RecipeRepositoryUpdateRequest struct {
-	ExpectedHeadCommit string `json:"expected_head_commit"`
-	PlanDigest         string `json:"plan_digest"`
+// RecipeRepositoryReplacementRequest defines model for RecipeRepositoryReplacementRequest.
+type RecipeRepositoryReplacementRequest struct {
+	DeploymentIds []string `json:"deployment_ids"`
+	PlanDigest    string   `json:"plan_digest"`
+	TargetDigest  string   `json:"target_digest"`
 }
 
 // RecipeRepositoryVersion defines model for RecipeRepositoryVersion.
@@ -492,6 +1413,50 @@ type RecipeRepositoryVersion struct {
 	InstalledAt time.Time `json:"installed_at"`
 	Recipe      Recipe    `json:"recipe"`
 	TreeSha     *string   `json:"tree_sha,omitempty"`
+}
+
+// RecipeResolvedReference defines model for RecipeResolvedReference.
+type RecipeResolvedReference struct {
+	EvidenceNote  *string `json:"evidence_note,omitempty"`
+	InputIdentity string  `json:"input_identity"`
+	Origin        string  `json:"origin"`
+	Path          string  `json:"path"`
+	ResolvedValue string  `json:"resolved_value"`
+	VerifiedAt    string  `json:"verified_at"`
+}
+
+// RecipeResourceVerification defines model for RecipeResourceVerification.
+type RecipeResourceVerification struct {
+	Diagnostics *[]Diagnostic                   `json:"diagnostics,omitempty"`
+	Stale       bool                            `json:"stale"`
+	State       RecipeResourceVerificationState `json:"state"`
+	VerifiedAt  *time.Time                      `json:"verified_at,omitempty"`
+}
+
+// RecipeResourceVerificationState defines model for RecipeResourceVerification.State.
+type RecipeResourceVerificationState string
+
+// RecipeRunExcerptSelection defines model for RecipeRunExcerptSelection.
+type RecipeRunExcerptSelection struct {
+	ByteCount    int                             `json:"byte_count"`
+	DeploymentId string                          `json:"deployment_id"`
+	Offset       int                             `json:"offset"`
+	Rank         int                             `json:"rank"`
+	RunId        string                          `json:"run_id"`
+	Stream       RecipeRunExcerptSelectionStream `json:"stream"`
+}
+
+// RecipeRunExcerptSelectionStream defines model for RecipeRunExcerptSelection.Stream.
+type RecipeRunExcerptSelectionStream string
+
+// RecipeRunningVersion defines model for RecipeRunningVersion.
+type RecipeRunningVersion struct {
+	DeploymentId  string            `json:"deployment_id"`
+	Rank          int               `json:"rank"`
+	RecipeDigest  string            `json:"recipe_digest"`
+	State         string            `json:"state"`
+	Variants      map[string]string `json:"variants"`
+	WorkloadIndex int               `json:"workload_index"`
 }
 
 // RecipeSource defines model for RecipeSource.
@@ -522,15 +1487,32 @@ type RecipeUpdateDevice struct {
 
 // RecipeUpdatePlan defines model for RecipeUpdatePlan.
 type RecipeUpdatePlan struct {
-	AddedPermissions     []string                        `json:"added_permissions"`
-	CandidatePermissions []string                        `json:"candidate_permissions"`
-	CurrentPermissions   []string                        `json:"current_permissions"`
-	Diagnostics          []Diagnostic                    `json:"diagnostics"`
-	InstalledDevices     []RecipeUpdateDevice            `json:"installed_devices"`
-	PlanDigest           string                          `json:"plan_digest"`
-	Ready                bool                            `json:"ready"`
-	RemovedPermissions   []string                        `json:"removed_permissions"`
-	RunningDeployments   []RecipeUpdateRunningDeployment `json:"running_deployments"`
+	AddedPermissions     []string  `json:"added_permissions"`
+	CandidatePermissions []string  `json:"candidate_permissions"`
+	CurrentPermissions   []string  `json:"current_permissions"`
+	DeploymentIds        *[]string `json:"deployment_ids,omitempty"`
+	Deployments          *[]struct {
+		AddedPermissions   []string                `json:"added_permissions"`
+		CurrentPermissions []string                `json:"current_permissions"`
+		DeploymentPlan     DeploymentPlan          `json:"deployment_plan"`
+		Fabric             *string                 `json:"fabric,omitempty"`
+		Parameters         *map[string]interface{} `json:"parameters,omitempty"`
+		Placement          string                  `json:"placement"`
+		RemovedPermissions []string                `json:"removed_permissions"`
+		SourceDeploymentId string                  `json:"source_deployment_id"`
+		SourceDigest       string                  `json:"source_digest"`
+		Variants           *map[string]string      `json:"variants,omitempty"`
+		WorkloadIndex      int                     `json:"workload_index"`
+	} `json:"deployments,omitempty"`
+	Diagnostics            []Diagnostic                    `json:"diagnostics"`
+	InstalledDevices       []RecipeUpdateDevice            `json:"installed_devices"`
+	PlanDigest             string                          `json:"plan_digest"`
+	Ready                  bool                            `json:"ready"`
+	RemovedPermissions     []string                        `json:"removed_permissions"`
+	RepositoryId           *string                         `json:"repository_id,omitempty"`
+	RunningDeployments     []RecipeUpdateRunningDeployment `json:"running_deployments"`
+	TargetDigest           *string                         `json:"target_digest,omitempty"`
+	UnchangedDeploymentIds *[]string                       `json:"unchanged_deployment_ids,omitempty"`
 }
 
 // RecipeUpdateRunningDeployment defines model for RecipeUpdateRunningDeployment.
@@ -570,6 +1552,18 @@ type RecipeUpdateStatus struct {
 // RecipeUpdateStatusState defines model for RecipeUpdateStatus.State.
 type RecipeUpdateStatusState string
 
+// StoragePreview defines model for StoragePreview.
+type StoragePreview struct {
+	AvailableBytes *int64             `json:"available_bytes,omitempty"`
+	CacheRoot      *string            `json:"cache_root,omitempty"`
+	Known          bool               `json:"known"`
+	NodeId         openapi_types.UUID `json:"node_id"`
+	NodeName       *string            `json:"node_name,omitempty"`
+	RequiredBytes  int64              `json:"required_bytes"`
+	Sufficient     bool               `json:"sufficient"`
+	TotalBytes     *int64             `json:"total_bytes,omitempty"`
+}
+
 // Transfer defines model for Transfer.
 type Transfer struct {
 	ArtifactId openapi_types.UUID `json:"artifact_id"`
@@ -587,16 +1581,41 @@ type Transfer struct {
 // TransferState defines model for Transfer.State.
 type TransferState string
 
+// TransferPreview defines model for TransferPreview.
+type TransferPreview struct {
+	Action     TransferPreviewAction `json:"action"`
+	ArtifactId string                `json:"artifact_id"`
+
+	// Bytes Known transfer bytes; omitted when the source size is unknown.
+	Bytes    *int64  `json:"bytes,omitempty"`
+	DestNode string  `json:"dest_node"`
+	DestPath string  `json:"dest_path"`
+	Identity *string `json:"identity,omitempty"`
+
+	// Network Network path, e.g. fabric spark-p2p (roce), tailnet, local
+	Network    *string `json:"network,omitempty"`
+	SourceNode *string `json:"source_node,omitempty"`
+	SourcePath *string `json:"source_path,omitempty"`
+}
+
+// TransferPreviewAction defines model for TransferPreview.Action.
+type TransferPreviewAction string
+
 // TransferRequest defines model for TransferRequest.
 type TransferRequest struct {
 	ArtifactId openapi_types.UUID `json:"artifact_id"`
 	DestNode   openapi_types.UUID `json:"dest_node"`
-	DestPath   string             `json:"dest_path"`
+
+	// DestPath Optional exact canonical destination under a configured cache root. Omit to use the verified artifact identity destination; arbitrary basenames are rejected.
+	DestPath   *string            `json:"dest_path,omitempty"`
 	SourceNode openapi_types.UUID `json:"source_node"`
 }
 
 // ID defines model for ID.
 type ID = string
+
+// IfMatch defines model for IfMatch.
+type IfMatch = string
 
 // Conflict defines model for Conflict.
 type Conflict = Error
@@ -621,15 +1640,140 @@ type ListArtifactsParams struct {
 	Node *string `form:"node,omitempty" json:"node,omitempty"`
 }
 
+// ListRecipeDraftsParams defines parameters for ListRecipeDrafts.
+type ListRecipeDraftsParams struct {
+	PackageDigest *string `form:"package_digest,omitempty" json:"package_digest,omitempty"`
+	RepositoryId  *string `form:"repository_id,omitempty" json:"repository_id,omitempty"`
+}
+
+// DeleteRecipeDraftParams defines parameters for DeleteRecipeDraft.
+type DeleteRecipeDraftParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
 // UpdateRecipeDraftJSONBody defines parameters for UpdateRecipeDraft.
 type UpdateRecipeDraftJSONBody struct {
-	Manifest       map[string]interface{} `json:"manifest"`
-	SelectedAssets []string               `json:"selected_assets"`
+	AcknowledgedWarnings *[]string `json:"acknowledged_warnings,omitempty"`
+	Answers              *[]struct {
+		Answer     string `json:"answer"`
+		QuestionId string `json:"question_id"`
+	} `json:"answers,omitempty"`
+	Manifest       map[string]interface{}      `json:"manifest"`
+	SelectedAssets []RecipeDraftAssetSelection `json:"selected_assets"`
 }
 
 // UpdateRecipeDraftParams defines parameters for UpdateRecipeDraft.
 type UpdateRecipeDraftParams struct {
-	IfMatch string `json:"If-Match"`
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// UpdateRecipeDraftContextJSONBody defines parameters for UpdateRecipeDraftContext.
+type UpdateRecipeDraftContextJSONBody struct {
+	Files []RecipeDraftContextFile `json:"files"`
+}
+
+// UpdateRecipeDraftContextParams defines parameters for UpdateRecipeDraftContext.
+type UpdateRecipeDraftContextParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// DismissRecipeDraftDiagnosticsJSONBody defines parameters for DismissRecipeDraftDiagnostics.
+type DismissRecipeDraftDiagnosticsJSONBody struct {
+	DiagnosticIds []string `json:"diagnostic_ids"`
+}
+
+// DismissRecipeDraftDiagnosticsParams defines parameters for DismissRecipeDraftDiagnostics.
+type DismissRecipeDraftDiagnosticsParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// GetRecipeDraftFileParams defines parameters for GetRecipeDraftFile.
+type GetRecipeDraftFileParams struct {
+	Path         string  `form:"path" json:"path"`
+	Sha256       string  `form:"sha256" json:"sha256"`
+	SourceCommit *string `form:"source_commit,omitempty" json:"source_commit,omitempty"`
+}
+
+// UpdateRecipeDraftFileJSONBody defines parameters for UpdateRecipeDraftFile.
+type UpdateRecipeDraftFileJSONBody struct {
+	Content string `json:"content"`
+	Path    string `json:"path"`
+}
+
+// UpdateRecipeDraftFileParams defines parameters for UpdateRecipeDraftFile.
+type UpdateRecipeDraftFileParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// GenerateRecipeDraftParams defines parameters for GenerateRecipeDraft.
+type GenerateRecipeDraftParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// PreviewRecipeGenerationParams defines parameters for PreviewRecipeGeneration.
+type PreviewRecipeGenerationParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// InspectRecipeDraftParams defines parameters for InspectRecipeDraft.
+type InspectRecipeDraftParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// InstallRecipeDraftJSONBody defines parameters for InstallRecipeDraft.
+type InstallRecipeDraftJSONBody struct {
+	AcknowledgedWarnings []string `json:"acknowledged_warnings"`
+	PackageDigest        string   `json:"package_digest"`
+}
+
+// InstallRecipeDraftParams defines parameters for InstallRecipeDraft.
+type InstallRecipeDraftParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// PackageRecipeDraftParams defines parameters for PackageRecipeDraft.
+type PackageRecipeDraftParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// DiscardRecipeDraftProposalJSONBody defines parameters for DiscardRecipeDraftProposal.
+type DiscardRecipeDraftProposalJSONBody struct {
+	ProposalId string `json:"proposal_id"`
+}
+
+// DiscardRecipeDraftProposalParams defines parameters for DiscardRecipeDraftProposal.
+type DiscardRecipeDraftProposalParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// AcceptRecipeDraftProposalJSONBody defines parameters for AcceptRecipeDraftProposal.
+type AcceptRecipeDraftProposalJSONBody struct {
+	ProposalId string `json:"proposal_id"`
+}
+
+// AcceptRecipeDraftProposalParams defines parameters for AcceptRecipeDraftProposal.
+type AcceptRecipeDraftProposalParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// ResolveRecipeDraftReferencesJSONBody defines parameters for ResolveRecipeDraftReferences.
+type ResolveRecipeDraftReferencesJSONBody struct {
+	Credentials *[]struct {
+		Host     string `json:"host"`
+		Path     string `json:"path"`
+		SecretId string `json:"secret_id"`
+	} `json:"credentials,omitempty"`
+	FileChecksums *[]struct {
+		EvidenceNote string `json:"evidence_note"`
+		Path         string `json:"path"`
+		Sha256       string `json:"sha256"`
+		Url          string `json:"url"`
+	} `json:"file_checksums,omitempty"`
+}
+
+// ResolveRecipeDraftReferencesParams defines parameters for ResolveRecipeDraftReferences.
+type ResolveRecipeDraftReferencesParams struct {
+	IfMatch IfMatch `json:"If-Match"`
 }
 
 // DeleteRecipeParams defines parameters for DeleteRecipe.
@@ -637,20 +1781,73 @@ type DeleteRecipeParams struct {
 	IfMatch string `json:"If-Match"`
 }
 
+// CreateRecipeChangeJSONBody defines parameters for CreateRecipeChange.
+type CreateRecipeChangeJSONBody struct {
+	DeploymentId          *string                        `json:"deployment_id,omitempty"`
+	ExpectedCurrentDigest string                         `json:"expected_current_digest"`
+	ExpectedHeadCommit    *string                        `json:"expected_head_commit,omitempty"`
+	Kind                  CreateRecipeChangeJSONBodyKind `json:"kind"`
+}
+
+// CreateRecipeChangeJSONBodyKind defines parameters for CreateRecipeChange.
+type CreateRecipeChangeJSONBodyKind string
+
 // CreateRecipeDraftJSONRequestBody defines body for CreateRecipeDraft for application/json ContentType.
 type CreateRecipeDraftJSONRequestBody = RecipeDraftSource
 
 // UpdateRecipeDraftJSONRequestBody defines body for UpdateRecipeDraft for application/json ContentType.
 type UpdateRecipeDraftJSONRequestBody UpdateRecipeDraftJSONBody
 
-// StartRecipeRepositoryUpdateJSONRequestBody defines body for StartRecipeRepositoryUpdate for application/json ContentType.
-type StartRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdateRequest
+// UpdateRecipeDraftContextJSONRequestBody defines body for UpdateRecipeDraftContext for application/json ContentType.
+type UpdateRecipeDraftContextJSONRequestBody UpdateRecipeDraftContextJSONBody
 
-// PlanRecipeRepositoryUpdateJSONRequestBody defines body for PlanRecipeRepositoryUpdate for application/json ContentType.
-type PlanRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdatePlanRequest
+// DismissRecipeDraftDiagnosticsJSONRequestBody defines body for DismissRecipeDraftDiagnostics for application/json ContentType.
+type DismissRecipeDraftDiagnosticsJSONRequestBody DismissRecipeDraftDiagnosticsJSONBody
+
+// UpdateRecipeDraftFileJSONRequestBody defines body for UpdateRecipeDraftFile for application/json ContentType.
+type UpdateRecipeDraftFileJSONRequestBody UpdateRecipeDraftFileJSONBody
+
+// GenerateRecipeDraftJSONRequestBody defines body for GenerateRecipeDraft for application/json ContentType.
+type GenerateRecipeDraftJSONRequestBody = RecipeGenerationRequest
+
+// PreviewRecipeGenerationJSONRequestBody defines body for PreviewRecipeGeneration for application/json ContentType.
+type PreviewRecipeGenerationJSONRequestBody = RecipeGenerationPreviewRequest
+
+// InstallRecipeDraftJSONRequestBody defines body for InstallRecipeDraft for application/json ContentType.
+type InstallRecipeDraftJSONRequestBody InstallRecipeDraftJSONBody
+
+// DiscardRecipeDraftProposalJSONRequestBody defines body for DiscardRecipeDraftProposal for application/json ContentType.
+type DiscardRecipeDraftProposalJSONRequestBody DiscardRecipeDraftProposalJSONBody
+
+// AcceptRecipeDraftProposalJSONRequestBody defines body for AcceptRecipeDraftProposal for application/json ContentType.
+type AcceptRecipeDraftProposalJSONRequestBody AcceptRecipeDraftProposalJSONBody
+
+// ResolveRecipeDraftReferencesJSONRequestBody defines body for ResolveRecipeDraftReferences for application/json ContentType.
+type ResolveRecipeDraftReferencesJSONRequestBody ResolveRecipeDraftReferencesJSONBody
+
+// StartRecipeRepositoryReplacementJSONRequestBody defines body for StartRecipeRepositoryReplacement for application/json ContentType.
+type StartRecipeRepositoryReplacementJSONRequestBody = RecipeRepositoryReplacementRequest
+
+// PlanRecipeRepositoryReplacementJSONRequestBody defines body for PlanRecipeRepositoryReplacement for application/json ContentType.
+type PlanRecipeRepositoryReplacementJSONRequestBody = RecipeRepositoryReplacementPlanRequest
 
 // ImportRecipeJSONRequestBody defines body for ImportRecipe for application/json ContentType.
 type ImportRecipeJSONRequestBody = RecipeImport
+
+// GetRecipeAvailabilityJSONRequestBody defines body for GetRecipeAvailability for application/json ContentType.
+type GetRecipeAvailabilityJSONRequestBody = RecipeAvailabilityRequest
+
+// CreateRecipeChangeJSONRequestBody defines body for CreateRecipeChange for application/json ContentType.
+type CreateRecipeChangeJSONRequestBody CreateRecipeChangeJSONBody
+
+// StartRecipeDownloadJSONRequestBody defines body for StartRecipeDownload for application/json ContentType.
+type StartRecipeDownloadJSONRequestBody = RecipeDownloadCreateRequest
+
+// PlanRecipeDownloadJSONRequestBody defines body for PlanRecipeDownload for application/json ContentType.
+type PlanRecipeDownloadJSONRequestBody = RecipeDownloadPlanRequest
+
+// ResumeRecipeDownloadJSONRequestBody defines body for ResumeRecipeDownload for application/json ContentType.
+type ResumeRecipeDownloadJSONRequestBody = RecipeDownloadResumeRequest
 
 // CreateTransferJSONRequestBody defines body for CreateTransfer for application/json ContentType.
 type CreateTransferJSONRequestBody = TransferRequest
@@ -664,14 +1861,35 @@ type ServerInterface interface {
 	// (GET /artifacts/{id}/placements)
 	ListArtifactPlacements(w http.ResponseWriter, r *http.Request, id ID)
 
+	// (POST /recipe-assistant/codex/login)
+	StartRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /recipe-assistant/codex/login/{id})
+	CancelRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request, id ID)
+
+	// (GET /recipe-assistant/codex/login/{id})
+	GetRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request, id ID)
+
+	// (POST /recipe-assistant/codex/logout)
+	LogoutRecipeAssistantCodex(w http.ResponseWriter, r *http.Request)
+
+	// (GET /recipe-assistant/codex/models)
+	ListRecipeAssistantCodexModels(w http.ResponseWriter, r *http.Request)
+
+	// (GET /recipe-assistant/codex/status)
+	GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request)
+
+	// (POST /recipe-assistant/providers/{id}/test)
+	TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, id ID)
+
 	// (GET /recipe-drafts)
-	ListRecipeDrafts(w http.ResponseWriter, r *http.Request)
+	ListRecipeDrafts(w http.ResponseWriter, r *http.Request, params ListRecipeDraftsParams)
 
 	// (POST /recipe-drafts)
 	CreateRecipeDraft(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /recipe-drafts/{id})
-	DeleteRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
+	DeleteRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params DeleteRecipeDraftParams)
 
 	// (GET /recipe-drafts/{id})
 	GetRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
@@ -679,11 +1897,47 @@ type ServerInterface interface {
 	// (PUT /recipe-drafts/{id})
 	UpdateRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params UpdateRecipeDraftParams)
 
+	// (GET /recipe-drafts/{id}/comparison)
+	CompareRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
+
+	// (PUT /recipe-drafts/{id}/context)
+	UpdateRecipeDraftContext(w http.ResponseWriter, r *http.Request, id ID, params UpdateRecipeDraftContextParams)
+
+	// (POST /recipe-drafts/{id}/diagnostics/dismiss)
+	DismissRecipeDraftDiagnostics(w http.ResponseWriter, r *http.Request, id ID, params DismissRecipeDraftDiagnosticsParams)
+
+	// (GET /recipe-drafts/{id}/files)
+	GetRecipeDraftFile(w http.ResponseWriter, r *http.Request, id ID, params GetRecipeDraftFileParams)
+
+	// (PUT /recipe-drafts/{id}/files)
+	UpdateRecipeDraftFile(w http.ResponseWriter, r *http.Request, id ID, params UpdateRecipeDraftFileParams)
+
+	// (POST /recipe-drafts/{id}/generate)
+	GenerateRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params GenerateRecipeDraftParams)
+
+	// (POST /recipe-drafts/{id}/generation-preview)
+	PreviewRecipeGeneration(w http.ResponseWriter, r *http.Request, id ID, params PreviewRecipeGenerationParams)
+
+	// (POST /recipe-drafts/{id}/inspect)
+	InspectRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params InspectRecipeDraftParams)
+
 	// (POST /recipe-drafts/{id}/install)
-	InstallRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
+	InstallRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params InstallRecipeDraftParams)
 
 	// (POST /recipe-drafts/{id}/package)
-	PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID)
+	PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params PackageRecipeDraftParams)
+
+	// (DELETE /recipe-drafts/{id}/proposal)
+	DiscardRecipeDraftProposal(w http.ResponseWriter, r *http.Request, id ID, params DiscardRecipeDraftProposalParams)
+
+	// (POST /recipe-drafts/{id}/proposal/accept)
+	AcceptRecipeDraftProposal(w http.ResponseWriter, r *http.Request, id ID, params AcceptRecipeDraftProposalParams)
+
+	// (POST /recipe-drafts/{id}/resolve)
+	ResolveRecipeDraftReferences(w http.ResponseWriter, r *http.Request, id ID, params ResolveRecipeDraftReferencesParams)
+
+	// (GET /recipe-drafts/{id}/run-excerpt)
+	GetRecipeDraftRunExcerpt(w http.ResponseWriter, r *http.Request, id ID)
 
 	// (GET /recipe-repositories)
 	ListRecipeRepositories(w http.ResponseWriter, r *http.Request)
@@ -691,11 +1945,14 @@ type ServerInterface interface {
 	// (GET /recipe-repositories/{id})
 	GetRecipeRepository(w http.ResponseWriter, r *http.Request, id string)
 
-	// (POST /recipe-repositories/{id}/update)
-	StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
+	// (POST /recipe-repositories/{id}/check-updates)
+	CheckRecipeRepositoryUpdates(w http.ResponseWriter, r *http.Request, id ID)
 
-	// (POST /recipe-repositories/{id}/update/plan)
-	PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
+	// (POST /recipe-repositories/{id}/replacements)
+	StartRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /recipe-repositories/{id}/replacements/plan)
+	PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string)
 
 	// (GET /recipes)
 	ListRecipes(w http.ResponseWriter, r *http.Request)
@@ -711,6 +1968,24 @@ type ServerInterface interface {
 
 	// (GET /recipes/{digest})
 	GetRecipe(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (POST /recipes/{digest}/availability)
+	GetRecipeAvailability(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (POST /recipes/{digest}/changes)
+	CreateRecipeChange(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (GET /recipes/{digest}/downloads)
+	ListRecipeDownloads(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (POST /recipes/{digest}/downloads)
+	StartRecipeDownload(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (POST /recipes/{digest}/downloads/plan)
+	PlanRecipeDownload(w http.ResponseWriter, r *http.Request, digest string)
+
+	// (POST /recipes/{digest}/downloads/{run_id}/resume)
+	ResumeRecipeDownload(w http.ResponseWriter, r *http.Request, digest string, runId string)
 
 	// (GET /transfers)
 	ListTransfers(w http.ResponseWriter, r *http.Request)
@@ -739,8 +2014,43 @@ func (_ Unimplemented) ListArtifactPlacements(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (POST /recipe-assistant/codex/login)
+func (_ Unimplemented) StartRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /recipe-assistant/codex/login/{id})
+func (_ Unimplemented) CancelRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-assistant/codex/login/{id})
+func (_ Unimplemented) GetRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-assistant/codex/logout)
+func (_ Unimplemented) LogoutRecipeAssistantCodex(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-assistant/codex/models)
+func (_ Unimplemented) ListRecipeAssistantCodexModels(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-assistant/codex/status)
+func (_ Unimplemented) GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-assistant/providers/{id}/test)
+func (_ Unimplemented) TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /recipe-drafts)
-func (_ Unimplemented) ListRecipeDrafts(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) ListRecipeDrafts(w http.ResponseWriter, r *http.Request, params ListRecipeDraftsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -750,7 +2060,7 @@ func (_ Unimplemented) CreateRecipeDraft(w http.ResponseWriter, r *http.Request)
 }
 
 // (DELETE /recipe-drafts/{id})
-func (_ Unimplemented) DeleteRecipeDraft(w http.ResponseWriter, r *http.Request, id ID) {
+func (_ Unimplemented) DeleteRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params DeleteRecipeDraftParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -764,13 +2074,73 @@ func (_ Unimplemented) UpdateRecipeDraft(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /recipe-drafts/{id}/comparison)
+func (_ Unimplemented) CompareRecipeDraft(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /recipe-drafts/{id}/context)
+func (_ Unimplemented) UpdateRecipeDraftContext(w http.ResponseWriter, r *http.Request, id ID, params UpdateRecipeDraftContextParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/diagnostics/dismiss)
+func (_ Unimplemented) DismissRecipeDraftDiagnostics(w http.ResponseWriter, r *http.Request, id ID, params DismissRecipeDraftDiagnosticsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-drafts/{id}/files)
+func (_ Unimplemented) GetRecipeDraftFile(w http.ResponseWriter, r *http.Request, id ID, params GetRecipeDraftFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /recipe-drafts/{id}/files)
+func (_ Unimplemented) UpdateRecipeDraftFile(w http.ResponseWriter, r *http.Request, id ID, params UpdateRecipeDraftFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/generate)
+func (_ Unimplemented) GenerateRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params GenerateRecipeDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/generation-preview)
+func (_ Unimplemented) PreviewRecipeGeneration(w http.ResponseWriter, r *http.Request, id ID, params PreviewRecipeGenerationParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/inspect)
+func (_ Unimplemented) InspectRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params InspectRecipeDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /recipe-drafts/{id}/install)
-func (_ Unimplemented) InstallRecipeDraft(w http.ResponseWriter, r *http.Request, id ID) {
+func (_ Unimplemented) InstallRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params InstallRecipeDraftParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // (POST /recipe-drafts/{id}/package)
-func (_ Unimplemented) PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID) {
+func (_ Unimplemented) PackageRecipeDraft(w http.ResponseWriter, r *http.Request, id ID, params PackageRecipeDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /recipe-drafts/{id}/proposal)
+func (_ Unimplemented) DiscardRecipeDraftProposal(w http.ResponseWriter, r *http.Request, id ID, params DiscardRecipeDraftProposalParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/proposal/accept)
+func (_ Unimplemented) AcceptRecipeDraftProposal(w http.ResponseWriter, r *http.Request, id ID, params AcceptRecipeDraftProposalParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-drafts/{id}/resolve)
+func (_ Unimplemented) ResolveRecipeDraftReferences(w http.ResponseWriter, r *http.Request, id ID, params ResolveRecipeDraftReferencesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-drafts/{id}/run-excerpt)
+func (_ Unimplemented) GetRecipeDraftRunExcerpt(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -784,13 +2154,18 @@ func (_ Unimplemented) GetRecipeRepository(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (POST /recipe-repositories/{id}/update)
-func (_ Unimplemented) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
+// (POST /recipe-repositories/{id}/check-updates)
+func (_ Unimplemented) CheckRecipeRepositoryUpdates(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (POST /recipe-repositories/{id}/update/plan)
-func (_ Unimplemented) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
+// (POST /recipe-repositories/{id}/replacements)
+func (_ Unimplemented) StartRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-repositories/{id}/replacements/plan)
+func (_ Unimplemented) PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -819,6 +2194,36 @@ func (_ Unimplemented) DeleteRecipe(w http.ResponseWriter, r *http.Request, dige
 
 // (GET /recipes/{digest})
 func (_ Unimplemented) GetRecipe(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipes/{digest}/availability)
+func (_ Unimplemented) GetRecipeAvailability(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipes/{digest}/changes)
+func (_ Unimplemented) CreateRecipeChange(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipes/{digest}/downloads)
+func (_ Unimplemented) ListRecipeDownloads(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipes/{digest}/downloads)
+func (_ Unimplemented) StartRecipeDownload(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipes/{digest}/downloads/plan)
+func (_ Unimplemented) PlanRecipeDownload(w http.ResponseWriter, r *http.Request, digest string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipes/{digest}/downloads/{run_id}/resume)
+func (_ Unimplemented) ResumeRecipeDownload(w http.ResponseWriter, r *http.Request, digest string, runId string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -924,11 +2329,177 @@ func (siw *ServerInterfaceWrapper) ListArtifactPlacements(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// StartRecipeAssistantCodexLogin operation middleware
+func (siw *ServerInterfaceWrapper) StartRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRecipeAssistantCodexLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelRecipeAssistantCodexLogin operation middleware
+func (siw *ServerInterfaceWrapper) CancelRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelRecipeAssistantCodexLogin(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeAssistantCodexLogin operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeAssistantCodexLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeAssistantCodexLogin(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LogoutRecipeAssistantCodex operation middleware
+func (siw *ServerInterfaceWrapper) LogoutRecipeAssistantCodex(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LogoutRecipeAssistantCodex(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecipeAssistantCodexModels operation middleware
+func (siw *ServerInterfaceWrapper) ListRecipeAssistantCodexModels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecipeAssistantCodexModels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeAssistantCodexStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeAssistantCodexStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestRecipeAssistantProvider operation middleware
+func (siw *ServerInterfaceWrapper) TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestRecipeAssistantProvider(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecipeDrafts operation middleware
 func (siw *ServerInterfaceWrapper) ListRecipeDrafts(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRecipeDraftsParams
+
+	// ------------- Optional query parameter "package_digest" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "package_digest", r.URL.Query(), &params.PackageDigest, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "package_digest"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "package_digest", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "repository_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "repository_id", r.URL.Query(), &params.RepositoryId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "repository_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repository_id", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListRecipeDrafts(w, r)
+		siw.Handler.ListRecipeDrafts(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -967,8 +2538,36 @@ func (siw *ServerInterfaceWrapper) DeleteRecipeDraft(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteRecipeDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteRecipeDraft(w, r, id)
+		siw.Handler.DeleteRecipeDraft(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1026,7 +2625,7 @@ func (siw *ServerInterfaceWrapper) UpdateRecipeDraft(w http.ResponseWriter, r *h
 
 	// ------------- Required header parameter "If-Match" -------------
 	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
-		var IfMatch string
+		var IfMatch IfMatch
 		n := len(valueList)
 		if n != 1 {
 			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
@@ -1058,6 +2657,424 @@ func (siw *ServerInterfaceWrapper) UpdateRecipeDraft(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// CompareRecipeDraft operation middleware
+func (siw *ServerInterfaceWrapper) CompareRecipeDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompareRecipeDraft(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRecipeDraftContext operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRecipeDraftContext(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateRecipeDraftContextParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRecipeDraftContext(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissRecipeDraftDiagnostics operation middleware
+func (siw *ServerInterfaceWrapper) DismissRecipeDraftDiagnostics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DismissRecipeDraftDiagnosticsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissRecipeDraftDiagnostics(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeDraftFile operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeDraftFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRecipeDraftFileParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "sha256" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "sha256", r.URL.Query(), &params.Sha256, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "sha256"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha256", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "source_commit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "source_commit", r.URL.Query(), &params.SourceCommit, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source_commit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source_commit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeDraftFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRecipeDraftFile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRecipeDraftFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateRecipeDraftFileParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRecipeDraftFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GenerateRecipeDraft operation middleware
+func (siw *ServerInterfaceWrapper) GenerateRecipeDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GenerateRecipeDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GenerateRecipeDraft(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewRecipeGeneration operation middleware
+func (siw *ServerInterfaceWrapper) PreviewRecipeGeneration(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PreviewRecipeGenerationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewRecipeGeneration(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InspectRecipeDraft operation middleware
+func (siw *ServerInterfaceWrapper) InspectRecipeDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InspectRecipeDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InspectRecipeDraft(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // InstallRecipeDraft operation middleware
 func (siw *ServerInterfaceWrapper) InstallRecipeDraft(w http.ResponseWriter, r *http.Request) {
 
@@ -1073,8 +3090,36 @@ func (siw *ServerInterfaceWrapper) InstallRecipeDraft(w http.ResponseWriter, r *
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InstallRecipeDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.InstallRecipeDraft(w, r, id)
+		siw.Handler.InstallRecipeDraft(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1099,8 +3144,224 @@ func (siw *ServerInterfaceWrapper) PackageRecipeDraft(w http.ResponseWriter, r *
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PackageRecipeDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PackageRecipeDraft(w, r, id)
+		siw.Handler.PackageRecipeDraft(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiscardRecipeDraftProposal operation middleware
+func (siw *ServerInterfaceWrapper) DiscardRecipeDraftProposal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DiscardRecipeDraftProposalParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiscardRecipeDraftProposal(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptRecipeDraftProposal operation middleware
+func (siw *ServerInterfaceWrapper) AcceptRecipeDraftProposal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AcceptRecipeDraftProposalParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptRecipeDraftProposal(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveRecipeDraftReferences operation middleware
+func (siw *ServerInterfaceWrapper) ResolveRecipeDraftReferences(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ResolveRecipeDraftReferencesParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = IfMatch
+
+	} else {
+		err := fmt.Errorf("Header parameter If-Match is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "If-Match", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveRecipeDraftReferences(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeDraftRunExcerpt operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeDraftRunExcerpt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeDraftRunExcerpt(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1150,14 +3411,14 @@ func (siw *ServerInterfaceWrapper) GetRecipeRepository(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// StartRecipeRepositoryUpdate operation middleware
-func (siw *ServerInterfaceWrapper) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+// CheckRecipeRepositoryUpdates operation middleware
+func (siw *ServerInterfaceWrapper) CheckRecipeRepositoryUpdates(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
 	// ------------- Path parameter "id" -------------
-	var id string
+	var id ID
 
 	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
@@ -1166,7 +3427,7 @@ func (siw *ServerInterfaceWrapper) StartRecipeRepositoryUpdate(w http.ResponseWr
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StartRecipeRepositoryUpdate(w, r, id)
+		siw.Handler.CheckRecipeRepositoryUpdates(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1176,8 +3437,8 @@ func (siw *ServerInterfaceWrapper) StartRecipeRepositoryUpdate(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
-// PlanRecipeRepositoryUpdate operation middleware
-func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+// StartRecipeRepositoryReplacement operation middleware
+func (siw *ServerInterfaceWrapper) StartRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -1192,7 +3453,33 @@ func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryUpdate(w http.ResponseWri
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PlanRecipeRepositoryUpdate(w, r, id)
+		siw.Handler.StartRecipeRepositoryReplacement(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanRecipeRepositoryReplacement operation middleware
+func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanRecipeRepositoryReplacement(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1315,6 +3602,171 @@ func (siw *ServerInterfaceWrapper) GetRecipe(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRecipe(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecipeAvailability operation middleware
+func (siw *ServerInterfaceWrapper) GetRecipeAvailability(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecipeAvailability(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRecipeChange operation middleware
+func (siw *ServerInterfaceWrapper) CreateRecipeChange(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRecipeChange(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecipeDownloads operation middleware
+func (siw *ServerInterfaceWrapper) ListRecipeDownloads(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecipeDownloads(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartRecipeDownload operation middleware
+func (siw *ServerInterfaceWrapper) StartRecipeDownload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRecipeDownload(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanRecipeDownload operation middleware
+func (siw *ServerInterfaceWrapper) PlanRecipeDownload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanRecipeDownload(w, r, digest)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeRecipeDownload operation middleware
+func (siw *ServerInterfaceWrapper) ResumeRecipeDownload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "digest" -------------
+	var digest string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "digest", chi.URLParam(r, "digest"), &digest, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "run_id" -------------
+	var runId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "run_id", chi.URLParam(r, "run_id"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeRecipeDownload(w, r, digest, runId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1524,6 +3976,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/artifacts/{id}/placements", wrapper.ListArtifactPlacements)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-assistant/codex/login", wrapper.StartRecipeAssistantCodexLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/recipe-assistant/codex/login/{id}", wrapper.CancelRecipeAssistantCodexLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-assistant/codex/login/{id}", wrapper.GetRecipeAssistantCodexLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-assistant/codex/logout", wrapper.LogoutRecipeAssistantCodex)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-assistant/codex/models", wrapper.ListRecipeAssistantCodexModels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-assistant/codex/status", wrapper.GetRecipeAssistantCodexStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-assistant/providers/{id}/test", wrapper.TestRecipeAssistantProvider)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipe-drafts", wrapper.ListRecipeDrafts)
 	})
 	r.Group(func(r chi.Router) {
@@ -1539,10 +4012,46 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/recipe-drafts/{id}", wrapper.UpdateRecipeDraft)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-drafts/{id}/comparison", wrapper.CompareRecipeDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/recipe-drafts/{id}/context", wrapper.UpdateRecipeDraftContext)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/diagnostics/dismiss", wrapper.DismissRecipeDraftDiagnostics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-drafts/{id}/files", wrapper.GetRecipeDraftFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/recipe-drafts/{id}/files", wrapper.UpdateRecipeDraftFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/generate", wrapper.GenerateRecipeDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/generation-preview", wrapper.PreviewRecipeGeneration)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/inspect", wrapper.InspectRecipeDraft)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipe-drafts/{id}/install", wrapper.InstallRecipeDraft)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipe-drafts/{id}/package", wrapper.PackageRecipeDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/recipe-drafts/{id}/proposal", wrapper.DiscardRecipeDraftProposal)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/proposal/accept", wrapper.AcceptRecipeDraftProposal)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-drafts/{id}/resolve", wrapper.ResolveRecipeDraftReferences)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-drafts/{id}/run-excerpt", wrapper.GetRecipeDraftRunExcerpt)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipe-repositories", wrapper.ListRecipeRepositories)
@@ -1551,10 +4060,13 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/recipe-repositories/{id}", wrapper.GetRecipeRepository)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/recipe-repositories/{id}/update", wrapper.StartRecipeRepositoryUpdate)
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/check-updates", wrapper.CheckRecipeRepositoryUpdates)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/recipe-repositories/{id}/update/plan", wrapper.PlanRecipeRepositoryUpdate)
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/replacements", wrapper.StartRecipeRepositoryReplacement)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/replacements/plan", wrapper.PlanRecipeRepositoryReplacement)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipes", wrapper.ListRecipes)
@@ -1564,6 +4076,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipes/{digest}", wrapper.GetRecipe)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/availability", wrapper.GetRecipeAvailability)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/changes", wrapper.CreateRecipeChange)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipes/{digest}/downloads", wrapper.ListRecipeDownloads)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/downloads", wrapper.StartRecipeDownload)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/downloads/{run_id}/resume", wrapper.ResumeRecipeDownload)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipes/{digest}/downloads/plan", wrapper.PlanRecipeDownload)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipes/check-updates", wrapper.CheckRecipeUpdates)

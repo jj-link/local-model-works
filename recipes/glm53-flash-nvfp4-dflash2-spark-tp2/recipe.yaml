@@ -168,8 +168,6 @@ workloads:
       timeoutSeconds: 5
       failureThreshold: 30
     resources:
-      cpu: 16
-      memoryBytes: 124554051584
       shmBytes: 34359738368
       tmpfsBytes: 8589934592
       pids: 8192

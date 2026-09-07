@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { Command as CommandIcon, FileText, LogOut, Menu } from "lucide-react";
 import { logout, type Session } from "~/lib/api/session";
-import type { Recipe } from "~/lib/api";
 import { useModules, useSystemInfo } from "~/lib/queries";
 import { shortId } from "~/lib/format";
 import { TooltipProvider } from "~/components/ui/tooltip";
@@ -24,7 +23,6 @@ import {
 import { Toaster } from "~/components/ui/sonner";
 import { CommandPalette, type DialogId } from "~/components/command-palette";
 import { EnrollDialog } from "~/components/dialogs/enroll-dialog";
-import { ImportRecipeDialog } from "~/components/dialogs/import-recipe-dialog";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { BenchmarkDialog } from "~/components/dialogs/benchmark-dialog";
 import {
@@ -42,11 +40,11 @@ import {
 export function AppShell({ session }: { session: Session | null }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogId | null>(null);
-  const [importedRecipe, setImportedRecipe] = useState<Recipe>();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { data: modules } = useModules();
   const { data: sys } = useSystemInfo();
   const pathname = useLocation().pathname;
+  const navigate = useNavigate();
 
   const enabledModuleIds = useMemo(
     () => new Set((modules ?? []).map((module) => module.id)),
@@ -79,7 +77,6 @@ export function AppShell({ session }: { session: Session | null }) {
 
   const closeDialog = () => setDialog(null);
   const openDialog = useCallback((id: DialogId) => {
-    setImportedRecipe(undefined);
     setDialog(id);
   }, []);
 
@@ -245,7 +242,7 @@ export function AppShell({ session }: { session: Session | null }) {
           onOpenChange={setPaletteOpen}
           actions={{
             enroll: () => openDialog("enroll"),
-            "import-recipe": () => openDialog("import-recipe"),
+            "add-recipe": () => navigate("/library/recipes/new"),
             "plan-deployment": () => openDialog("plan-deployment"),
             benchmark: () => openDialog("benchmark"),
           }}
@@ -257,23 +254,10 @@ export function AppShell({ session }: { session: Session | null }) {
         />
 
         {dialog === "enroll" ? <EnrollDialog open onOpenChange={(open) => !open && closeDialog()} /> : null}
-        {dialog === "import-recipe" ? (
-          <ImportRecipeDialog
-            open
-            readyRecipe={importedRecipe}
-            onOpenChange={(open) => !open && closeDialog()}
-            onPlan={(recipe) => {
-              setImportedRecipe(recipe);
-              setDialog("plan-deployment");
-            }}
-          />
-        ) : null}
         {dialog === "plan-deployment" ? (
           <PlanDeploymentDialog
             open
-            initialRecipeDigest={importedRecipe?.digest}
             onOpenChange={(open) => !open && closeDialog()}
-            onBack={importedRecipe ? () => setDialog("import-recipe") : undefined}
           />
         ) : null}
         {dialog === "benchmark" ? (

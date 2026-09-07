@@ -40,9 +40,18 @@ func depGet(t *testing.T, s *Server, depID string) deploy.Deployment {
 // waitDep blocks until the deployment's observed state equals want.
 func waitDep(t *testing.T, s *Server, depID, want string) deploy.Deployment {
 	t.Helper()
-	Deadline(t, 30*time.Second, func() bool {
-		return depState(s, depID) == want
-	}, fmt.Sprintf("deployment %s observed state %q", depID, want))
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		deployment := depGet(t, s, depID)
+		if deployment.ObservedState == want { break }
+		if deployment.ObservedState == "failed" || time.Now().After(deadline) {
+			for _, diagnostic := range deployment.Diagnostics {
+				t.Logf("deployment diagnostic: %s: %s", diagnostic.Code, diagnostic.Message)
+			}
+			t.Fatalf("deployment %s state=%s; wanted %s", depID, deployment.ObservedState, want)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	return depGet(t, s, depID)
 }
 
@@ -57,7 +66,15 @@ func install(t *testing.T, s *Server, r FixtureRecipe) string {
 // operator-pinned rank->node placements.
 func createDep(t *testing.T, s *Server, digest string, ov ...deploy.PlacementOverride) deploy.Deployment {
 	t.Helper()
-	d, err := s.Srv.Deployments().Create(s.Ctx, deploy.CreateRequest{RecipeDigest: digest, Placements: ov})
+	plan, err := s.Srv.Deployments().Plan(s.Ctx, deploy.PlanRequest{
+		RecipeDigest: digest, Placements: ov, AcquisitionPolicy: deploy.AcquisitionDownloadMissing,
+	})
+	if err != nil {
+		t.Fatalf("review deployment (%s): %v", digest, err)
+	}
+	d, err := s.Srv.Deployments().Create(s.Ctx, deploy.CreateRequest{
+		RecipeDigest: digest, Placements: ov, AcquisitionPolicy: deploy.AcquisitionDownloadMissing, PlanDigest: plan.Digest,
+	})
 	if err != nil {
 		t.Fatalf("create deployment (%s): %v", digest, err)
 	}

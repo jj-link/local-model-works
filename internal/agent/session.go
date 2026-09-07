@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"path/filepath"
+	goruntime "runtime"
 	"time"
 
 	"connectrpc.com/connect"
 
+	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/hardware"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
@@ -28,6 +31,8 @@ const heartbeatPeriod = 5 * time.Second
 // commands, log requests, transfers, reconciliation, and certificate
 // rotation.
 func (a *Agent) session(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	client := a.sessionClient(ctx)
 	if client == nil {
 		return errors.New("no controller transport")
@@ -87,6 +92,8 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.handleTransfer(ctx, b.TransferCommand)
 		case *agentv1.ServerMessage_ArtifactCommand:
 			go a.handleArtifact(ctx, b.ArtifactCommand)
+		case *agentv1.ServerMessage_DownloadCommand:
+			go a.handleDownload(ctx, b.DownloadCommand)
 		case *agentv1.ServerMessage_ExtensionCommand:
 			go a.handleExtension(ctx, b.ExtensionCommand)
 		case *agentv1.ServerMessage_ReconcileRequest:
@@ -196,7 +203,13 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 	for _, r := range a.cfg.CacheRoots {
 		inv.CacheRoots = append(inv.CacheRoots, scanCacheRoot(ctx, r))
 	}
-	return toProtoInventory(inv)
+	out := toProtoInventory(inv)
+	out.ProtocolFeatures = []string{downloads.ProtocolFeature}
+	out.DownloadRoots = &agentv1.DownloadRoots{RecipeRoot: filepath.Join(a.cfg.StateRoot, "recipes"), Platform: goruntime.GOOS + "/" + goruntime.GOARCH}
+	if storage, err := a.rt.ImageStorage(ctx); err == nil {
+		out.DownloadRoots.ImageRoot = storage.Root
+	}
+	return out
 }
 
 func interfaceByName(list []hardware.NetworkInterface, name string) bool {

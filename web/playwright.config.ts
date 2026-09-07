@@ -1,8 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Non-gating smoke scaffold: exercises the page shell with the dev server.
-// The spec tolerates the Go backend being up or down (only the shell and
-// title are asserted).
+// Browser behavior checks exercise the actual UI with isolated API fixtures.
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30000,

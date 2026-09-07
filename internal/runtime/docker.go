@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -21,14 +22,13 @@ import (
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"github.com/jj-link/local-model-works/internal/downloads"
 )
 
 // dockerRuntime implements Runtime over the Docker Engine API.
 type dockerRuntime struct {
 	cli *client.Client
 }
-
-const HostPreparationImage = "docker.io/library/busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
 
 // NewDocker returns a runtime bound to the Docker socket at socketPath.
 func NewDocker(socketPath string) (Runtime, error) {
@@ -51,7 +51,7 @@ func (r *dockerRuntime) Ping(ctx context.Context) (string, error) {
 }
 
 func (r *dockerRuntime) Pull(ctx context.Context, spec *PullSpec) error {
-	opts := image.PullOptions{}
+	opts := image.PullOptions{Platform: spec.Platform}
 	if spec.Auth != nil {
 		enc, err := encodeRegistryAuth(spec.Auth)
 		if err != nil {
@@ -81,11 +81,119 @@ func (r *dockerRuntime) Pull(ctx context.Context, spec *PullSpec) error {
 		if msg.ErrorMessage != "" {
 			return fmt.Errorf("image pull %s: %s", spec.Reference, msg.ErrorMessage)
 		}
+		if spec.Progress != nil {
+			p := ImagePullProgress{Layer: msg.ID, Phase: msg.Status}
+			if msg.Progress != nil {
+				p.BytesDone, p.BytesTotal = msg.Progress.Current, msg.Progress.Total
+			}
+			spec.Progress(p)
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("image pull %s: %w", spec.Reference, err)
 	}
 	return nil
+}
+
+func (r *dockerRuntime) InspectImage(ctx context.Context, reference, platform string) (*ImageInfo, error) {
+	if !IsContentAddressedImage(reference) {
+		return nil, fmt.Errorf("image.reference_unpinned")
+	}
+	info, err := r.cli.ImageInspect(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	actualPlatform := downloads.CanonicalImagePlatform(info.Os, info.Architecture, info.Variant)
+	if platform != "" && actualPlatform != platform {
+		return nil, fmt.Errorf("image.platform_mismatch: have %s, need %s", actualPlatform, platform)
+	}
+	digest := reference
+	if _, pinned, ok := strings.Cut(reference, "@"); ok {
+		digest = pinned
+		found := false
+		for _, repoDigest := range info.RepoDigests {
+			if _, actual, ok := strings.Cut(repoDigest, "@"); ok && actual == pinned && imageRepository(repoDigest) == imageRepository(reference) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("image.digest_mismatch")
+		}
+	} else if info.ID != digest {
+		return nil, fmt.Errorf("image.digest_mismatch")
+	}
+	result := &ImageInfo{Reference: reference, Digest: digest, Platform: actualPlatform, SizeBytes: info.Size}
+	if info.Descriptor != nil {
+		if info.Descriptor.Digest.String() != digest {
+			return nil, fmt.Errorf("image.descriptor_mismatch")
+		}
+		switch info.Descriptor.MediaType {
+		case "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json":
+			result.IndexDigest = digest
+			result.ManifestDigest = digest
+		case "application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json":
+			detailed, err := r.cli.ImageInspect(ctx, reference, client.ImageInspectWithManifests(true))
+			if err != nil {
+				return nil, fmt.Errorf("image.manifest_inspection_unavailable: %w", err)
+			}
+			for _, manifest := range detailed.Manifests {
+				if !manifest.Available || manifest.Kind != image.ManifestKindImage || manifest.ImageData == nil {
+					continue
+				}
+				p := manifest.ImageData.Platform
+				selected := downloads.CanonicalImagePlatform(p.OS, p.Architecture, p.Variant)
+				if selected != actualPlatform {
+					continue
+				}
+				if result.ManifestDigest != "" && result.ManifestDigest != manifest.ID {
+					return nil, fmt.Errorf("image.platform_ambiguous")
+				}
+				if !IsSHA256Digest(manifest.ID) || manifest.Descriptor.Digest.String() != manifest.ID {
+					return nil, fmt.Errorf("image.manifest_digest_invalid")
+				}
+				result.IndexDigest = digest
+				result.ManifestDigest = manifest.ID
+				result.SizeBytes = manifest.Size.Total
+			}
+			if result.ManifestDigest == "" {
+				return nil, fmt.Errorf("image.platform_content_missing")
+			}
+		}
+	}
+	return result, nil
+}
+
+func imageRepository(reference string) string {
+	name, _, _ := strings.Cut(reference, "@")
+	if colon := strings.LastIndex(name, ":"); colon > strings.LastIndex(name, "/") {
+		name = name[:colon]
+	}
+	first, _, hasSlash := strings.Cut(name, "/")
+	if !hasSlash {
+		return "docker.io/library/" + name
+	}
+	if !strings.ContainsAny(first, ".:") && first != "localhost" {
+		return "docker.io/" + name
+	}
+	if first == "index.docker.io" || first == "registry-1.docker.io" {
+		return "docker.io" + name[len(first):]
+	}
+	return name
+}
+
+func (r *dockerRuntime) ImageStorage(ctx context.Context) (*ImageStorageInfo, error) {
+	info, err := r.cli.Info(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if info.DockerRootDir == "" {
+		return nil, fmt.Errorf("image.storage_root_unavailable")
+	}
+	if stat, err := os.Stat(info.DockerRootDir); err != nil || !stat.IsDir() {
+		return nil, fmt.Errorf("image.storage_root_unavailable")
+	}
+	return InspectStorage(info.DockerRootDir)
 }
 
 // PrepareHost uses a controller-owned, digest-pinned helper with no network to
@@ -103,7 +211,17 @@ func (r *dockerRuntime) PrepareHost(ctx context.Context, spec *ContainerSpec) er
 	if err != nil {
 		return err
 	}
-	if err := r.Pull(ctx, &PullSpec{Reference: HostPreparationImage}); err != nil {
+	helperImage := downloads.HostPreparationImage
+	for _, resource := range spec.AcquisitionResources {
+		if resource.Source.Reference+"@"+resource.IndexDigest == downloads.HostPreparationImage {
+			helperImage = resource.Source.Reference + "@" + resource.ManifestDigest
+		}
+	}
+	if spec.AcquisitionPolicy == "require-existing" {
+		if _, err := r.InspectImage(ctx, helperImage, spec.ImagePlatform); err != nil {
+			return fmt.Errorf("host.prepare_helper_recheck_required: %w", err)
+		}
+	} else if err := r.Pull(ctx, &PullSpec{Reference: helperImage, Platform: spec.ImagePlatform}); err != nil {
 		return fmt.Errorf("host.prepare_helper_pull: %w", err)
 	}
 
@@ -128,7 +246,7 @@ func (r *dockerRuntime) PrepareHost(ctx context.Context, spec *ContainerSpec) er
 
 	created, err := r.cli.ContainerCreate(
 		ctx,
-		&container.Config{Image: HostPreparationImage, Cmd: []string{"sh", "-ec", script}, Labels: labels},
+		&container.Config{Image: helperImage, Cmd: []string{"sh", "-ec", script}, Labels: labels},
 		&container.HostConfig{
 			Privileged:     true,
 			ReadonlyRootfs: true,
@@ -217,8 +335,10 @@ func (r *dockerRuntime) containerOutput(ctx context.Context, id string) string {
 // in ImagePullOptions.RegistryAuth.
 func encodeRegistryAuth(auth *Auth) (string, error) {
 	return registry.EncodeAuthConfig(registry.AuthConfig{
-		Username: auth.Username,
-		Password: auth.Password,
+		Username:      auth.Username,
+		Password:      auth.Password,
+		RegistryToken: auth.RegistryToken,
+		ServerAddress: auth.ServerAddress,
 	})
 }
 
@@ -257,9 +377,6 @@ func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string
 	}
 	if spec.CPU > 0 {
 		hostCfg.Resources.NanoCPUs = int64(spec.CPU * 1e9)
-	}
-	if spec.CPUSetCpus != "" {
-		hostCfg.Resources.CpusetCpus = spec.CPUSetCpus
 	}
 	if spec.PidsLimit > 0 {
 		lim := int64(spec.PidsLimit)
@@ -419,6 +536,29 @@ func (r *dockerRuntime) LogsStreams(ctx context.Context, id string) (stdout, std
 		_, _ = stdcopy.StdCopy(pwOut, pwErr, rc)
 	}()
 	return prOut, prErr, nil
+}
+
+// IsSHA256Digest reports whether value is a complete lowercase SHA-256 digest.
+func IsSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, c := range value[len("sha256:"):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// IsContentAddressedImage reports whether ref is a digest-pinned registry
+// reference or a bare image ID digest.
+func IsContentAddressedImage(ref string) bool {
+	if IsSHA256Digest(ref) {
+		return true
+	}
+	name, digest, ok := strings.Cut(ref, "@")
+	return ok && name != "" && IsSHA256Digest(digest)
 }
 
 // imageRef resolves the pull/create reference to a digest-qualified form

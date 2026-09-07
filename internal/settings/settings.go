@@ -107,10 +107,11 @@ func (r *Registry) Set(ctx context.Context, moduleID string, value map[string]an
 		}
 	}
 	cur, err := r.q.GetModuleSettings(ctx, moduleID)
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
+	missing := errors.Is(err, sql.ErrNoRows)
+	if err != nil && !missing {
+		return "", err
+	}
+	if missing {
 		cur = db.ModuleSetting{Module: moduleID, Settings: "{}", Version: "0"}
 	}
 	if cur.Version != ifMatch {
@@ -124,9 +125,20 @@ func (r *Registry) Set(ctx context.Context, moduleID string, value map[string]an
 	if err != nil {
 		return "", err
 	}
-	if err := r.q.PutModuleSettings(ctx, db.PutModuleSettingsParams{
-		Module: moduleID, Settings: string(enc), Version: version,
-	}); err != nil {
+	if missing {
+		err = r.q.InsertModuleSettings(ctx, db.InsertModuleSettingsParams{
+			Module: moduleID, Settings: string(enc), Version: version,
+		})
+	} else {
+		var rows int64
+		rows, err = r.q.UpdateModuleSettings(ctx, db.UpdateModuleSettingsParams{
+			Settings: string(enc), Version: version, Module: moduleID, PreviousVersion: ifMatch,
+		})
+		if err == nil && rows == 0 {
+			err = fmt.Errorf("%w: settings changed during update", ErrStale)
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	return version, nil

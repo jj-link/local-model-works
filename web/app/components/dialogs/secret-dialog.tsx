@@ -109,6 +109,7 @@ export function SecretDialog({
                 <SelectItem value="huggingface">huggingface</SelectItem>
                 <SelectItem value="github">github</SelectItem>
                 <SelectItem value="registry">registry</SelectItem>
+                <SelectItem value="recipe-assistant">recipe assistant</SelectItem>
               </SelectContent>
             </Select>
           </div>

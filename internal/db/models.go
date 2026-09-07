@@ -8,6 +8,31 @@ import (
 	"database/sql"
 )
 
+type AcquisitionDestinationLock struct {
+	NodeID          string         `json:"node_id"`
+	Destination     string         `json:"destination"`
+	Identity        string         `json:"identity"`
+	Platform        string         `json:"platform"`
+	OwnerKind       string         `json:"owner_kind"`
+	OwnerID         string         `json:"owner_id"`
+	RunID           sql.NullString `json:"run_id"`
+	ItemID          sql.NullString `json:"item_id"`
+	State           string         `json:"state"`
+	QuiescedAt      sql.NullString `json:"quiesced_at"`
+	QuiescenceProof sql.NullString `json:"quiescence_proof"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
+}
+
+type ApiToken struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	TokenHash  string         `json:"token_hash"`
+	ScopesJson string         `json:"scopes_json"`
+	CreatedAt  string         `json:"created_at"`
+	RevokedAt  sql.NullString `json:"revoked_at"`
+}
+
 type Artifact struct {
 	ID              string         `json:"id"`
 	Kind            string         `json:"kind"`
@@ -52,6 +77,42 @@ type BenchmarkResult struct {
 	CreatedAt        string         `json:"created_at"`
 }
 
+type BenchmarkRunResult struct {
+	RunID                    string          `json:"run_id"`
+	BenchmarkID              string          `json:"benchmark_id"`
+	BenchmarkVersion         string          `json:"benchmark_version"`
+	Harness                  string          `json:"harness"`
+	GenerationDeploymentID   sql.NullString  `json:"generation_deployment_id"`
+	VerificationDeploymentID sql.NullString  `json:"verification_deployment_id"`
+	ExecutionNodeID          sql.NullString  `json:"execution_node_id"`
+	TaskCount                int64           `json:"task_count"`
+	CandidateCount           int64           `json:"candidate_count"`
+	PassedCount              int64           `json:"passed_count"`
+	PassAt1                  sql.NullFloat64 `json:"pass_at_1"`
+	VerifierPassRate         sql.NullFloat64 `json:"verifier_pass_rate"`
+	OraclePassRate           sql.NullFloat64 `json:"oracle_pass_rate"`
+	PromptTokens             int64           `json:"prompt_tokens"`
+	CompletionTokens         int64           `json:"completion_tokens"`
+	TotalTokens              int64           `json:"total_tokens"`
+	WallSeconds              float64         `json:"wall_seconds"`
+	SummaryArtifactID        sql.NullString  `json:"summary_artifact_id"`
+	BundleArtifactID         sql.NullString  `json:"bundle_artifact_id"`
+	MetricsJson              string          `json:"metrics_json"`
+	CreatedAt                string          `json:"created_at"`
+}
+
+type BenchmarkTrialResult struct {
+	RunID            string          `json:"run_id"`
+	TaskID           string          `json:"task_id"`
+	CandidateIndex   int64           `json:"candidate_index"`
+	OfficialPass     int64           `json:"official_pass"`
+	VerifierSelected int64           `json:"verifier_selected"`
+	VerifierScore    sql.NullFloat64 `json:"verifier_score"`
+	TrajectoryPath   string          `json:"trajectory_path"`
+	MetricsJson      string          `json:"metrics_json"`
+	CreatedAt        string          `json:"created_at"`
+}
+
 type BrowserLoginToken struct {
 	TokenHash string `json:"token_hash"`
 	Username  string `json:"username"`
@@ -71,11 +132,26 @@ type Deployment struct {
 	ModelCapabilities sql.NullString `json:"model_capabilities"`
 	Diagnostics       string         `json:"diagnostics"`
 	RunID             sql.NullString `json:"run_id"`
-	CreatedAt         string         `json:"created_at"`
-	UpdatedAt         string         `json:"updated_at"`
 	Dispatch          string         `json:"dispatch"`
 	EndpointModel     sql.NullString `json:"endpoint_model"`
 	EndpointPath      sql.NullString `json:"endpoint_path"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
+}
+
+type DownloadItem struct {
+	ID                string         `json:"id"`
+	RunID             string         `json:"run_id"`
+	PredecessorItemID sql.NullString `json:"predecessor_item_id"`
+	ResourceKey       string         `json:"resource_key"`
+	NodeID            string         `json:"node_id"`
+	ResourceJson      string         `json:"resource_json"`
+	State             string         `json:"state"`
+	CommandID         sql.NullString `json:"command_id"`
+	TransferID        sql.NullString `json:"transfer_id"`
+	CheckpointJson    string         `json:"checkpoint_json"`
+	ErrorJson         sql.NullString `json:"error_json"`
+	UpdatedAt         string         `json:"updated_at"`
 }
 
 type EnrollmentToken struct {
@@ -177,20 +253,28 @@ type Recipe struct {
 }
 
 type RecipeDraft struct {
-	ID             string         `json:"id"`
-	Version        int64          `json:"version"`
-	State          string         `json:"state"`
-	Source         string         `json:"source"`
-	ResolvedCommit sql.NullString `json:"resolved_commit"`
-	ResolvedTree   sql.NullString `json:"resolved_tree"`
-	Manifest       string         `json:"manifest"`
-	Candidates     string         `json:"candidates"`
-	SelectedAssets string         `json:"selected_assets"`
-	Diagnostics    string         `json:"diagnostics"`
-	PackageDigest  sql.NullString `json:"package_digest"`
-	RunID          sql.NullString `json:"run_id"`
-	CreatedAt      string         `json:"created_at"`
-	UpdatedAt      string         `json:"updated_at"`
+	ID                   string         `json:"id"`
+	Version              int64          `json:"version"`
+	State                string         `json:"state"`
+	Source               string         `json:"source"`
+	ResolvedCommit       sql.NullString `json:"resolved_commit"`
+	ResolvedTree         sql.NullString `json:"resolved_tree"`
+	Manifest             string         `json:"manifest"`
+	Candidates           string         `json:"candidates"`
+	SelectedAssets       string         `json:"selected_assets"`
+	Diagnostics          string         `json:"diagnostics"`
+	PackageDigest        sql.NullString `json:"package_digest"`
+	RunID                sql.NullString `json:"run_id"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
+	Operation            sql.NullString `json:"operation"`
+	Proposal             sql.NullString `json:"proposal"`
+	ContextSelection     string         `json:"context_selection"`
+	Questions            string         `json:"questions"`
+	AcknowledgedWarnings string         `json:"acknowledged_warnings"`
+	ResolvedReferences   string         `json:"resolved_references"`
+	ParentDraftID        sql.NullString `json:"parent_draft_id"`
+	ChangeContext        sql.NullString `json:"change_context"`
 }
 
 type RecipeRepository struct {
@@ -204,6 +288,7 @@ type RecipeRepository struct {
 	HeadCheckedAt      sql.NullString `json:"head_checked_at"`
 	CreatedAt          string         `json:"created_at"`
 	UpdatedAt          string         `json:"updated_at"`
+	HeadCheckError     string         `json:"head_check_error"`
 }
 
 type RecipeRepositoryVersion struct {

@@ -135,7 +135,7 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, "pull requires a container spec", "", "")
 			return
 		}
-		if err := a.rt.Pull(ctx, &runtime.PullSpec{Reference: runtime.ImageRef(spec)}); err != nil {
+		if err := a.ensureWorkloadImage(ctx, spec); err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
@@ -146,6 +146,10 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			return
 		}
 		if err := validateSpecIdentity(spec, deploymentID, runID, wc.GetRank()); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
+		if err := a.checkExistingResources(ctx, spec); err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
@@ -177,12 +181,27 @@ func (a *Agent) handleWorkload(ctx context.Context, wc *agentv1.WorkloadCommand)
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
+		if err := a.checkExistingResources(ctx, spec); err != nil {
+			a.result(cmdID, false, 0, err.Error(), "", "")
+			return
+		}
 		if err := a.rt.PrepareHost(ctx, spec); err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")
 			return
 		}
 		a.result(cmdID, true, 0, "", "", "")
 	case agentv1.WorkloadOp_WORKLOAD_OP_START:
+		if spec == nil {
+			w.mu.Lock()
+			spec = w.specs[name]
+			w.mu.Unlock()
+		}
+		if spec != nil {
+			if err := a.checkExistingResources(ctx, spec); err != nil {
+				a.result(cmdID, false, 0, err.Error(), "", "")
+				return
+			}
+		}
 		id, err := a.resolve(name, deploymentID, runID, wc.GetRank())
 		if err != nil {
 			a.result(cmdID, false, 0, err.Error(), "", "")

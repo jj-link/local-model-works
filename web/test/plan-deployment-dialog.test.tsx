@@ -4,7 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
 import { server } from "../msw/server";
@@ -140,172 +140,129 @@ function installHandlers(
   );
 }
 
+beforeEach(() => sessionStorage.clear());
+
 describe("PlanDeploymentDialog", () => {
-  it("plans and launches a profile-less multi-node recipe", async () => {
+  it("requires explicit ranked targets and a reviewed plan before starting without implicit downloads", async () => {
+    const planned: Record<string, unknown>[] = [];
     let createBody: Record<string, unknown> | undefined;
-    installHandlers(undefined, (body) => { createBody = body; });
+    installHandlers((body) => { planned.push(body); return plan; }, (body) => { createBody = body; });
     const user = userEvent.setup();
     renderDialog();
-
     const recipeSelect = await screen.findByLabelText("Recipe");
-    await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
-    await user.selectOptions(recipeSelect, D);
-
-    expect(await screen.findByLabelText("Rank 0 node")).toBeInTheDocument();
-    expect(screen.getByLabelText("Rank 1 node")).toBeInTheDocument();
-    expect(screen.queryByText(/^Settings/)).not.toBeInTheDocument();
-    expect(screen.getByText("Select target nodes")).toBeInTheDocument();
-
-    await user.selectOptions(screen.getByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
-
-    expect(await screen.findByText("Installed")).toBeInTheDocument();
-    const launch = await screen.findByRole("button", { name: "Launch" });
-    await waitFor(() => expect(launch).toBeEnabled());
-    await user.click(launch);
-
-    await waitFor(() => expect(createBody).toMatchObject({
-      recipe_digest: D,
-      parameters: {},
-      variants: {},
-      plan_digest: plan.plan_digest,
-      placements: [
-        { rank: 0, node_id: "n-spark2" },
-        { rank: 1, node_id: "n-spark3" },
-      ],
-    }));
-  });
-
-  it("holds planning until every rank has an explicit node", async () => {
-    const planBodies: Record<string, unknown>[] = [];
-    installHandlers((body) => {
-      planBodies.push(body);
-      return plan;
-    });
-    const user = userEvent.setup();
-    renderDialog();
-
-    const recipeSelect = await screen.findByLabelText("Recipe");
-    await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
-    await user.selectOptions(recipeSelect, D);
-
-    const rankZero = await screen.findByLabelText("Rank 0 node");
-    await user.selectOptions(rankZero, "n-spark3");
-    await waitFor(() =>
-      expect((screen.getByLabelText("Rank 1 node") as HTMLSelectElement).options).toHaveLength(4),
-    );
-    expect(planBodies).toHaveLength(0);
-
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
-    await waitFor(() => expect(planBodies).toHaveLength(1));
-    expect(planBodies[0].placements).toEqual([
-      { rank: 0, node_id: "n-spark3" },
-      { rank: 1, node_id: "n-spark2" },
-    ]);
-  });
-
-  it("shows the blocking diagnostic without exposing plan internals", async () => {
-    installHandlers(() => ({
-      ...plan,
-      placements: [],
-      ready: false,
-      diagnostics: [{
-        code: "placement.no_capacity",
-        severity: "error",
-        message: "no eligible node for rank 0",
-      }],
-    }));
-    const user = userEvent.setup();
-    renderDialog();
-
-    const recipeSelect = await screen.findByLabelText("Recipe");
-    await waitFor(() => expect((recipeSelect as HTMLSelectElement).options).toHaveLength(2));
+    await screen.findByRole("option", { name: new RegExp(recipe.name) });
     await user.selectOptions(recipeSelect, D);
     await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(await screen.findByLabelText("Rank 1 node"), "n-spark3");
-
-    expect(await screen.findByText("no eligible node for rank 0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
-    expect(screen.queryByText(/images|storage|risk|transfer/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check run plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+    expect(planned).toEqual([]);
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Run on device" }));
+    await waitFor(() => expect(createBody).toMatchObject({
+      recipe_digest: D, acquisition_policy: "require-existing", plan_digest: plan.plan_digest,
+      placements: [{ rank: 0, node_id: "n-spark2" }, { rank: 1, node_id: "n-spark3" }],
+    }));
   });
 
-  it("shows cache-root repair guidance for a blocked launch", async () => {
-    installHandlers(() => ({
-      ...plan,
-      ready: false,
-      storage: [{
-        node_id: "n-spark2",
-        cache_root: "/var/lib/local-model-works/cache",
-        required_bytes: 1024,
-        known: true,
-        sufficient: true,
-      }],
-      diagnostics: [{
-        code: "storage.cache_root_readonly",
-        severity: "error",
-        message: "cache root is read-only",
-        resource: "node:n-spark2",
-      }],
+  it("invalidates reviewed or in-flight plans when targets or acquisition consent change", async () => {
+    installHandlers();
+    let release: (() => void) | undefined;
+    const planned: Record<string, unknown>[] = [];
+    server.use(http.post("*/api/v1/deployments/plan", async ({ request }) => {
+      planned.push(await request.json() as Record<string, unknown>);
+      if (planned.length === 1) await new Promise<void>((resolve) => { release = resolve; });
+      return HttpResponse.json(plan);
     }));
     const user = userEvent.setup();
     renderDialog(true, D);
-
     await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(await screen.findByLabelText("Rank 1 node"), "n-spark3");
-
-    expect(await screen.findByText("cache root is read-only")).toBeInTheDocument();
-    expect(screen.getByText("ReadWritePaths=/var/lib/local-model-works/cache")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Node details" })).toHaveAttribute(
-      "href",
-      "/fleet/nodes/n-spark2",
-    );
-    expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.selectOptions(screen.getByLabelText("Rank 0 node"), "n-spark3");
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
+    release!();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check run plan" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
+    await user.click(screen.getByRole("radio", { name: /Download missing files, then run/ }));
+    expect(screen.getByRole("button", { name: "Download and run" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Download and run" })).toBeEnabled());
+    expect(planned.at(-1)?.acquisition_policy).toBe("download-missing");
+    expect(planned).toHaveLength(3);
   });
 
-  it("uses the caller recipe without a chooser and resets overrides on reopen", async () => {
+  it("shows every blocking diagnostic and offers configuration help without enabling a run", async () => {
+    installHandlers(() => ({ ...plan, ready: false, diagnostics: [
+      { code: "placement.no_capacity", severity: "error", message: "no eligible node for rank 0" },
+      { code: "fabric.unavailable", severity: "error", message: "required fabric is unavailable" },
+    ] }));
+    const user = userEvent.setup();
+    renderDialog(true, D);
+    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    expect(await screen.findByText(/placement.no_capacity: no eligible node for rank 0/)).toBeInTheDocument();
+    expect(screen.getByText(/fabric.unavailable: required fabric is unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Open recipe configuration" })).toHaveAttribute("href", `/library/recipes/packages/${encodeURIComponent(D)}`);
+  });
+
+  it("retains choices after a transient planning failure and retries only on explicit request", async () => {
+    const bodies: Record<string, unknown>[] = [];
     installHandlers();
+    server.use(http.post("*/api/v1/deployments/plan", async ({ request }) => {
+      bodies.push(await request.json() as Record<string, unknown>);
+      return bodies.length === 1
+        ? HttpResponse.json({ code: "planner.unavailable", message: "planner unavailable" }, { status: 503 })
+        : HttpResponse.json(plan);
+    }));
+    const user = userEvent.setup();
+    renderDialog(true, D);
+    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("planner unavailable");
+    expect(bodies).toHaveLength(1);
+    expect(screen.getByLabelText("Rank 0 node")).toHaveValue("n-spark2");
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual(bodies[0]);
+  });
+
+  it("restores choices explicitly after reopening without storing sensitive parameters or reusing consent", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    installHandlers((body) => { bodies.push(body); return plan; });
+    server.use(http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
+      ...recipeDetail, manifest: { ...recipeDetail.manifest, parameters: [
+        { name: "token_limit", type: "integer", enum: [32, 64], default: 32 },
+        { name: "access_token", type: "string", sensitive: true },
+      ] },
+    })));
     const user = userEvent.setup();
     const view = renderDialog(true, D);
-
-    expect(await screen.findByRole("heading", {
-      name: `Launch ${recipe.name}`,
-    })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Recipe")).not.toBeInTheDocument();
-    const rankZero = await screen.findByLabelText("Rank 0 node");
-    await user.selectOptions(rankZero, "n-spark3");
-    expect(rankZero).toHaveValue("n-spark3");
-
+    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark3");
+    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("token_limit"), "64");
+    await user.type(screen.getByLabelText("access_token"), "never-persist-this-token");
+    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
+    expect((bodies[0].parameters as Record<string, unknown>).token_limit).toBe(64);
+    expect(sessionStorage.getItem(`lmw.recipe-launch.${D}`)).not.toContain("never-persist-this-token");
     view.rerenderDialog(false, D);
     view.rerenderDialog(true, D);
-    await waitFor(() => expect(screen.getByLabelText("Rank 0 node")).toHaveValue(""));
-  });
-
-  it("requires an explicit target for single-node recipes", async () => {
-    const planBodies: Record<string, unknown>[] = [];
-    installHandlers((body) => {
-      planBodies.push(body);
-      return {
-        ...plan,
-        placements: [{ node_id: "n-spark3", node_name: "spark3", rank: 0, accelerator_index: 0 }],
-      };
-    });
-    server.use(
-      http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
-        ...recipeDetail,
-        compatibility: { ...recipe.compatibility, nodeCount: 1 },
-      })),
-    );
-    const user = userEvent.setup();
-    renderDialog(true, D);
-
-    const target = await screen.findByLabelText("Target");
-    expect(target).toHaveValue("");
-    expect(screen.getByText("Select node")).toBeInTheDocument();
-    await waitFor(() => expect((target as HTMLSelectElement).options).toHaveLength(4));
-    expect(planBodies).toHaveLength(0);
-
-    await user.selectOptions(target, "n-spark3");
-    await waitFor(() => expect(planBodies).toHaveLength(1));
-    expect(planBodies[0].placements).toEqual([{ rank: 0, node_id: "n-spark3" }]);
+    await user.click(await screen.findByRole("button", { name: "Restore device choices" }));
+    expect(screen.getByLabelText("Rank 0 node")).toHaveValue("n-spark3");
+    expect(screen.getByLabelText("token_limit")).toHaveValue("64");
+    expect(screen.getByLabelText("access_token")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    expect(bodies).toHaveLength(1);
   });
 });

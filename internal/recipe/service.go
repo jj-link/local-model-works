@@ -41,12 +41,14 @@ var (
 
 // RecipeSource mirrors the openapi RecipeImport source.
 type RecipeSource struct {
-	Type      string `json:"type"`
-	Reference string `json:"reference,omitempty"`
-	Revision  string `json:"revision,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Remote    string `json:"remote,omitempty"`
-	Tree      string `json:"tree,omitempty"`
+	Type        string `json:"type"`
+	Reference   string `json:"reference,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Remote      string `json:"remote,omitempty"`
+	Tree        string `json:"tree,omitempty"`
+	SourcePath  string `json:"source_path,omitempty"`
+	TrackingRef string `json:"tracking_ref,omitempty"`
 }
 
 // Recipe is the API view (openapi Recipe).
@@ -86,6 +88,7 @@ type Service struct {
 	onInstalled         func()
 	updateMu            sync.Mutex
 	resolveGitHead      func(context.Context, string) (string, string, error)
+	resolveGitRef       func(context.Context, string, string) (string, error)
 	repositoryCompilers RepositoryCompilerRegistry
 }
 
@@ -100,7 +103,7 @@ func New(sqlDB *sql.DB, q *db.Queries, bus *events.EventBus, v *Validator, catal
 	}
 	service := &Service{
 		db: sqlDB, q: q, bus: bus, validator: v, catalogSchema: catalogSchema,
-		catalogRoot: catalogRoot, packageRoot: packageRoot, resolveGitHead: resolveGitHEAD,
+		catalogRoot: catalogRoot, packageRoot: packageRoot, resolveGitHead: resolveGitHEAD, resolveGitRef: resolveGitRemoteRef,
 	}
 	if err := service.recoverPackageDeletes(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover recipe package deletion: %w", err)
@@ -163,10 +166,15 @@ func (s *Service) Store(ctx context.Context, doc []byte, source RecipeSource) (R
 }
 
 func (s *Service) storePack(ctx context.Context, res *PackResult, source RecipeSource) (Recipe, error) {
-	return s.storePackWithCurrent(ctx, res, source, true)
+	return s.storeReviewedPack(ctx, res, source, nil)
 }
 
-func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, source RecipeSource, setCurrent bool) (Recipe, error) {
+type reviewedSelection struct {
+	repositoryID   string
+	expectedDigest string
+}
+
+func (s *Service) storeReviewedPack(ctx context.Context, res *PackResult, source RecipeSource, reviewed *reviewedSelection) (Recipe, error) {
 	manifest, vds, err := s.validator.ValidateStrict(res.ConfigJSON)
 	if err != nil {
 		return Recipe{}, err
@@ -181,6 +189,16 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	}
 	if diag.HasError(adapted) {
 		return Recipe{}, fmt.Errorf("recipe validation: %s", vds[0].Message)
+	}
+	if reviewed != nil && manifest.Metadata.Source != nil {
+		pin := manifest.Metadata.Source
+		if source.Remote != "" && source.Remote != pin.URL ||
+			source.Revision != "" && !strings.EqualFold(source.Revision, pin.Revision) ||
+			source.SourcePath != "" && source.SourcePath != pin.Path {
+			return Recipe{}, &PackError{Code: "recipe.source_mismatch", Message: "reviewed package provenance differs from the pinned source"}
+		}
+		source.Type, source.Remote, source.Revision, source.Path = "git", pin.URL, pin.Revision, pin.Path
+		source.SourcePath = ""
 	}
 	packageDir, created, err := PersistPackage(s.packageRoot, res)
 	if err != nil {
@@ -207,13 +225,58 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	if reviewed != nil {
+		if reviewed.repositoryID != "" {
+			if reviewed.expectedDigest == "" {
+				return Recipe{}, &PackError{Code: "recipe.update_stale", Message: "expected current recipe digest is required"}
+			}
+			changed, err := qtx.CompareRecipeRepositoryCurrent(ctx, db.CompareRecipeRepositoryCurrentParams{
+				ID: reviewed.repositoryID, ExpectedDigest: nullableString(reviewed.expectedDigest),
+			})
+			if err != nil {
+				return Recipe{}, err
+			}
+			repository, err := qtx.GetRecipeRepository(ctx, reviewed.repositoryID)
+			if err != nil {
+				return Recipe{}, err
+			}
+			if changed != 1 && repository.CurrentDigest.String != digest {
+				return Recipe{}, &PackError{Code: "recipe.update_stale", Message: "the saved recipe changed; review the current version before saving"}
+			}
+			source.TrackingRef = repository.TrackingRef
+			if manifest.Metadata.Source == nil {
+				return Recipe{}, &PackError{Code: "recipe.source_mismatch", Message: "reviewed package has no repository source"}
+			}
+			actualID, _, _, err := RepositoryIdentity(*manifest.Metadata.Source)
+			if err != nil {
+				return Recipe{}, err
+			}
+			if actualID != reviewed.repositoryID {
+				return Recipe{}, &PackError{Code: "recipe.source_mismatch", Message: "reviewed package belongs to another repository"}
+			}
+		} else if manifest.Metadata.Source != nil {
+			actualID, _, _, err := RepositoryIdentity(*manifest.Metadata.Source)
+			if err != nil {
+				return Recipe{}, err
+			}
+			if _, err := qtx.GetRecipeRepository(ctx, actualID); err == nil {
+				return Recipe{}, &PackError{Code: "recipe.repository_exists", Message: "this repository is already in the library; open its saved recipe"}
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return Recipe{}, err
+			}
+		}
+		srcJSON, err = json.Marshal(source)
+		if err != nil {
+			return Recipe{}, err
+		}
+	}
 	row, err := qtx.GetRecipe(ctx, digest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Recipe{}, err
 	}
 	if err == nil {
-		if _, linkErr := qtx.GetRecipeRepositoryVersionByDigest(ctx, digest); errors.Is(linkErr, sql.ErrNoRows) {
-			if linkErr = attachRepositoryVersionWithCurrent(ctx, qtx, manifest, digest, source.Tree, row.InstalledAt, setCurrent); linkErr != nil {
+		if _, linkErr := qtx.GetRecipeRepositoryVersionByDigest(ctx, digest); reviewed != nil || errors.Is(linkErr, sql.ErrNoRows) {
+			if linkErr = attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, row.InstalledAt, source.TrackingRef); linkErr != nil {
 				return Recipe{}, linkErr
 			}
 		} else if linkErr != nil {
@@ -290,7 +353,7 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	if err != nil {
 		return Recipe{}, err
 	}
-	if err := attachRepositoryVersionWithCurrent(ctx, qtx, manifest, digest, source.Tree, createdRow.InstalledAt, setCurrent); err != nil {
+	if err := attachRepositoryVersion(ctx, qtx, manifest, digest, source.Tree, createdRow.InstalledAt, source.TrackingRef); err != nil {
 		return Recipe{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -304,7 +367,7 @@ func (s *Service) storePackWithCurrent(ctx context.Context, res *PackResult, sou
 	if err != nil {
 		return Recipe{}, err
 	}
-	if s.onInstalled != nil {
+	if reviewed == nil && s.onInstalled != nil {
 		s.onInstalled()
 	}
 	return detail.Recipe, nil

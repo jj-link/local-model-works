@@ -257,3 +257,76 @@ func TestBrowserLoginTokenRejectsExpiry(t *testing.T) {
 		t.Fatalf("expired token status = %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestServiceBearerUsesOnlyExplicitScopesAndRejectsMixedCredentials(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "api-token.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	token, err := auth.NewAPIToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database)
+	if err := queries.CreateAPIToken(ctx, db.CreateAPITokenParams{
+		ID: "01900000-0000-7000-8000-000000000070", Name: "factory",
+		TokenHash: auth.APITokenHash(token), ScopesJson: `["deployments:read","benchmarks:write"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{q: queries, sessions: newTestSessions()}
+	called := false
+	protected := server.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		principal := auth.APITokenPrincipalFromContext(r.Context())
+		if principal == nil || principal.ID != "01900000-0000-7000-8000-000000000070" || principal.Name != "factory" {
+			t.Fatalf("principal = %+v", principal)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		token      string
+		cookie     bool
+		wantStatus int
+	}{
+		{name: "deployment read", method: http.MethodGet, path: "/api/v1/deployments", token: token, wantStatus: http.StatusNoContent},
+		{name: "benchmark create", method: http.MethodPost, path: "/api/v1/benchmarks", token: token, wantStatus: http.StatusNoContent},
+		{name: "missing benchmark read", method: http.MethodGet, path: "/api/v1/benchmarks/catalog", token: token, wantStatus: http.StatusForbidden},
+		{name: "arbitrary endpoint", method: http.MethodGet, path: "/api/v1/nodes", token: token, wantStatus: http.StatusForbidden},
+		{name: "malformed bearer", method: http.MethodGet, path: "/api/v1/deployments", token: "not-a-token", wantStatus: http.StatusUnauthorized},
+		{name: "mixed cookie", method: http.MethodGet, path: "/api/v1/deployments", token: token, cookie: true, wantStatus: http.StatusUnauthorized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called = false
+			request := httptest.NewRequest(test.method, "https://lmw.example.test"+test.path, nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			if test.cookie {
+				request.AddCookie(&http.Cookie{Name: sessionCookie, Value: "session"})
+			}
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if called != (test.wantStatus == http.StatusNoContent) {
+				t.Fatalf("handler called = %t", called)
+			}
+		})
+	}
+	if _, err := database.Exec(`UPDATE api_tokens SET revoked_at='2025-01-01T00:00:00Z' WHERE name='factory'`); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://lmw.example.test/api/v1/deployments", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}

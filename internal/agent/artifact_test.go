@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/jj-link/local-model-works/internal/recipe"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +30,7 @@ func TestResumeHTTPFileContinuesVerifiedLength(t *testing.T) {
 			if _, err := fmt.Sscanf(gotRange, "bytes=%d-", &offset); err != nil {
 				t.Errorf("range = %q", gotRange)
 			}
+			response.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, len(payload)-1, len(payload)))
 			response.WriteHeader(http.StatusPartialContent)
 		}
 		_, _ = response.Write(payload[offset:])
@@ -72,6 +75,7 @@ func TestRetryResumeHTTPFileContinuesAfterTransientStreamFailure(t *testing.T) {
 				t.Errorf("range = %q", value)
 				return
 			}
+			response.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, len(payload)-1, len(payload)))
 			response.WriteHeader(http.StatusPartialContent)
 		} else {
 			response.Header().Set("Content-Length", fmt.Sprint(len(payload)))
@@ -149,7 +153,7 @@ func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 	const (
 		owner    = "acme"
 		repo     = "tiny-model"
-		revision = "deadbeefcafebabe"
+		revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		regular  = "config.json" // regular git blob (no LFS)
 		lfsFile  = "weights.safetensors"
 	)
@@ -169,8 +173,9 @@ func TestFetchHFSnapshotRequestsBlobsAndVerifiesBothSiblingKinds(t *testing.T) {
 			sawBlobs = request.URL.Query().Get("blobs") == "true"
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
+				"sha": revision,
 				"siblings": []map[string]any{
-					{"rfilename": regular, "size": int64(len(regularBody))},
+					{"rfilename": regular, "size": int64(len(regularBody)), "blobId": gitBlobID(regularBody)},
 					{"rfilename": lfsFile, "lfs": map[string]any{"sha256": hex.EncodeToString(sha256Sum(lfsBody)), "size": int64(len(lfsBody))}},
 				},
 			})
@@ -255,6 +260,13 @@ func sha256Sum(b []byte) []byte {
 	return sum[:]
 }
 
+func gitBlobID(data []byte) string {
+	hash := sha1.New()
+	_, _ = fmt.Fprintf(hash, "blob %d\x00", len(data))
+	_, _ = hash.Write(data)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
 // TestMakePackageTraversableFixesCachedModes reproduces the spark2/3 failure
 // where a recipe package cached by an older agent build left its directories
 // at 0700 (staging) / 0750 (assets), so the container's non-agent UID could
@@ -313,89 +325,17 @@ func TestMakePackageTraversableFixesCachedModes(t *testing.T) {
 // legitimately empty (a zero-asset recipe) left no assets/ directory behind,
 // and the workload create failed with "bind source path does not exist"
 // because the container spec always mounts <package>/assets read-only.
-func TestEnsurePackageAssetsDirCreatesEmptyBindSource(t *testing.T) {
-	pkg := t.TempDir()
-	if err := ensurePackageAssetsDir(pkg); err != nil {
+func TestEmptyPackageStillProvidesAssetsBindSource(t *testing.T) {
+	packed, err := recipe.PackManifest([]byte(`{"kind":"Recipe"}`), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, _, err := recipe.PersistPackage(t.TempDir(), packed)
+	if err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(pkg, "assets"))
-	if err != nil {
-		t.Fatalf("assets dir must exist for zero-asset packages: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatalf("assets is not a directory")
-	}
-	if mode := info.Mode().Perm(); mode != 0o755 {
-		t.Errorf("assets mode = %o, want 0755", mode)
-	}
-}
-
-// TestMakeModelTreeReadableFixesCachedModes reproduces the spark2 failure
-// where an older agent build fetched a Hugging Face model with 0750 dirs and
-// 0640 blobs; the container (root, no CAP_DAC_OVERRIDE) got
-// "Permission denied" on config.json. After normalization, every directory
-// is 0755, every regular file 0644, and symlinks are left untouched.
-func TestMakeModelTreeReadableFixesCachedModes(t *testing.T) {
-	cache := t.TempDir()
-	modelRoot := filepath.Join(cache, "hub", "models--deepseek-ai--DeepSeek-V4-Flash-0731")
-	blobs := filepath.Join(modelRoot, "blobs")
-	snap := filepath.Join(modelRoot, "snapshots", "rev123")
-	downloads := filepath.Join(modelRoot, ".downloads", "rev123")
-	if err := os.MkdirAll(blobs, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(snap, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(downloads, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(modelRoot, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	// a 0640 blob (the HF default) + a 0644 blob + a snapshot symlink
-	if err := os.WriteFile(filepath.Join(blobs, "blob-a"), []byte("config"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blobs, "blob-b"), []byte("weights"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../blobs/blob-a", filepath.Join(snap, "config.json")); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := makeModelTreeReadable(modelRoot); err != nil {
-		t.Fatal(err)
-	}
-
-	wantDir := map[string]bool{modelRoot: true, blobs: true, snap: true, downloads: true}
-	for d := range wantDir {
-		info, err := os.Stat(d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if mode := info.Mode().Perm(); mode != 0o755 {
-			t.Errorf("%s dir mode = %o, want 0755", d, mode)
-		}
-	}
-	for _, f := range []string{filepath.Join(blobs, "blob-a"), filepath.Join(blobs, "blob-b")} {
-		info, err := os.Stat(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if mode := info.Mode().Perm(); mode != 0o644 {
-			t.Errorf("%s file mode = %o, want 0644", f, mode)
-		}
-	}
-	// symlink must still be a symlink pointing at the blob
-	linkInfo, err := os.Lstat(filepath.Join(snap, "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if linkInfo.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("config.json is no longer a symlink: %v", linkInfo.Mode())
-	}
-	if got, err := os.Readlink(filepath.Join(snap, "config.json")); err != nil || got != "../blobs/blob-a" {
-		t.Errorf("config.json readlink = %q err=%v, want ../blobs/blob-a", got, err)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("empty package has no assets bind source: %v", err)
 	}
 }

@@ -386,6 +386,15 @@ components:
       properties:
         recipe_digest:
           type: string
+        acquisition_policy:
+          type: string
+          enum: [require-existing, download-missing]
+          default: require-existing
+          description: Require exact local resources, or acquire missing resources through shared downloads before launch.
+        workload_index:
+          type: integer
+          minimum: 0
+          description: Optional explicit workload selection; otherwise selected from compatible fleet inventory.
         launch_profile_id:
           type: string
           description: Saved profile to apply; mutually exclusive with variants/parameters
@@ -479,11 +488,20 @@ components:
 
     DeploymentPlan:
       type: object
-      required: [recipe_digest, placements, ready]
+      required: [recipe_digest, placements, ready, acquisition_policy, plan_digest]
       properties:
         plan_digest:
           type: string
           description: Opaque digest for this previewed plan; pass to create to pin it
+        acquisition_policy:
+          type: string
+          enum: [require-existing, download-missing]
+        acquisition:
+          $ref: '#/components/schemas/RecipeDownloadPlan'
+        missing_resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipeDownloadResource'
         variants:
           type: object
           additionalProperties:
@@ -503,7 +521,7 @@ components:
           type: object
           additionalProperties: true
           nullable: true
-          description: Effective launch settings for this plan
+          description: Effective launch parameters for this plan
         placements:
           type: array
           items:
@@ -593,10 +611,17 @@ components:
           description: false when conflicts or unmet compatibility block creation
     DeploymentCreateRequest:
       type: object
-      required: [recipe_digest]
+      required: [recipe_digest, plan_digest]
       properties:
         recipe_digest:
           type: string
+        acquisition_policy:
+          type: string
+          enum: [require-existing, download-missing]
+          default: require-existing
+        workload_index:
+          type: integer
+          minimum: 0
         launch_profile_id:
           type: string
           description: Saved profile to apply; mutually exclusive with variants/parameters
@@ -613,7 +638,8 @@ components:
                 type: integer
         plan_digest:
           type: string
-          description: Distinguishes an unchanged plan from the one previewed
+          minLength: 1
+          description: Required digest of the explicitly reviewed plan, including its acquisition policy.
         variants:
           type: object
           additionalProperties:

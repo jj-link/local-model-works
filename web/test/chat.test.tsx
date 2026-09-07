@@ -137,18 +137,4 @@ describe("Chat", () => {
     expect(attempts).toBe(2);
   });
 
-  it("offers the real deployment planner when no deployment is usable", async () => {
-    server.use(
-      http.get("*/api/v1/deployments", () => HttpResponse.json([])),
-      http.get("*/api/v1/recipes", () => HttpResponse.json([])),
-      http.get("*/api/v1/nodes", () => HttpResponse.json([])),
-      http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
-    );
-    const user = userEvent.setup();
-    renderChat();
-
-    expect(await screen.findByText("No chat-ready deployment")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Launch deployment" }));
-    expect(await screen.findByRole("heading", { name: "Launch deployment" })).toBeInTheDocument();
-  });
 });

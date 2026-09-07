@@ -13,7 +13,8 @@ import {
 import { useDeployments, useRuns } from "~/lib/queries";
 import { isRunTerminal, shortId, stateInfo, TONE_TEXT } from "~/lib/format";
 import { cn } from "~/lib/utils";
-export type DialogId = "enroll" | "import-recipe" | "plan-deployment" | "benchmark";
+export type DialogId = "enroll" | "plan-deployment" | "benchmark";
+type PaletteAction = DialogId | "add-recipe";
 
 
 interface PaletteItem {
@@ -41,7 +42,7 @@ export function CommandPalette({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  actions: Record<DialogId, () => void>;
+  actions: Record<PaletteAction, () => void>;
   sections: { id: string; label: string; route: string }[];
 }) {
   const navigate = useNavigate();
@@ -63,16 +64,16 @@ export function CommandPalette({
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
-    const act = (id: string, label: string, icon: LucideIcon): PaletteItem => ({
+    const act = (id: PaletteAction, label: string, icon: LucideIcon): PaletteItem => ({
       id,
       label,
       icon,
       group: "actions",
-      onSelect: () => actions[id as DialogId](),
+      onSelect: () => actions[id](),
     });
     const base: PaletteItem[] = [
       act("enroll", "Enroll node", Server),
-      act("import-recipe", "Install recipe", FolderPlus),
+      act("add-recipe", "Add from GitHub", FolderPlus),
       act("plan-deployment", "Launch deployment", Rocket),
       act("benchmark", "Run benchmark", Gauge),
     ];

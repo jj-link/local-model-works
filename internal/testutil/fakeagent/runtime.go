@@ -108,11 +108,31 @@ type FakeRuntime struct {
 	nextID           int
 	pullLog          []string
 	hostPreparations int
+	images           map[string]runtime.ImageInfo
+	imageStorage     runtime.ImageStorageInfo
 }
 
 // NewFakeRuntime returns an empty stub runtime.
 func NewFakeRuntime() *FakeRuntime {
-	return &FakeRuntime{byName: map[string]*FakeContainer{}}
+	return &FakeRuntime{byName: map[string]*FakeContainer{}, images: map[string]runtime.ImageInfo{},
+		imageStorage: runtime.ImageStorageInfo{Root: "/var/lib/docker", Filesystem: "fake-engine", TotalBytes: 1 << 40, FreeBytes: 1 << 39}}
+}
+
+func fakeImageKey(reference, platform string) string {
+	name, digest, pinned := strings.Cut(reference, "@")
+	if pinned {
+		if colon := strings.LastIndex(name, ":"); colon > strings.LastIndex(name, "/") {
+			name = name[:colon]
+		}
+		first, _, slash := strings.Cut(name, "/")
+		if !slash {
+			name = "docker.io/library/" + name
+		} else if !strings.ContainsAny(first, ".:") && first != "localhost" {
+			name = "docker.io/" + name
+		}
+		reference = name + "@" + digest
+	}
+	return reference + "|" + platform
 }
 
 // Pulls lists every pulled image reference (digest-pinned by protocol).
@@ -127,10 +147,89 @@ func (rt *FakeRuntime) Ping(context.Context) (string, error) { return "27.0.0-fa
 
 // Pull records the reference.
 func (rt *FakeRuntime) Pull(ctx context.Context, spec *runtime.PullSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	platform := spec.Platform
+	if platform == "" {
+		platform = "linux/amd64"
+	}
+	digest := spec.Reference
+	if _, pinned, ok := strings.Cut(spec.Reference, "@"); ok {
+		digest = pinned
+	}
 	rt.mu.Lock()
 	rt.pullLog = append(rt.pullLog, spec.Reference)
+	if _, exists := rt.images[fakeImageKey(spec.Reference, platform)]; !exists {
+		rt.images[fakeImageKey(spec.Reference, platform)] = runtime.ImageInfo{Reference: spec.Reference, Digest: digest, IndexDigest: digest, ManifestDigest: digest, Platform: platform, SizeBytes: 1024}
+	}
 	rt.mu.Unlock()
+	if spec.Progress != nil {
+		spec.Progress(runtime.ImagePullProgress{Layer: digest, Phase: "Pull complete", BytesDone: 1024, BytesTotal: 1024})
+	}
 	return nil
+}
+
+func (rt *FakeRuntime) InspectImage(ctx context.Context, reference, platform string) (*runtime.ImageInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if platform == "" {
+		platform = "linux/amd64"
+	}
+	info, ok := rt.images[fakeImageKey(reference, platform)]
+	if !ok {
+		return nil, fmt.Errorf("image.not_found")
+	}
+	info.Reference = reference
+	if _, digest, ok := strings.Cut(reference, "@"); ok {
+		info.Digest = digest
+	}
+	return &info, nil
+}
+
+func (rt *FakeRuntime) ImageStorage(ctx context.Context) (*runtime.ImageStorageInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	info := rt.imageStorage
+	return &info, nil
+}
+
+// SeedImage models bytes already in the engine independently of workload state.
+func (rt *FakeRuntime) SeedImage(info runtime.ImageInfo) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.images[fakeImageKey(info.Reference, info.Platform)] = info
+	repository, _, pinned := strings.Cut(info.Reference, "@")
+	if pinned && info.IndexDigest != "" && info.ManifestDigest != "" {
+		rt.images[fakeImageKey(repository+"@"+info.IndexDigest, info.Platform)] = info
+		rt.images[fakeImageKey(repository+"@"+info.ManifestDigest, info.Platform)] = info
+	}
+}
+
+func (rt *FakeRuntime) RemoveImage(reference, platform string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	info, exists := rt.images[fakeImageKey(reference, platform)]
+	delete(rt.images, fakeImageKey(reference, platform))
+	if exists {
+		for key, candidate := range rt.images {
+			if candidate.Platform == platform && candidate.ManifestDigest == info.ManifestDigest && candidate.IndexDigest == info.IndexDigest {
+				delete(rt.images, key)
+			}
+		}
+	}
+}
+
+func (rt *FakeRuntime) SetImageStorage(info runtime.ImageStorageInfo) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.imageStorage = info
 }
 
 // PrepareHost records one successful bounded host-preparation operation.

@@ -213,6 +213,73 @@ func (q *Queries) ClearStoppedDeploymentEndpoint(ctx context.Context, arg ClearS
 	return err
 }
 
+const compareRecipeRepositoryCurrent = `-- name: CompareRecipeRepositoryCurrent :execrows
+UPDATE recipe_repositories SET current_digest = current_digest
+WHERE id = ?1 AND current_digest = ?2
+`
+
+type CompareRecipeRepositoryCurrentParams struct {
+	ID             string         `json:"id"`
+	ExpectedDigest sql.NullString `json:"expected_digest"`
+}
+
+func (q *Queries) CompareRecipeRepositoryCurrent(ctx context.Context, arg CompareRecipeRepositoryCurrentParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, compareRecipeRepositoryCurrent, arg.ID, arg.ExpectedDigest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const completeBenchmarkRunResult = `-- name: CompleteBenchmarkRunResult :exec
+UPDATE benchmark_run_results
+SET passed_count = ?,
+    pass_at_1 = ?,
+    verifier_pass_rate = ?,
+    oracle_pass_rate = ?,
+    prompt_tokens = ?,
+    completion_tokens = ?,
+    total_tokens = ?,
+    wall_seconds = ?,
+    summary_artifact_id = ?,
+    bundle_artifact_id = ?,
+    metrics_json = ?
+WHERE run_id = ?
+`
+
+type CompleteBenchmarkRunResultParams struct {
+	PassedCount       int64           `json:"passed_count"`
+	PassAt1           sql.NullFloat64 `json:"pass_at_1"`
+	VerifierPassRate  sql.NullFloat64 `json:"verifier_pass_rate"`
+	OraclePassRate    sql.NullFloat64 `json:"oracle_pass_rate"`
+	PromptTokens      int64           `json:"prompt_tokens"`
+	CompletionTokens  int64           `json:"completion_tokens"`
+	TotalTokens       int64           `json:"total_tokens"`
+	WallSeconds       float64         `json:"wall_seconds"`
+	SummaryArtifactID sql.NullString  `json:"summary_artifact_id"`
+	BundleArtifactID  sql.NullString  `json:"bundle_artifact_id"`
+	MetricsJson       string          `json:"metrics_json"`
+	RunID             string          `json:"run_id"`
+}
+
+func (q *Queries) CompleteBenchmarkRunResult(ctx context.Context, arg CompleteBenchmarkRunResultParams) error {
+	_, err := q.db.ExecContext(ctx, completeBenchmarkRunResult,
+		arg.PassedCount,
+		arg.PassAt1,
+		arg.VerifierPassRate,
+		arg.OraclePassRate,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.TotalTokens,
+		arg.WallSeconds,
+		arg.SummaryArtifactID,
+		arg.BundleArtifactID,
+		arg.MetricsJson,
+		arg.RunID,
+	)
+	return err
+}
+
 const consumeBrowserLoginToken = `-- name: ConsumeBrowserLoginToken :one
 DELETE FROM browser_login_tokens
 WHERE token_hash = ? AND expires_at > ?
@@ -252,6 +319,27 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const createAPIToken = `-- name: CreateAPIToken :exec
+INSERT INTO api_tokens(id,name,token_hash,scopes_json) VALUES(?,?,?,?)
+`
+
+type CreateAPITokenParams struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	TokenHash  string `json:"token_hash"`
+	ScopesJson string `json:"scopes_json"`
+}
+
+func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) error {
+	_, err := q.db.ExecContext(ctx, createAPIToken,
+		arg.ID,
+		arg.Name,
+		arg.TokenHash,
+		arg.ScopesJson,
+	)
+	return err
 }
 
 const createArtifact = `-- name: CreateArtifact :exec
@@ -580,6 +668,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
+const deleteBenchmarkTrialResultsByRun = `-- name: DeleteBenchmarkTrialResultsByRun :exec
+DELETE FROM benchmark_trial_results WHERE run_id = ?
+`
+
+func (q *Queries) DeleteBenchmarkTrialResultsByRun(ctx context.Context, runID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBenchmarkTrialResultsByRun, runID)
+	return err
+}
+
 const deleteDeployment = `-- name: DeleteDeployment :exec
 DELETE FROM deployments WHERE id = ?
 `
@@ -752,6 +849,41 @@ func (q *Queries) DeleteTelemetry5sOlder(ctx context.Context, ts int64) error {
 	return err
 }
 
+const getAPITokenByHash = `-- name: GetAPITokenByHash :one
+SELECT id,name,scopes_json FROM api_tokens WHERE token_hash=? AND revoked_at IS NULL
+`
+
+type GetAPITokenByHashRow struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ScopesJson string `json:"scopes_json"`
+}
+
+func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash string) (GetAPITokenByHashRow, error) {
+	row := q.db.QueryRowContext(ctx, getAPITokenByHash, tokenHash)
+	var i GetAPITokenByHashRow
+	err := row.Scan(&i.ID, &i.Name, &i.ScopesJson)
+	return i, err
+}
+
+const getAPITokenByName = `-- name: GetAPITokenByName :one
+SELECT id,name,token_hash,scopes_json,created_at,revoked_at FROM api_tokens WHERE name=?
+`
+
+func (q *Queries) GetAPITokenByName(ctx context.Context, name string) (ApiToken, error) {
+	row := q.db.QueryRowContext(ctx, getAPITokenByName, name)
+	var i ApiToken
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenHash,
+		&i.ScopesJson,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getArtifact = `-- name: GetArtifact :one
 SELECT id, kind, identity, revision, digest, validation_state, metadata, created_at
 FROM artifacts WHERE id = ?
@@ -789,6 +921,46 @@ func (q *Queries) GetArtifactByIdentity(ctx context.Context, identity string) (A
 		&i.Digest,
 		&i.ValidationState,
 		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBenchmarkRunResult = `-- name: GetBenchmarkRunResult :one
+SELECT run_id, benchmark_id, benchmark_version, harness,
+       generation_deployment_id, verification_deployment_id,
+       execution_node_id, task_count, candidate_count, passed_count, pass_at_1,
+       verifier_pass_rate, oracle_pass_rate, prompt_tokens,
+       completion_tokens, total_tokens, wall_seconds,
+       summary_artifact_id, bundle_artifact_id, metrics_json, created_at
+FROM benchmark_run_results
+WHERE run_id = ?
+`
+
+func (q *Queries) GetBenchmarkRunResult(ctx context.Context, runID string) (BenchmarkRunResult, error) {
+	row := q.db.QueryRowContext(ctx, getBenchmarkRunResult, runID)
+	var i BenchmarkRunResult
+	err := row.Scan(
+		&i.RunID,
+		&i.BenchmarkID,
+		&i.BenchmarkVersion,
+		&i.Harness,
+		&i.GenerationDeploymentID,
+		&i.VerificationDeploymentID,
+		&i.ExecutionNodeID,
+		&i.TaskCount,
+		&i.CandidateCount,
+		&i.PassedCount,
+		&i.PassAt1,
+		&i.VerifierPassRate,
+		&i.OraclePassRate,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.WallSeconds,
+		&i.SummaryArtifactID,
+		&i.BundleArtifactID,
+		&i.MetricsJson,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1184,7 +1356,7 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 const getRecipeRepository = `-- name: GetRecipeRepository :one
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at
+       created_at, updated_at, head_check_error
 FROM recipe_repositories
 WHERE id = ?
 `
@@ -1203,6 +1375,7 @@ func (q *Queries) GetRecipeRepository(ctx context.Context, id string) (RecipeRep
 		&i.HeadCheckedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.HeadCheckError,
 	)
 	return i, err
 }
@@ -1401,6 +1574,90 @@ func (q *Queries) InsertBenchmarkResult(ctx context.Context, arg InsertBenchmark
 		arg.Reasoning,
 		arg.ResultPath,
 	)
+	return err
+}
+
+const insertBenchmarkRunResult = `-- name: InsertBenchmarkRunResult :exec
+INSERT INTO benchmark_run_results (
+    run_id, benchmark_id, benchmark_version, harness,
+    generation_deployment_id, verification_deployment_id,
+    execution_node_id, task_count, candidate_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id) DO NOTHING
+`
+
+type InsertBenchmarkRunResultParams struct {
+	RunID                    string         `json:"run_id"`
+	BenchmarkID              string         `json:"benchmark_id"`
+	BenchmarkVersion         string         `json:"benchmark_version"`
+	Harness                  string         `json:"harness"`
+	GenerationDeploymentID   sql.NullString `json:"generation_deployment_id"`
+	VerificationDeploymentID sql.NullString `json:"verification_deployment_id"`
+	ExecutionNodeID          sql.NullString `json:"execution_node_id"`
+	TaskCount                int64          `json:"task_count"`
+	CandidateCount           int64          `json:"candidate_count"`
+}
+
+func (q *Queries) InsertBenchmarkRunResult(ctx context.Context, arg InsertBenchmarkRunResultParams) error {
+	_, err := q.db.ExecContext(ctx, insertBenchmarkRunResult,
+		arg.RunID,
+		arg.BenchmarkID,
+		arg.BenchmarkVersion,
+		arg.Harness,
+		arg.GenerationDeploymentID,
+		arg.VerificationDeploymentID,
+		arg.ExecutionNodeID,
+		arg.TaskCount,
+		arg.CandidateCount,
+	)
+	return err
+}
+
+const insertBenchmarkTrialResult = `-- name: InsertBenchmarkTrialResult :exec
+INSERT INTO benchmark_trial_results (
+    run_id, task_id, candidate_index, official_pass, verifier_selected,
+    verifier_score, trajectory_path, metrics_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertBenchmarkTrialResultParams struct {
+	RunID            string          `json:"run_id"`
+	TaskID           string          `json:"task_id"`
+	CandidateIndex   int64           `json:"candidate_index"`
+	OfficialPass     int64           `json:"official_pass"`
+	VerifierSelected int64           `json:"verifier_selected"`
+	VerifierScore    sql.NullFloat64 `json:"verifier_score"`
+	TrajectoryPath   string          `json:"trajectory_path"`
+	MetricsJson      string          `json:"metrics_json"`
+}
+
+func (q *Queries) InsertBenchmarkTrialResult(ctx context.Context, arg InsertBenchmarkTrialResultParams) error {
+	_, err := q.db.ExecContext(ctx, insertBenchmarkTrialResult,
+		arg.RunID,
+		arg.TaskID,
+		arg.CandidateIndex,
+		arg.OfficialPass,
+		arg.VerifierSelected,
+		arg.VerifierScore,
+		arg.TrajectoryPath,
+		arg.MetricsJson,
+	)
+	return err
+}
+
+const insertModuleSettings = `-- name: InsertModuleSettings :exec
+INSERT INTO module_settings (module, settings, version)
+VALUES (?, ?, ?)
+`
+
+type InsertModuleSettingsParams struct {
+	Module   string `json:"module"`
+	Settings string `json:"settings"`
+	Version  string `json:"version"`
+}
+
+func (q *Queries) InsertModuleSettings(ctx context.Context, arg InsertModuleSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, insertModuleSettings, arg.Module, arg.Settings, arg.Version)
 	return err
 }
 
@@ -1815,6 +2072,103 @@ func (q *Queries) ListBenchmarkResultsByRun(ctx context.Context, runID string) (
 			&i.Quantization,
 			&i.Reasoning,
 			&i.ResultPath,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBenchmarkRunResults = `-- name: ListBenchmarkRunResults :many
+SELECT run_id, benchmark_id, benchmark_version, harness,
+       generation_deployment_id, verification_deployment_id,
+       execution_node_id, task_count, candidate_count, passed_count, pass_at_1,
+       verifier_pass_rate, oracle_pass_rate, prompt_tokens,
+       completion_tokens, total_tokens, wall_seconds,
+       summary_artifact_id, bundle_artifact_id, metrics_json, created_at
+FROM benchmark_run_results
+ORDER BY created_at DESC, run_id DESC
+`
+
+func (q *Queries) ListBenchmarkRunResults(ctx context.Context) ([]BenchmarkRunResult, error) {
+	rows, err := q.db.QueryContext(ctx, listBenchmarkRunResults)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BenchmarkRunResult
+	for rows.Next() {
+		var i BenchmarkRunResult
+		if err := rows.Scan(
+			&i.RunID,
+			&i.BenchmarkID,
+			&i.BenchmarkVersion,
+			&i.Harness,
+			&i.GenerationDeploymentID,
+			&i.VerificationDeploymentID,
+			&i.ExecutionNodeID,
+			&i.TaskCount,
+			&i.CandidateCount,
+			&i.PassedCount,
+			&i.PassAt1,
+			&i.VerifierPassRate,
+			&i.OraclePassRate,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.TotalTokens,
+			&i.WallSeconds,
+			&i.SummaryArtifactID,
+			&i.BundleArtifactID,
+			&i.MetricsJson,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBenchmarkTrialResultsByRun = `-- name: ListBenchmarkTrialResultsByRun :many
+SELECT run_id, task_id, candidate_index, official_pass, verifier_selected,
+       verifier_score, trajectory_path, metrics_json, created_at
+FROM benchmark_trial_results
+WHERE run_id = ?
+ORDER BY task_id, candidate_index
+`
+
+func (q *Queries) ListBenchmarkTrialResultsByRun(ctx context.Context, runID string) ([]BenchmarkTrialResult, error) {
+	rows, err := q.db.QueryContext(ctx, listBenchmarkTrialResultsByRun, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BenchmarkTrialResult
+	for rows.Next() {
+		var i BenchmarkTrialResult
+		if err := rows.Scan(
+			&i.RunID,
+			&i.TaskID,
+			&i.CandidateIndex,
+			&i.OfficialPass,
+			&i.VerifierSelected,
+			&i.VerifierScore,
+			&i.TrajectoryPath,
+			&i.MetricsJson,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -2306,7 +2660,7 @@ func (q *Queries) ListPlacementsOnNode(ctx context.Context, nodeID string) ([]Ar
 const listRecipeRepositories = `-- name: ListRecipeRepositories :many
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at
+       created_at, updated_at, head_check_error
 FROM recipe_repositories
 ORDER BY updated_at DESC, id
 `
@@ -2331,6 +2685,7 @@ func (q *Queries) ListRecipeRepositories(ctx context.Context) ([]RecipeRepositor
 			&i.HeadCheckedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.HeadCheckError,
 		); err != nil {
 			return nil, err
 		}
@@ -2760,27 +3115,6 @@ func (q *Queries) MaxEventID(ctx context.Context) (interface{}, error) {
 	return coalesce, err
 }
 
-const putModuleSettings = `-- name: PutModuleSettings :exec
-INSERT INTO module_settings (module, settings, version)
-VALUES (?, ?, ?)
-ON CONFLICT (module)
-DO UPDATE SET settings = excluded.settings,
-              version = excluded.version,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE module_settings.version = ?
-`
-
-type PutModuleSettingsParams struct {
-	Module   string `json:"module"`
-	Settings string `json:"settings"`
-	Version  string `json:"version"`
-}
-
-func (q *Queries) PutModuleSettings(ctx context.Context, arg PutModuleSettingsParams) error {
-	_, err := q.db.ExecContext(ctx, putModuleSettings, arg.Module, arg.Settings, arg.Version)
-	return err
-}
-
 const recipeReferencedByDeployments = `-- name: RecipeReferencedByDeployments :one
 SELECT COUNT(*) FROM deployments WHERE recipe_digest = ?
 `
@@ -2803,6 +3137,32 @@ func (q *Queries) RecipeReferencedByRuns(ctx context.Context, recipeDigest strin
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const recordRecipeRepositoryCheck = `-- name: RecordRecipeRepositoryCheck :exec
+UPDATE recipe_repositories
+SET observed_head_commit = CASE WHEN ?1 = '' THEN ?2 ELSE observed_head_commit END,
+    observed_head_tree = CASE WHEN ?1 = '' THEN NULL ELSE observed_head_tree END,
+    head_checked_at = ?3, head_check_error = ?1,
+    updated_at = ?3
+WHERE id = ?4
+`
+
+type RecordRecipeRepositoryCheckParams struct {
+	CheckError string         `json:"check_error"`
+	HeadCommit sql.NullString `json:"head_commit"`
+	CheckedAt  sql.NullString `json:"checked_at"`
+	ID         string         `json:"id"`
+}
+
+func (q *Queries) RecordRecipeRepositoryCheck(ctx context.Context, arg RecordRecipeRepositoryCheckParams) error {
+	_, err := q.db.ExecContext(ctx, recordRecipeRepositoryCheck,
+		arg.CheckError,
+		arg.HeadCommit,
+		arg.CheckedAt,
+		arg.ID,
+	)
+	return err
 }
 
 const releaseLeases = `-- name: ReleaseLeases :exec
@@ -2858,6 +3218,36 @@ func (q *Queries) RestartDeployment(ctx context.Context, arg RestartDeploymentPa
 		arg.ID,
 	)
 	return err
+}
+
+const revokeAPIToken = `-- name: RevokeAPIToken :execrows
+UPDATE api_tokens SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE name=? AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeAPIToken(ctx context.Context, name string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeAPIToken, name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const rotateAPIToken = `-- name: RotateAPIToken :execrows
+UPDATE api_tokens SET token_hash=?,scopes_json=?,revoked_at=NULL WHERE name=?
+`
+
+type RotateAPITokenParams struct {
+	TokenHash  string `json:"token_hash"`
+	ScopesJson string `json:"scopes_json"`
+	Name       string `json:"name"`
+}
+
+func (q *Queries) RotateAPIToken(ctx context.Context, arg RotateAPITokenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rotateAPIToken, arg.TokenHash, arg.ScopesJson, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const saveMigrationPlan = `-- name: SaveMigrationPlan :exec
@@ -3256,6 +3646,34 @@ func (q *Queries) UpdateLaunchProfile(ctx context.Context, arg UpdateLaunchProfi
 	return err
 }
 
+const updateModuleSettings = `-- name: UpdateModuleSettings :execrows
+UPDATE module_settings
+SET settings = ?,
+    version = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE module = ? AND version = ?
+`
+
+type UpdateModuleSettingsParams struct {
+	Settings        string `json:"settings"`
+	Version         string `json:"version"`
+	Module          string `json:"module"`
+	PreviousVersion string `json:"previous_version"`
+}
+
+func (q *Queries) UpdateModuleSettings(ctx context.Context, arg UpdateModuleSettingsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateModuleSettings,
+		arg.Settings,
+		arg.Version,
+		arg.Module,
+		arg.PreviousVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateNodeMeta = `-- name: UpdateNodeMeta :exec
 UPDATE nodes SET display_name = ?, labels = ? WHERE id = ?
 `
@@ -3305,7 +3723,7 @@ const updateTransferProgress = `-- name: UpdateTransferProgress :exec
 UPDATE transfers SET bytes_done = ?, bytes_total = COALESCE(?, bytes_total),
                      state = 'transferring',
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE id = ?
+WHERE id = ? AND state IN ('pending', 'transferring')
 `
 
 type UpdateTransferProgressParams struct {
@@ -3403,7 +3821,6 @@ INSERT INTO recipe_repositories (
     id, source_url, source_path, tracking_ref, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_url, source_path) DO UPDATE SET
-    tracking_ref = excluded.tracking_ref,
     updated_at = excluded.updated_at
 `
 

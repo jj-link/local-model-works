@@ -171,6 +171,7 @@
         "type": { "type": "string", "enum": ["int", "float", "bool", "string", "enum"] },
         "default": {},
         "description": { "type": "string", "maxLength": 1000 },
+        "sensitive": { "type": "boolean", "description": "Redact this parameter's value from selected AI assistance log excerpts." },
         "min": { "type": "number" },
         "max": { "type": "number" },
         "minLength": { "type": "integer", "minimum": 0 },
@@ -291,11 +292,8 @@
         "resources": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["cpu", "memoryBytes", "pids"],
+          "required": ["pids"],
           "properties": {
-            "cpu": { "type": "number", "minimum": 0.1 },
-            "cpusetCpus": { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$", "maxLength": 128 },
-            "memoryBytes": { "type": "integer", "minimum": 16777216 },
             "shmBytes": { "type": "integer", "minimum": 67108864 },
             "tmpfsBytes": { "type": "integer", "minimum": 67108864, "maximum": 34359738368 },
             "pids": { "type": "integer", "minimum": 64 }

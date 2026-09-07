@@ -1,0 +1,12 @@
+{
+  "task_name": "html-js-filter",
+  "trial_name": "html-js-filter__b",
+  "exception_info": null,
+  "verifier_result": {
+    "rewards": {
+      "reward": 0
+    }
+  },
+  "started_at": "2026-01-01T00:00:00Z",
+  "finished_at": "2026-01-01T00:00:03Z"
+}

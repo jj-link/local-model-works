@@ -267,19 +267,6 @@ func TestV4_TwoRankSchedule(t *testing.T) {
 		}
 	}
 
-	// Pulls are digest-pinned (the validator rejects mutable tags).
-	for _, rt := range []*FakeRuntime{a1.RT, a2.RT} {
-		pinned := false
-		for _, p := range rt.Pulls() {
-			if p == ImageServe+"@"+ImageServeDig {
-				pinned = true
-			}
-		}
-		if !pinned {
-			t.Errorf("pulls = %v, want %s@%s", rt.Pulls(), ImageServe, ImageServeDig)
-		}
-	}
-
 	// Endpoint: rank 0's controller-facing inventory address + base port
 	// (host port = 8100 + rank). Tailscale is preferred when the test host
 	// reports it, so assert inventory membership rather than one fake NIC.

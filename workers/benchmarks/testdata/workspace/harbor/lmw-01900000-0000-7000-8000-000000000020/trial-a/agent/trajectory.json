@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "model": {"name": "local-model"},
+  "steps": [
+    {"observed_at": "2026-01-01T00:00:00Z", "observation": {"kind": "AgentMessage", "message": {"role": "human", "content": "Filter js from html."}}},
+    {"observed_at": "2026-01-01T00:00:01Z", "observation": {"kind": "AgentMessage", "message": {"role": "assistant", "content": "done"}}}
+  ]
+}

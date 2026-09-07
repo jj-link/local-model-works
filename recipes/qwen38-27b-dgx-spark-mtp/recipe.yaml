@@ -9,8 +9,7 @@ metadata:
     RadixArk Qwen3.8-27B NVFP4 on one NVIDIA GB10 DGX Spark with SGLang,
     EAGLE/MTP speculative decoding (3/1/4), native 262K context, FP8 KV
     cache, BF16 GDN state, FlashInfer attention, 8192-token prefill
-    chunks, reasoning and tool calling, and the DGX Spark cookbook CPU
-    pin to the ten Cortex-X5 cores. LMW pins the image and every weight
+    chunks, reasoning and tool calling. LMW pins the image and every weight
     snapshot; the upstream imperative start/stop scripts are reviewed
     for layout drift but never executed. The packed-FP4 checkpoint
     below mirrors the deployment already running on Spark1; the newer
@@ -152,9 +151,6 @@ workloads:
       timeoutSeconds: 5
       failureThreshold: 30
     resources:
-      cpu: 10
-      cpusetCpus: "5-9,15-19"
-      memoryBytes: 124554051584
       shmBytes: 34359738368
       tmpfsBytes: 8589934592
       pids: 8192

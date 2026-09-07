@@ -353,6 +353,12 @@ export default function DeploymentDetailRoute() {
             >
               View crash logs
             </Link>
+            <Link
+              to={`/library/recipes/packages/${encodeURIComponent(d.recipe_digest)}?deployment=${encodeURIComponent(d.id)}&section=configuration`}
+              className="control w-fit font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Help fix this configuration
+            </Link>
           </div>
         </Section>
       ) : null}

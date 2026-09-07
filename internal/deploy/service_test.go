@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jj-link/local-model-works/internal/ca"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/events"
@@ -35,6 +34,7 @@ type fakeNodes struct {
 	online map[string]bool
 	msgs   []sentMsg
 	onSend func(*agentv1.ServerMessage)
+	settle func()
 }
 
 type sentMsg struct {
@@ -70,6 +70,9 @@ func (f *fakeNodes) setOnline(nodeID string, on bool) {
 }
 
 func (f *fakeNodes) transferCommands() []sentMsg {
+	if f.settle != nil {
+		f.settle()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sentMsg
@@ -82,6 +85,9 @@ func (f *fakeNodes) transferCommands() []sentMsg {
 }
 
 func (f *fakeNodes) workloadCommands() []sentMsg {
+	if f.settle != nil {
+		f.settle()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sentMsg
@@ -94,6 +100,9 @@ func (f *fakeNodes) workloadCommands() []sentMsg {
 }
 
 func (f *fakeNodes) artifactCommands() []sentMsg {
+	if f.settle != nil {
+		f.settle()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sentMsg
@@ -106,6 +115,9 @@ func (f *fakeNodes) artifactCommands() []sentMsg {
 }
 
 func (f *fakeNodes) extensionCommands() []sentMsg {
+	if f.settle != nil {
+		f.settle()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sentMsg
@@ -136,16 +148,16 @@ func newHarness(t *testing.T) *harness {
 	q := db.New(sqlDB)
 	bus := events.NewEventBus(q)
 	nodes := &fakeNodes{online: map[string]bool{}}
-	caCA, err := ca.New()
-	if err != nil {
-		t.Fatalf("ca: %v", err)
-	}
-	svc := New(sqlDB, q, bus, runs.New(sqlDB, q, bus, t.TempDir()), nodes, caCA)
+	svc := New(sqlDB, q, bus, runs.New(sqlDB, q, bus, t.TempDir()), nodes)
+	svc.downloads = &fakeAcquisition{service: svc}
+	nodes.settle = func() { waitAcquisition(t, svc) }
+	t.Cleanup(nodes.settle)
 	return &harness{svc: svc, nodes: nodes, q: q, dbh: sqlDB}
 }
 
 func inventoryWith(accs []inventory.Accelerator, peerListen string) string {
 	b, _ := json.Marshal(inventory.Inventory{
+		CacheRoots:   []inventory.CacheRoot{{Path: "/cache", Writable: true}},
 		Hostname:     "testhost",
 		Accelerators: accs,
 		Interfaces: []inventory.Interface{
@@ -257,7 +269,7 @@ const noArtifactManifest = `{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
 		"args": ["--port", "8000"],
-		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+		"resources": {"pids": 64},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
 	}]
@@ -270,7 +282,7 @@ const gpuManifest = `{
 	"workloads": [{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
-		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+		"resources": {"pids": 64},
 		"devices": {"accelerator": {"all": true}},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
@@ -290,7 +302,7 @@ const artifactManifest = `{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
 		"args": ["--model", "{{ .Artifacts.model }}"],
-		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+		"resources": {"pids": 64},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/health", "port": 8000}}
 	}]
@@ -348,7 +360,7 @@ func TestDeploymentModelAndEngineViews(t *testing.T) {
 				t.Fatalf("plan endpoint model = %q, want %q", plan.Endpoint.Model, tt.expectedModel)
 			}
 
-			deployment, err := h.svc.Create(context.Background(), CreateRequest{
+			deployment, err := h.createReviewed(context.Background(), CreateRequest{
 				RecipeDigest: "recipe-model",
 				Parameters:   tt.parameters,
 			})
@@ -381,7 +393,7 @@ const endpointManifest = `{
 	"workloads": [{
 		"image": {"reference": "test-serve:latest"},
 		"command": ["serve"],
-		"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+		"resources": {"pids": 64},
 		"devices": {"accelerator": {"all": true}},
 		"ports": [{"container": 8000}],
 		"readiness": {"httpGet": {"path": "/v1/health", "port": 8000}}
@@ -395,7 +407,7 @@ func TestDeploymentEndpointMetadataSurvivesRead(t *testing.T) {
 	h := newHarness(t)
 	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
 	h.seedRecipe(t, "endpoint-serve", endpointManifest)
-	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
+	dep, err := h.createReviewed(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -419,7 +431,7 @@ func TestDeploymentLegacyEndpointFallsBackToRecipe(t *testing.T) {
 	h := newHarness(t)
 	h.seedNode(t, "node-a", gpuAccs("a"), "100.86.3.45:4433")
 	h.seedRecipe(t, "endpoint-serve", endpointManifest)
-	dep, err := h.svc.Create(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
+	dep, err := h.createReviewed(context.Background(), CreateRequest{RecipeDigest: "endpoint-serve", Placements: []PlacementOverride{{NodeID: "node-a", Rank: 0}}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -438,16 +450,19 @@ func TestDeploymentLegacyEndpointFallsBackToRecipe(t *testing.T) {
 
 func (h *harness) createDeployment(t *testing.T, digest string, overrides ...PlacementOverride) *Deployment {
 	t.Helper()
-	dep, err := h.svc.Create(context.Background(), CreateRequest{
+	dep, err := h.createReviewed(context.Background(), CreateRequest{
 		RecipeDigest: digest, Placements: overrides,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	waitAcquisition(t, h.svc)
 	return dep
 }
 
 func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
+	// Historical immutable recipes may still contain removed fields. They must
+	// not impose CPU or RAM restrictions when rendered by the current launcher.
 	manifest := `{
 	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"hard","version":"1"},
 	  "workloads":[{
@@ -470,7 +485,7 @@ func TestRenderedSpecUsesNodeIdentityAndHardeningDefaults(t *testing.T) {
 	}
 	if spec.NetworkMode != "none" || !spec.ReadonlyRootfs || !spec.NoNewPrivileges ||
 		len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" ||
-		spec.CPU != 2 || spec.CPUSetCpus != "5-9,15-19" || spec.MemoryBytes != 33554432 || spec.PidsLimit != 128 || spec.TmpfsBytes != 67108864 {
+		spec.CPU != 0 || spec.MemoryBytes != 0 || spec.PidsLimit != 128 || spec.TmpfsBytes != 67108864 {
 		t.Fatalf("hardened spec = %+v", spec)
 	}
 	if len(spec.Cmd) < 4 || spec.Cmd[1] != "node-exact" {
@@ -486,7 +501,7 @@ func TestHostPreparationRunsBetweenCreateAndStart(t *testing.T) {
 	    "command":["serve"],"args":[],
 	    "hostPreparation":{"requireSwap":true,"swappiness":0,"dropPageCache":true},
 	    "permissions":["host.memory-tuning"],
-	    "resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	    "resources":{"pids":64}
 	  }]
 	}`
 	h := newHarness(t)
@@ -510,11 +525,9 @@ func TestHostPreparationRunsBetweenCreateAndStart(t *testing.T) {
 	}
 	deployment := h.createDeployment(t, "recipe-host-prep", PlacementOverride{NodeID: "node", Rank: 0})
 
-	pull := h.nodes.workloadCommands()[0].msg.GetWorkloadCommand()
-	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: pull.GetCommandId(), Ok: true})
-	create := h.nodes.workloadCommands()[1].msg.GetWorkloadCommand()
+	create := h.nodes.workloadCommands()[0].msg.GetWorkloadCommand()
 	if create.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
-		t.Fatalf("operation after pull = %s, want CREATE", create.GetOp())
+		t.Fatalf("operation after acquisition = %s, want CREATE", create.GetOp())
 	}
 	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: create.GetCommandId(), Ok: true})
 
@@ -543,152 +556,6 @@ func TestHostPreparationRunsBetweenCreateAndStart(t *testing.T) {
 	}
 }
 
-func TestPlanBlocksArtifactDownloadWhenCacheStorageIsInsufficient(t *testing.T) {
-	revision := strings.Repeat("a", 40)
-	identity := "hf://Acme/Big@" + revision
-	manifest := `{
-	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"storage","version":"1"},
-	  "artifacts":[{
-	    "name":"model","kind":"model","sizeBytes":2147483648,
-	    "source":{"type":"huggingface","identity":"hf://Acme/Big","revision":"` + revision + `"},
-	    "mount":"/models/model"
-	  }],
-	  "workloads":[{
-	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
-	  }]
-	}`
-	h := newHarness(t)
-	h.seedNode(t, "node", nil, "")
-	inventoryJSON, err := json.Marshal(inventory.Inventory{
-		Hostname:   "node",
-		CacheRoots: []inventory.CacheRoot{{Path: "/var/lib/lmw"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.q.SetNodeInventory(context.Background(), db.SetNodeInventoryParams{
-		ID: "node", Inventory: nullString(string(inventoryJSON)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.q.InsertTelemetry5s(context.Background(), db.InsertTelemetry5sParams{
-		NodeID: "node",
-		Ts:     time.Now().Unix(),
-		Payload: `{"filesystems":[{
-			"mount_path":"/var/lib/lmw","used_bytes":9663676416,"total_bytes":10737418240
-		}]}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	h.seedArtifact(t, "big-model", identity)
-	h.seedRecipe(t, "recipe-storage", manifest)
-
-	plan, err := h.svc.Plan(context.Background(), PlanRequest{
-		RecipeDigest: "recipe-storage",
-		Placements:   []PlacementOverride{{NodeID: "node", Rank: 0}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Ready || len(plan.Storage) != 1 || plan.Storage[0].Sufficient ||
-		plan.Storage[0].RequiredBytes != 2<<30 || plan.Storage[0].AvailableBytes != 1<<30 {
-		t.Fatalf("storage preflight = ready %t, preview %+v", plan.Ready, plan.Storage)
-	}
-	found := false
-	for _, diagnostic := range plan.Diagnostics {
-		if diagnostic.Code == "storage.insufficient" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("diagnostics = %+v, want storage.insufficient", plan.Diagnostics)
-	}
-}
-
-func TestPlanCacheRootWritabilityDiagnostics(t *testing.T) {
-	revision := strings.Repeat("c", 40)
-	identity := "hf://Acme/Big@" + revision
-	manifest := `{
-	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"storage","version":"1"},
-	  "artifacts":[{
-	    "name":"model","kind":"model","sizeBytes":1048576,
-	    "source":{"type":"huggingface","identity":"hf://Acme/Big","revision":"` + revision + `"},
-	    "mount":"/models/model"
-	  }],
-	  "workloads":[{
-	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
-	  }]
-	}`
-	cases := []struct {
-		name      string
-		roots     []inventory.CacheRoot
-		wantCode  string
-		wantRes   string
-		wantReady bool
-	}{
-		{"writable root plans ready", []inventory.CacheRoot{{Path: "/var/lib/lmw", Writable: true}}, "", "", true},
-		{"read-only root blocks", []inventory.CacheRoot{{Path: "/var/lib/lmw"}}, "storage.cache_root_readonly", "node:node", false},
-		{"unprobed roots block", nil, "storage.cache_root_unprobed", "node:node", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t)
-			h.seedNode(t, "node", nil, "")
-			inventoryJSON, err := json.Marshal(inventory.Inventory{
-				Hostname:   "node",
-				CacheRoots: tc.roots,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := h.q.SetNodeInventory(context.Background(), db.SetNodeInventoryParams{
-				ID: "node", Inventory: nullString(string(inventoryJSON)),
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.q.InsertTelemetry5s(context.Background(), db.InsertTelemetry5sParams{
-				NodeID: "node",
-				Ts:     time.Now().Unix(),
-				Payload: `{"filesystems":[{
-					"mount_path":"/var/lib/lmw","used_bytes":1048576,"total_bytes":10737418240
-				}]}`,
-			}); err != nil {
-				t.Fatal(err)
-			}
-			h.seedArtifact(t, "big-model", identity)
-			h.seedRecipe(t, "recipe-storage", manifest)
-
-			plan, err := h.svc.Plan(context.Background(), PlanRequest{
-				RecipeDigest: "recipe-storage",
-				Placements:   []PlacementOverride{{NodeID: "node", Rank: 0}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// The web repair banner keys off resource ("node:<id>"), so pin
-			// it alongside the code.
-			found := false
-			for _, diagnostic := range plan.Diagnostics {
-				res := ""
-				if diagnostic.Resource != nil {
-					res = *diagnostic.Resource
-				}
-				if diagnostic.Code == tc.wantCode && res == tc.wantRes {
-					found = true
-				}
-			}
-			if tc.wantCode != "" && !found {
-				t.Fatalf("diagnostics = %+v, want %s on %q", plan.Diagnostics, tc.wantCode, tc.wantRes)
-			}
-			if plan.Ready != tc.wantReady {
-				t.Fatalf("plan ready = %t, want %t (diagnostics %+v)", plan.Ready, tc.wantReady, plan.Diagnostics)
-			}
-		})
-	}
-}
-
 func TestWorkersFirstPersistsHeadWaitAndStartsWorkerFirst(t *testing.T) {
 	manifest := `{
 	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"worker-first","version":"1"},
@@ -696,7 +563,7 @@ func TestWorkersFirstPersistsHeadWaitAndStartsWorkerFirst(t *testing.T) {
 	  "workloads":[{
 	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	    "command":["serve"],"args":[],"ranks":[0,1],"startOrder":"workers-first",
-	    "resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	    "resources":{"pids":64}
 	  }]
 	}`
 	h := newHarness(t)
@@ -708,14 +575,6 @@ func TestWorkersFirstPersistsHeadWaitAndStartsWorkerFirst(t *testing.T) {
 		PlacementOverride{NodeID: "worker", Rank: 1},
 	)
 
-	initial := append([]sentMsg(nil), h.nodes.workloadCommands()...)
-	for _, sent := range initial {
-		command := sent.msg.GetWorkloadCommand()
-		if command.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
-			t.Fatalf("initial operation = %s, want PULL", command.GetOp())
-		}
-		h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
-	}
 	for _, sent := range append([]sentMsg(nil), h.nodes.workloadCommands()...) {
 		command := sent.msg.GetWorkloadCommand()
 		if sent.nodeID == "head" && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
@@ -771,7 +630,7 @@ func TestRenderedSpecSetsMemlockUlimitForRDMA(t *testing.T) {
 	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"%s","version":"1"},
 	  "workloads":[{
 	    "image":{"reference":"example:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}%s%s
+	    "command":["serve"],"args":[],"resources":{"pids":64}%s%s
 	  }]
 	}`
 
@@ -833,7 +692,7 @@ func TestExtensionCommandsBracketWorkload(t *testing.T) {
 	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"extensions","version":"1"},
 	  "workloads":[{
 	    "image":{"reference":"workload:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-	    "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}
+	    "command":["serve"],"args":[],"resources":{"pids":64}
 	  }],"prepare":` + extension + `,"verify":` + extension + `
 	}`
 	h := newHarness(t)
@@ -868,11 +727,10 @@ func TestExtensionCommandsBracketWorkload(t *testing.T) {
 		CommandId: prepare.GetCommandId(), Ok: true, OutputJson: []byte(`{\"version\":1}`),
 	})
 	workloads := h.nodes.workloadCommands()
-	if len(workloads) != 1 || workloads[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
+	if len(workloads) != 1 || workloads[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
 		t.Fatalf("workloads after prepare = %+v", workloads)
 	}
 	for _, operation := range []agentv1.WorkloadOp{
-		agentv1.WorkloadOp_WORKLOAD_OP_PULL,
 		agentv1.WorkloadOp_WORKLOAD_OP_CREATE,
 		agentv1.WorkloadOp_WORKLOAD_OP_START,
 	} {
@@ -926,9 +784,9 @@ func TestVariantSelectionUsesActuallyPlacedAccelerator(t *testing.T) {
 	  "workloads":[
 	    {"match":{"accelerator":{"vendor":"nvidia","architectures":["sm_120"]}},
 	     "image":{"reference":"sm120:v1","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-	     "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}},
+	     "command":["serve"],"args":[],"resources":{"pids":64}},
 	    {"image":{"reference":"fallback:v1","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-	     "command":["serve"],"args":[],"resources":{"cpu":1,"memoryBytes":16777216,"pids":64}}
+	     "command":["serve"],"args":[],"resources":{"pids":64}}
 	  ]
 	}`
 	h := newHarness(t)
@@ -948,6 +806,7 @@ func TestVariantSelectionUsesActuallyPlacedAccelerator(t *testing.T) {
 
 func deploymentRow(t *testing.T, h *harness, depID string) db.GetDeploymentRow {
 	t.Helper()
+	waitAcquisition(t, h.svc)
 	row, err := h.q.GetDeployment(context.Background(), depID)
 	if err != nil {
 		t.Fatalf("get deployment: %v", err)
@@ -1022,7 +881,7 @@ func TestPlanCreatePersistsWorkloadIndex(t *testing.T) {
 	}
 
 	// A stale plan digest must be rejected.
-	if _, err := h.svc.Create(context.Background(), CreateRequest{
+	if _, err := h.createReviewed(context.Background(), CreateRequest{
 		RecipeDigest: "recipe-1", PlanDigest: "sha256:stale",
 	}); err == nil {
 		t.Fatal("create with stale plan digest: want error")
@@ -1066,287 +925,6 @@ func TestPlanDigestIgnoresLivePreflightTelemetry(t *testing.T) {
 	}
 }
 
-func TestHFOriginFetchIsPreparableAndDispatched(t *testing.T) {
-	revision := strings.Repeat("a", 40)
-	identity := "hf://Acme/Model@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
-	)
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedArtifact(t, "hf-artifact", identity)
-	h.seedRecipe(t, "recipe-origin", manifest)
-	plan, err := h.svc.Plan(context.Background(), PlanRequest{
-		RecipeDigest: "recipe-origin", Placements: []PlacementOverride{{NodeID: "dest", Rank: 0}},
-	})
-	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
-		t.Fatalf("origin plan = %+v, err=%v", plan, err)
-	}
-	deployment := h.createDeployment(t, "recipe-origin", PlacementOverride{NodeID: "dest", Rank: 0})
-	commands := h.nodes.artifactCommands()
-	if len(commands) != 1 || commands[0].nodeID != "dest" ||
-		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
-		t.Fatalf("artifact commands = %+v", commands)
-	}
-	if len(h.nodes.workloadCommands()) != 0 {
-		t.Fatal("workload dispatched before origin placement validation")
-	}
-	command := commands[0].msg.GetArtifactCommand()
-	h.svc.OnArtifactProgress(context.Background(), &agentv1.ArtifactProgress{
-		CommandId: command.GetCommandId(), ArtifactIdentity: identity, Phase: "downloading",
-		CurrentFile: "model-00001.safetensors", BytesDone: 64, BytesTotal: 128,
-		FilesDone: 1, FilesTotal: 2,
-	})
-	activeRow := deploymentRow(t, h, deployment.ID)
-	activeRun, err := h.svc.runs.Get(context.Background(), activeRow.RunID.String)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ranks, ok := activeRun.Progress["ranks"].([]any)
-	if !ok || len(ranks) != 1 {
-		t.Fatalf("serve progress = %#v", activeRun.Progress)
-	}
-	rankProgress, _ := ranks[0].(map[string]any)
-	if rankProgress["phase"] != "downloading" || rankProgress["current_file"] != "model-00001.safetensors" ||
-		rankProgress["bytes_done"] != float64(64) {
-		t.Fatalf("rank progress = %#v", rankProgress)
-	}
-	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: false, Error: "origin unavailable"})
-	row := deploymentRow(t, h, deployment.ID)
-	if row.ObservedState != "failed" || !strings.Contains(row.Diagnostics, "artifact.fetch_failed") {
-		t.Fatalf("deployment after artifact failure = %+v", row)
-	}
-}
-
-func TestHFOriginFetchIgnoresOfflineCachedSource(t *testing.T) {
-	revision := strings.Repeat("b", 40)
-	identity := "hf://Acme/Model@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
-	)
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedNode(t, "offline-source", gpuAccs("s"), "100.86.3.45:4433")
-	h.seedArtifact(t, "hf-artifact-offline-source", identity)
-	h.seedPlacement(t, "hf-artifact-offline-source", "offline-source", "/var/lib/lmw/artifacts/model", "valid")
-	h.seedRecipe(t, "recipe-origin-offline-source", manifest)
-	h.nodes.online["offline-source"] = false
-
-	plan, err := h.svc.Plan(context.Background(), PlanRequest{
-		RecipeDigest: "recipe-origin-offline-source",
-		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
-	})
-	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
-		t.Fatalf("offline-source plan = %+v, err=%v", plan, err)
-	}
-	h.createDeployment(t, "recipe-origin-offline-source", PlacementOverride{NodeID: "dest", Rank: 0})
-	commands := h.nodes.artifactCommands()
-	if len(commands) != 1 || commands[0].nodeID != "dest" ||
-		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
-		t.Fatalf("artifact commands = %+v", commands)
-	}
-}
-
-func TestHFOriginFetchResumesDestinationPartialBeforePeerCopy(t *testing.T) {
-	revision := strings.Repeat("d", 40)
-	identity := "hf://Acme/Model@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
-	)
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedNode(t, "source", gpuAccs("s"), "100.86.3.45:4433")
-	h.seedArtifact(t, "hf-artifact-partial-dest", identity)
-	h.seedPlacement(t, "hf-artifact-partial-dest", "source", "/var/lib/lmw/artifacts/model", "valid")
-	h.seedPlacement(t, "hf-artifact-partial-dest", "dest", "/var/lib/lmw/artifacts/model", "invalid")
-	h.seedRecipe(t, "recipe-origin-partial-dest", manifest)
-
-	plan, err := h.svc.Plan(context.Background(), PlanRequest{
-		RecipeDigest: "recipe-origin-partial-dest",
-		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
-	})
-	if err != nil || !plan.Ready || len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "origin" {
-		t.Fatalf("partial-destination plan = %+v, err=%v", plan, err)
-	}
-	h.createDeployment(t, "recipe-origin-partial-dest", PlacementOverride{NodeID: "dest", Rank: 0})
-	commands := h.nodes.artifactCommands()
-	if len(commands) != 1 || commands[0].nodeID != "dest" ||
-		commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
-		t.Fatalf("artifact commands = %+v", commands)
-	}
-	if transfers := h.nodes.transferCommands(); len(transfers) != 0 {
-		t.Fatalf("peer transfers = %+v, want resumable origin fetch", transfers)
-	}
-}
-
-func TestCompletedArtifactProgressDoesNotRegressImagePullPhase(t *testing.T) {
-	revision := strings.Repeat("c", 40)
-	identity := "hf://Acme/Model@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
-	)
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedArtifact(t, "hf-artifact", identity)
-	h.seedRecipe(t, "recipe-origin-progress", manifest)
-	deployment := h.createDeployment(t, "recipe-origin-progress", PlacementOverride{NodeID: "dest", Rank: 0})
-	command := h.nodes.artifactCommands()[0].msg.GetArtifactCommand()
-
-	h.seedPlacement(t, "hf-artifact", "dest", "/var/lib/lmw/artifacts/model", "valid")
-	h.svc.OnPlacementReport(context.Background(), "dest", identity, "valid")
-	workloadCommands := h.nodes.workloadCommands()
-	if len(workloadCommands) != 1 ||
-		workloadCommands[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
-		t.Fatalf("workload commands after placement = %+v, want pull", workloadCommands)
-	}
-
-	h.svc.OnArtifactProgress(context.Background(), &agentv1.ArtifactProgress{
-		CommandId: command.GetCommandId(), ArtifactIdentity: identity, Phase: "complete",
-		BytesDone: 128, BytesTotal: 128, FilesDone: 2, FilesTotal: 2,
-	})
-	row := deploymentRow(t, h, deployment.ID)
-	run, err := h.svc.runs.Get(context.Background(), row.RunID.String)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ranks, ok := run.Progress["ranks"].([]any)
-	if !ok || len(ranks) != 1 {
-		t.Fatalf("serve progress = %#v", run.Progress)
-	}
-	rankProgress, _ := ranks[0].(map[string]any)
-	if rankProgress["phase"] != "pulling_image" {
-		t.Fatalf("rank phase = %#v, want pulling_image", rankProgress["phase"])
-	}
-}
-
-func TestStopCancelsOriginFetchBeforeContainerCreation(t *testing.T) {
-	revision := strings.Repeat("b", 40)
-	identity := "hf://Acme/LargeModel@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/LargeModel", "revision": "`+revision+`"}`,
-	)
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedArtifact(t, "hf-large", identity)
-	h.seedRecipe(t, "recipe-cancel-origin", manifest)
-	deployment := h.createDeployment(t, "recipe-cancel-origin", PlacementOverride{NodeID: "dest", Rank: 0})
-	commands := h.nodes.artifactCommands()
-	if len(commands) != 1 {
-		t.Fatalf("initial artifact commands = %+v", commands)
-	}
-	fetchID := commands[0].msg.GetArtifactCommand().GetCommandId()
-
-	stopped, err := h.svc.Stop(context.Background(), deployment.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stopped.ObservedState != "stopped" {
-		t.Fatalf("stop observed state = %s", stopped.ObservedState)
-	}
-	commands = h.nodes.artifactCommands()
-	if len(commands) != 2 {
-		t.Fatalf("artifact commands after stop = %+v", commands)
-	}
-	cancel := commands[1].msg.GetArtifactCommand()
-	if cancel.GetOp() != agentv1.ArtifactOp_ARTIFACT_OP_CANCEL || cancel.GetTargetCommandId() != fetchID {
-		t.Fatalf("cancel command = %+v", cancel)
-	}
-	if _, exists := h.svc.inflightPeek(fetchID); exists {
-		t.Fatal("cancelled fetch remained inflight")
-	}
-}
-
-// TestMissingArtifactGatesThenUnblocks: a rank whose node lacks a valid
-// placement is gated; a peer transfer is initiated; the destination's valid
-// placement report marks the transfer succeeded and re-drives dispatch.
-func TestMissingArtifactGatesThenUnblocks(t *testing.T) {
-	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
-	h.seedArtifact(t, "art-1", identity)
-	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
-	h.seedRecipe(t, "recipe-art", artifactManifest)
-	plan, err := h.svc.Plan(context.Background(), PlanRequest{
-		RecipeDigest: "recipe-art",
-		Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
-	})
-	if err != nil {
-		t.Fatalf("plan: %v", err)
-	}
-	if len(plan.Transfers) != 1 || plan.Transfers[0].SourceNode != "src" || plan.Transfers[0].DestNode != "dest" {
-		t.Fatalf("transfer previews = %+v", plan.Transfers)
-	}
-	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
-
-	// Gated: no workload command may have gone out before the transfer.
-	if wcs := h.nodes.workloadCommands(); len(wcs) != 0 {
-		t.Fatalf("workload commands before gate passed: %+v", wcs)
-	}
-	tcs := h.nodes.transferCommands()
-	if len(tcs) != 1 {
-		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
-	}
-	tc := tcs[0].msg.GetTransferCommand()
-	tid := tc.GetTransferId()
-	if tcs[0].nodeID != "dest" || tc.GetRole() != "dest" || tc.GetPeerAddress() != "100.86.3.45:4433" {
-		t.Fatalf("transfer command = node:%s command:%+v", tcs[0].nodeID, tc)
-	}
-	if state, _ := transferState(t, h, tid); state != "pending" {
-		t.Fatalf("transfer state = %s, want pending", state)
-	}
-	h.svc.OnTransferProgress(context.Background(), &agentv1.TransferProgress{
-		TransferId: tid, BytesDone: 64, BytesTotal: 128,
-	})
-	progressRow := deploymentRow(t, h, dep.ID)
-	activeRun, err := h.svc.runs.Get(context.Background(), progressRow.RunID.String)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ranks, ok := activeRun.Progress["ranks"].([]any)
-	if !ok || len(ranks) != 1 {
-		t.Fatalf("serve progress = %#v", activeRun.Progress)
-	}
-	rankProgress, _ := ranks[0].(map[string]any)
-	if rankProgress["phase"] != "downloading" || rankProgress["artifact"] != identity ||
-		rankProgress["bytes_done"] != float64(64) || rankProgress["bytes_total"] != float64(128) ||
-		rankProgress["message"] != "copying verified cache from another fleet node" {
-		t.Fatalf("rank progress = %#v", rankProgress)
-	}
-
-	// Destination writes the copy and reports it valid.
-	h.seedPlacement(t, "art-1", "dest", "/var/lib/lmw/artifacts/model", "valid")
-	h.svc.OnPlacementReport(context.Background(), "dest", identity, "valid")
-
-	if state, _ := transferState(t, h, tid); state != "succeeded" {
-		t.Fatalf("transfer state = %s, want succeeded", state)
-	}
-	wcs := h.nodes.workloadCommands()
-	if len(wcs) != 1 || wcs[0].nodeID != "dest" ||
-		wcs[0].msg.GetWorkloadCommand().GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
-		t.Fatalf("post-gate workload commands = %+v", wcs)
-	}
-	pull := wcs[0].msg.GetWorkloadCommand()
-	h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{
-		CommandId: pull.GetCommandId(), Ok: true,
-	})
-
-	row := deploymentRow(t, h, dep.ID)
-	if got := ParseDispatch(row.Dispatch).Get(0); got != PhasePulled {
-		t.Fatalf("rank 0 phase = %s, want %s", got, PhasePulled)
-	}
-}
-
 func TestPeerTransferUsesFabricAddressForWildcardListener(t *testing.T) {
 	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	h := newHarness(t)
@@ -1378,73 +956,6 @@ func TestPeerTransferUsesFabricAddressForWildcardListener(t *testing.T) {
 	commands := h.nodes.transferCommands()
 	if len(commands) != 1 || commands[0].msg.GetTransferCommand().GetPeerAddress() != "10.0.0.2:9444" {
 		t.Fatalf("transfer commands = %+v, want fabric-routable source address", commands)
-	}
-}
-
-// TestInvalidPlacementFailsTransfer: a placement report with state != valid
-// marks the in-flight transfer failed and fails the affected rank.
-func TestInvalidPlacementFailsTransfer(t *testing.T) {
-	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
-	h.seedArtifact(t, "art-1", identity)
-	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
-	h.seedRecipe(t, "recipe-art", artifactManifest)
-
-	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
-	tcs := h.nodes.transferCommands()
-	if len(tcs) != 1 {
-		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
-	}
-	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
-
-	h.seedPlacement(t, "art-1", "dest", "/var/lib/lmw/artifacts/model", "invalid")
-	h.svc.OnPlacementReport(context.Background(), "dest", identity, "invalid")
-
-	state, diagnostic := transferState(t, h, tid)
-	if state != "failed" || !strings.Contains(diagnostic, "invalid placement") {
-		t.Fatalf("transfer = (%s, %s), want failed/invalid", state, diagnostic)
-	}
-	if got := runState(t, h, dep.RunID); got != string(runs.Failed) {
-		t.Fatalf("run state = %s, want %s", got, runs.Failed)
-	}
-}
-
-// TestFailedTransferAckFailsRank: a failed transfer ack marks the transfer
-// row failed and fails the affected rank's run.
-func TestFailedTransferAckFailsRank(t *testing.T) {
-	const identity = "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	h := newHarness(t)
-	h.seedNode(t, "dest", gpuAccs("d"), "")
-	h.seedNode(t, "src", gpuAccs("s"), "100.86.3.45:4433")
-	h.seedArtifact(t, "art-1", identity)
-	h.seedPlacement(t, "art-1", "src", "/var/lib/lmw/artifacts/model", "valid")
-	h.seedRecipe(t, "recipe-art", artifactManifest)
-
-	dep := h.createDeployment(t, "recipe-art", PlacementOverride{NodeID: "dest", Rank: 0})
-	tcs := h.nodes.transferCommands()
-	if len(tcs) != 1 {
-		t.Fatalf("transfer commands = %d, want one destination pull command", len(tcs))
-	}
-	tid := tcs[0].msg.GetTransferCommand().GetTransferId()
-
-	h.svc.OnTransferResult(context.Background(), tid, "dial: connection refused")
-
-	state, diagnostic := transferState(t, h, tid)
-	if state != "failed" || !strings.Contains(diagnostic, "connection refused") {
-		t.Fatalf("transfer = (%s, %s), want failed/refused", state, diagnostic)
-	}
-	if got := runState(t, h, dep.RunID); got != string(runs.Failed) {
-		t.Fatalf("run state = %s, want %s", got, runs.Failed)
-	}
-	row := deploymentRow(t, h, dep.ID)
-	var codes []string
-	for _, d := range diag.Decode(row.Diagnostics) {
-		codes = append(codes, d.Code)
-	}
-	if !contains(codes, "artifact.transfer_failed") {
-		t.Fatalf("deployment diagnostics = %v, want artifact.transfer_failed", codes)
 	}
 }
 
@@ -1822,8 +1333,8 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 		t.Fatalf("start did not create a fresh run")
 	}
 	row = deploymentRow(t, h, dep.ID)
-	if got := ParseDispatch(row.Dispatch).Get(0); got != PhaseNone && got != PhasePrepared {
-		t.Fatalf("rank 0 phase after start = %s, want none/prepared", got)
+	if got := ParseDispatch(row.Dispatch).Get(0); got != PhasePulled {
+		t.Fatalf("rank 0 phase after start = %s, want inspected resources", got)
 	}
 	var n int
 	if err := h.dbh.QueryRowContext(ctx,
@@ -1832,8 +1343,8 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 		t.Fatalf("active gpu leases = %d (err %v), want 1", n, err)
 	}
 	cmds := h.nodes.workloadCommands()
-	if last := cmds[len(cmds)-1].msg.GetWorkloadCommand().GetOp(); last != agentv1.WorkloadOp_WORKLOAD_OP_PULL {
-		t.Fatalf("last workload op after start = %v, want PULL", last)
+	if last := cmds[len(cmds)-1].msg.GetWorkloadCommand().GetOp(); last != agentv1.WorkloadOp_WORKLOAD_OP_CREATE {
+		t.Fatalf("last workload op after start = %v, want CREATE without PULL", last)
 	}
 
 	// Starting an already-running deployment is rejected.
@@ -2170,6 +1681,13 @@ func TestPlanNamesDeploymentOccupyingCompatibleGPU(t *testing.T) {
 	if _, err := h.svc.Stop(ctx, occupant.ID); err != nil {
 		t.Fatalf("stop occupant: %v", err)
 	}
+	waitAcquisition(t, h.svc)
+	for _, command := range h.nodes.workloadCommands() {
+		workload := command.msg.GetWorkloadCommand()
+		if workload.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+			h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: workload.GetCommandId(), Ok: true})
+		}
+	}
 	ready, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: "recipe-gpu"})
 	if err != nil {
 		t.Fatalf("ready plan: %v", err)
@@ -2178,93 +1696,6 @@ func TestPlanNamesDeploymentOccupyingCompatibleGPU(t *testing.T) {
 		t.Fatalf("plan after stop = ready %t placements %+v diagnostics %+v conflicts %+v",
 			ready.Ready, ready.Placements, ready.Diagnostics, ready.Conflicts)
 	}
-}
-
-func TestExactSnapshotPreparationClassification(t *testing.T) {
-	revision := strings.Repeat("e", 40)
-	identity := "hf://Acme/Model@" + revision
-	manifest := strings.ReplaceAll(
-		artifactManifest,
-		`"source": {"type": "local", "identity": "file://sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`"source": {"type": "huggingface", "identity": "hf://Acme/Model", "revision": "`+revision+`"}`,
-	)
-
-	t.Run("manifest missing reconciles locally", func(t *testing.T) {
-		h := newHarness(t)
-		h.seedNode(t, "dest", gpuAccs("d"), "")
-		h.seedArtifact(t, "hf-reconcile", identity)
-		if err := h.q.UpsertPlacement(context.Background(), db.UpsertPlacementParams{
-			ArtifactID: "hf-reconcile", NodeID: "dest",
-			Path: "/var/lib/lmw/artifacts/model", State: "invalid",
-			Diagnostics: diag.Encode([]diag.Diagnostic{{
-				Code: "artifact.snapshot_manifest_missing", Severity: "error",
-				Message: "snapshot completion manifest is missing",
-			}}),
-			SizeBytes: 123,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		h.seedRecipe(t, "recipe-reconcile", manifest)
-
-		plan, err := h.svc.Plan(context.Background(), PlanRequest{
-			RecipeDigest: "recipe-reconcile",
-			Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !plan.Ready || len(plan.Transfers) != 1 {
-			t.Fatalf("reconcile plan = %+v", plan)
-		}
-		preparation := plan.Transfers[0]
-		if preparation.Action != PreparationReconcileLocal || preparation.Bytes != 0 {
-			t.Fatalf("preparation = %+v, want zero-byte local reconciliation", preparation)
-		}
-		if len(plan.Storage) != 0 {
-			t.Fatalf("storage previews = %+v, want none for local reconciliation", plan.Storage)
-		}
-		for _, risk := range plan.Risks {
-			if risk == "artifact:model:origin_download" {
-				t.Fatalf("reconciliation exposed origin-download risk: %+v", plan.Risks)
-			}
-		}
-
-		h.createDeployment(t, "recipe-reconcile", PlacementOverride{NodeID: "dest", Rank: 0})
-		commands := h.nodes.artifactCommands()
-		if len(commands) != 1 || commands[0].nodeID != "dest" ||
-			commands[0].msg.GetArtifactCommand().GetArtifactIdentity() != identity {
-			t.Fatalf("reconciliation commands = %+v", commands)
-		}
-	})
-
-	t.Run("corrupt placement downloads origin", func(t *testing.T) {
-		h := newHarness(t)
-		h.seedNode(t, "dest", gpuAccs("d"), "")
-		h.seedArtifact(t, "hf-corrupt", identity)
-		if err := h.q.UpsertPlacement(context.Background(), db.UpsertPlacementParams{
-			ArtifactID: "hf-corrupt", NodeID: "dest",
-			Path: "/var/lib/lmw/artifacts/model", State: "invalid",
-			Diagnostics: diag.Encode([]diag.Diagnostic{{
-				Code: "artifact.digest_mismatch", Severity: "error",
-				Message: "snapshot shard is corrupt",
-			}}),
-			SizeBytes: 123,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		h.seedRecipe(t, "recipe-corrupt", manifest)
-
-		plan, err := h.svc.Plan(context.Background(), PlanRequest{
-			RecipeDigest: "recipe-corrupt",
-			Placements:   []PlacementOverride{{NodeID: "dest", Rank: 0}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(plan.Transfers) != 1 || plan.Transfers[0].Action != PreparationDownloadOrigin {
-			t.Fatalf("corrupt preparation = %+v, want origin download", plan.Transfers)
-		}
-	})
 }
 
 func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
@@ -2297,7 +1728,7 @@ func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
 			"image": {"reference": "test-serve:latest"},
 			"command": ["serve"],
 			"args": ["--kv-cache", "${setting.kv_cache}"],
-			"resources": {"cpu": 1, "memoryBytes": 16777216, "pids": 64},
+			"resources": {"pids": 64},
 			"ports": [{"container": 8000}]
 		}]
 	}`
@@ -2332,8 +1763,8 @@ func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.Variants["model"] != "small" || first.Variants["drafter"] != "tiny" ||
-		first.Settings["kv_cache"] != "fp8" {
-		t.Fatalf("applied settings = variants:%+v parameters:%+v", first.Variants, first.Settings)
+		first.Parameters["kv_cache"] != "fp8" {
+		t.Fatalf("applied parameters = variants:%+v parameters:%+v", first.Variants, first.Parameters)
 	}
 
 	updated, err := h.svc.UpdateLaunchProfile(ctx, profile.ID, UpsertLaunchProfileRequest{
@@ -2355,7 +1786,7 @@ func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	if second.Digest == first.Digest || second.Variants["model"] != "large" ||
-		second.Settings["kv_cache"] != "bf16" {
+		second.Parameters["kv_cache"] != "bf16" {
 		t.Fatalf("updated plan = %+v; first digest = %s", second, first.Digest)
 	}
 

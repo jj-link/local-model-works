@@ -97,7 +97,7 @@ def post_stream(base, model, prompt, max_tokens, temperature):
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens, "temperature": temperature, "stream": True,
             "stream_options": {"include_usage": True}}
-    req = urllib.request.Request(base.rstrip("/") + "/v1/chat/completions",
+    req = urllib.request.Request(base.rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
     t0 = time.perf_counter(); ttft = None; last = t0; usage = None; chunks = 0; parts = []
     with urllib.request.urlopen(req, timeout=600) as resp:

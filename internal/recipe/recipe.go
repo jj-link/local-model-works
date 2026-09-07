@@ -186,6 +186,7 @@ type Parameter struct {
 	Type        string   `json:"type"`
 	Default     any      `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
+	Sensitive   bool     `json:"sensitive,omitempty"`
 	Min         *float64 `json:"min,omitempty"`
 	Max         *float64 `json:"max,omitempty"`
 	MinLength   *int     `json:"minLength,omitempty"`
@@ -242,12 +243,9 @@ type Port struct {
 }
 
 type Resources struct {
-	CPU         float64 `json:"cpu,omitempty"`
-	CPUSetCpus  string  `json:"cpusetCpus,omitempty"`
-	MemoryBytes int64   `json:"memoryBytes,omitempty"`
-	ShmBytes    int64   `json:"shmBytes,omitempty"`
-	TmpfsBytes  int64   `json:"tmpfsBytes,omitempty"`
-	Pids        int     `json:"pids,omitempty"`
+	ShmBytes   int64 `json:"shmBytes,omitempty"`
+	TmpfsBytes int64 `json:"tmpfsBytes,omitempty"`
+	Pids       int   `json:"pids,omitempty"`
 }
 
 type Devices struct {

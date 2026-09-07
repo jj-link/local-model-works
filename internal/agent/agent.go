@@ -67,13 +67,15 @@ type Agent struct {
 	caPersisted bool
 
 	// certMu guards the live node keypair; new TLS connections pick it up.
-	certMu           sync.RWMutex
-	nodeCert         *tls.Certificate
-	extensionMu      sync.Mutex
-	extensionRuns    map[string]*extensionRun
-	extensionStopped map[string]bool
-	artifactMu       sync.Mutex
-	artifactCancels  map[string]context.CancelFunc
+	certMu             sync.RWMutex
+	nodeCert           *tls.Certificate
+	extensionMu        sync.Mutex
+	extensionRuns      map[string]*extensionRun
+	extensionStopped   map[string]bool
+	acquisitionMu      sync.Mutex
+	acquisitions       map[string]*acquisitionAttempt
+	placementMu        sync.Mutex
+	observedPlacements map[string]placementCandidate
 
 	// sendQ carries agent→server messages that are event-driven (results,
 	// state updates, log chunks, placements, progress). The session send
@@ -96,7 +98,7 @@ func New(cfg config.Agent, version, commit string, rt runtime.Runtime, drv hardw
 		sendQ:            make(chan *agentv1.AgentMessage, 256),
 		extensionRuns:    map[string]*extensionRun{},
 		extensionStopped: map[string]bool{},
-		artifactCancels:  map[string]context.CancelFunc{},
+		acquisitions:     map[string]*acquisitionAttempt{},
 	}
 	a.workloads = newWorkloads(a)
 	return a
@@ -105,6 +107,7 @@ func New(cfg config.Agent, version, commit string, rt runtime.Runtime, drv hardw
 // Run is the agent's whole lifetime: enroll once, then keep the session
 // alive with bounded backoff until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
+	defer a.stopAcquisitions()
 	dirs := []string{
 		a.cfg.StateRoot, a.cfg.CADir(), a.cfg.TransferDir(), a.cfg.LogDir(), a.cfg.Workspace,
 	}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "model": {
+    "name": "local-model"
+  },
+  "steps": [
+    {
+      "observation": {
+        "kind": "AgentMessage",
+        "message": {
+          "role": "human",
+          "content": "Filter js from html."
+        }
+      }
+    }
+  ]
+}

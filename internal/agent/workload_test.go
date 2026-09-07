@@ -26,6 +26,13 @@ func (r *ownershipRuntime) Pull(context.Context, *runtime.PullSpec) error {
 	r.calls = append(r.calls, "pull")
 	return nil
 }
+func (r *ownershipRuntime) InspectImage(context.Context, string, string) (*runtime.ImageInfo, error) {
+	r.calls = append(r.calls, "inspect-image")
+	return nil, errors.New("image missing")
+}
+func (r *ownershipRuntime) ImageStorage(context.Context) (*runtime.ImageStorageInfo, error) {
+	return &runtime.ImageStorageInfo{Root: "/var/lib/docker", Filesystem: "test", TotalBytes: 1 << 40, FreeBytes: 1 << 39}, nil
+}
 func (r *ownershipRuntime) PrepareHost(context.Context, *runtime.ContainerSpec) error {
 	r.calls = append(r.calls, "host-prepare")
 	return nil

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { ApiError, setOnUnauthorized } from "~/lib/api/client";
@@ -23,11 +23,21 @@ export default function LoginRoute() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const from = (location.state as { from?: string } | null)?.from;
-  const target = from && from.startsWith("/") ? from : "/";
+  const [params] = useSearchParams();
+  // Reauth mode: the session cookie is still valid but the one-time CSRF
+  // token is gone, so the operator must sign in again to recover the
+  // ability to take actions. Unlike a normal /login visit, a valid cookie
+  // must NOT bounce to the Overview — that is what silently discarded the
+  // action (recipe import, launch) they were mid-way through.
+  const reauth = params.get("reauth") === "1";
+  const nextParam = params.get("next");
+  const candidate =
+    (location.state as { from?: string } | null)?.from ??
+    (nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : undefined);
+  const target = candidate && candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
 
-  // Already signed in? Straight to the console.
-  if (session) {
+  // Already signed in? Straight to the console — unless we are re-verifying.
+  if (session && !reauth) {
     return <Navigate to={target} replace />;
   }
   const submit = async (e: React.FormEvent) => {

@@ -17,9 +17,52 @@ settingsSchema:
       items:
         type: string
         format: uri
+    assistant:
+      type: object
+      additionalProperties: false
+      properties:
+        default_provider_id:
+          type: string
+          minLength: 1
+        providers:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [id, label, kind, deployment_id]
+                properties:
+                  id: {type: string, minLength: 1}
+                  label: {type: string, minLength: 1}
+                  kind: {const: local}
+                  deployment_id: {type: string, minLength: 1}
+              - type: object
+                additionalProperties: false
+                required: [id, label, kind, base_url, model]
+                properties:
+                  id: {type: string, minLength: 1}
+                  label: {type: string, minLength: 1}
+                  kind: {const: openai_compatible}
+                  base_url: {type: string, minLength: 1}
+                  model: {type: string, minLength: 1}
+                  api_key_secret_id: {type: string, minLength: 1}
+              - type: object
+                additionalProperties: false
+                required: [id, label, kind]
+                properties:
+                  id: {type: string, minLength: 1}
+                  label: {type: string, minLength: 1}
+                  kind: {const: codex}
+                  model: {type: string, minLength: 1}
 jobKinds:
   - recipe-import
   - recipe-draft
+  - recipe-change
+  - recipe-generate
+  - recipe-resolve
+  - recipe-download
+  - recipe-package
+  - recipe-install
 artifactKinds:
   - model
   - dataset

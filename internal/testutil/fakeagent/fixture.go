@@ -68,7 +68,7 @@ func (r FixtureRecipe) Manifest() recipe.Manifest {
 		Command: []string{"/opt/serve"},
 		Args:    args,
 		Resources: recipe.Resources{
-			CPU: 2, MemoryBytes: 4 * 1024 * 1024 * 1024, Pids: 512,
+			Pids: 512,
 		},
 	}
 	// Multi-node recipes must declare ranks (recipe validator); the single

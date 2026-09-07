@@ -150,9 +150,7 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 		t.Fatalf("DGX Spark image digest = %q", got)
 	}
 	dgxWorkload := dgxManifest.Workloads[0]
-	if dgxWorkload.NetworkMode != "bridge" || dgxWorkload.Resources.CPU != 10 ||
-		dgxWorkload.Resources.CPUSetCpus != "5-9,15-19" ||
-		dgxWorkload.Resources.MemoryBytes != 124554051584 ||
+	if dgxWorkload.NetworkMode != "bridge" ||
 		dgxWorkload.Resources.ShmBytes != 34359738368 ||
 		dgxWorkload.Resources.TmpfsBytes != 8589934592 ||
 		dgxWorkload.Resources.Pids != 8192 ||
@@ -430,9 +428,7 @@ func TestManagedCompilersAreDeterministicAndRejectLayoutChanges(t *testing.T) {
 		flashNextWorkload.Env["PLE_QUANT_OVERRIDE"] != "fp8" ||
 		flashNextWorkload.Env["MTP_NUM_SPECULATIVE_TOKENS"] != "3" ||
 		flashNextWorkload.Env["KV_CACHE_DTYPE"] != "auto" ||
-		flashNextWorkload.Env["MAX_MODEL_LEN"] != "1000000" ||
-		flashNextWorkload.Resources.CPU != 16 ||
-		flashNextWorkload.Resources.MemoryBytes != 103079215104 {
+		flashNextWorkload.Env["MAX_MODEL_LEN"] != "1000000" {
 		t.Fatalf("managed Flash-Next workload = %+v", flashNextWorkload)
 	}
 	if !slices.Contains(flashNextManifest.Assets, "files/ple_layer_patched.py") {

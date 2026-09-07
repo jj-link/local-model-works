@@ -10,25 +10,117 @@ import (
 	"database/sql"
 )
 
+const attachRecipeDraftOperationRun = `-- name: AttachRecipeDraftOperationRun :execrows
+UPDATE recipe_drafts
+SET run_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND json_extract(operation, '$.id') = ?
+`
+
+type AttachRecipeDraftOperationRunParams struct {
+	RunID     sql.NullString `json:"run_id"`
+	ID        string         `json:"id"`
+	Operation sql.NullString `json:"operation"`
+}
+
+func (q *Queries) AttachRecipeDraftOperationRun(ctx context.Context, arg AttachRecipeDraftOperationRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, attachRecipeDraftOperationRun, arg.RunID, arg.ID, arg.Operation)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const completeRecipeDraftOperation = `-- name: CompleteRecipeDraftOperation :execrows
+UPDATE recipe_drafts
+SET version = version + 1, state = ?, source = ?, resolved_commit = ?,
+    resolved_tree = ?, manifest = ?, candidates = ?, selected_assets = ?,
+    diagnostics = ?, package_digest = ?, run_id = ?, operation = NULL,
+    proposal = ?, context_selection = ?, questions = ?,
+    acknowledged_warnings = ?, resolved_references = ?, parent_draft_id = ?, change_context = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND json_extract(operation, '$.id') = ?
+`
+
+type CompleteRecipeDraftOperationParams struct {
+	State                string         `json:"state"`
+	Source               string         `json:"source"`
+	ResolvedCommit       sql.NullString `json:"resolved_commit"`
+	ResolvedTree         sql.NullString `json:"resolved_tree"`
+	Manifest             string         `json:"manifest"`
+	Candidates           string         `json:"candidates"`
+	SelectedAssets       string         `json:"selected_assets"`
+	Diagnostics          string         `json:"diagnostics"`
+	PackageDigest        sql.NullString `json:"package_digest"`
+	RunID                sql.NullString `json:"run_id"`
+	Proposal             sql.NullString `json:"proposal"`
+	ContextSelection     string         `json:"context_selection"`
+	Questions            string         `json:"questions"`
+	AcknowledgedWarnings string         `json:"acknowledged_warnings"`
+	ResolvedReferences   string         `json:"resolved_references"`
+	ParentDraftID        sql.NullString `json:"parent_draft_id"`
+	ChangeContext        sql.NullString `json:"change_context"`
+	ID                   string         `json:"id"`
+	Operation            sql.NullString `json:"operation"`
+}
+
+func (q *Queries) CompleteRecipeDraftOperation(ctx context.Context, arg CompleteRecipeDraftOperationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeRecipeDraftOperation,
+		arg.State,
+		arg.Source,
+		arg.ResolvedCommit,
+		arg.ResolvedTree,
+		arg.Manifest,
+		arg.Candidates,
+		arg.SelectedAssets,
+		arg.Diagnostics,
+		arg.PackageDigest,
+		arg.RunID,
+		arg.Proposal,
+		arg.ContextSelection,
+		arg.Questions,
+		arg.AcknowledgedWarnings,
+		arg.ResolvedReferences,
+		arg.ParentDraftID,
+		arg.ChangeContext,
+		arg.ID,
+		arg.Operation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createRecipeDraft = `-- name: CreateRecipeDraft :exec
 INSERT INTO recipe_drafts
 (id, state, source, resolved_commit, resolved_tree, manifest, candidates,
- selected_assets, diagnostics, package_digest, run_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ selected_assets, diagnostics, package_digest, run_id, operation, proposal,
+ context_selection, questions, acknowledged_warnings, resolved_references,
+ parent_draft_id, change_context)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRecipeDraftParams struct {
-	ID             string         `json:"id"`
-	State          string         `json:"state"`
-	Source         string         `json:"source"`
-	ResolvedCommit sql.NullString `json:"resolved_commit"`
-	ResolvedTree   sql.NullString `json:"resolved_tree"`
-	Manifest       string         `json:"manifest"`
-	Candidates     string         `json:"candidates"`
-	SelectedAssets string         `json:"selected_assets"`
-	Diagnostics    string         `json:"diagnostics"`
-	PackageDigest  sql.NullString `json:"package_digest"`
-	RunID          sql.NullString `json:"run_id"`
+	ID                   string         `json:"id"`
+	State                string         `json:"state"`
+	Source               string         `json:"source"`
+	ResolvedCommit       sql.NullString `json:"resolved_commit"`
+	ResolvedTree         sql.NullString `json:"resolved_tree"`
+	Manifest             string         `json:"manifest"`
+	Candidates           string         `json:"candidates"`
+	SelectedAssets       string         `json:"selected_assets"`
+	Diagnostics          string         `json:"diagnostics"`
+	PackageDigest        sql.NullString `json:"package_digest"`
+	RunID                sql.NullString `json:"run_id"`
+	Operation            sql.NullString `json:"operation"`
+	Proposal             sql.NullString `json:"proposal"`
+	ContextSelection     string         `json:"context_selection"`
+	Questions            string         `json:"questions"`
+	AcknowledgedWarnings string         `json:"acknowledged_warnings"`
+	ResolvedReferences   string         `json:"resolved_references"`
+	ParentDraftID        sql.NullString `json:"parent_draft_id"`
+	ChangeContext        sql.NullString `json:"change_context"`
 }
 
 func (q *Queries) CreateRecipeDraft(ctx context.Context, arg CreateRecipeDraftParams) error {
@@ -44,23 +136,41 @@ func (q *Queries) CreateRecipeDraft(ctx context.Context, arg CreateRecipeDraftPa
 		arg.Diagnostics,
 		arg.PackageDigest,
 		arg.RunID,
+		arg.Operation,
+		arg.Proposal,
+		arg.ContextSelection,
+		arg.Questions,
+		arg.AcknowledgedWarnings,
+		arg.ResolvedReferences,
+		arg.ParentDraftID,
+		arg.ChangeContext,
 	)
 	return err
 }
 
-const deleteRecipeDraft = `-- name: DeleteRecipeDraft :exec
-DELETE FROM recipe_drafts WHERE id = ?
+const deleteRecipeDraft = `-- name: DeleteRecipeDraft :execrows
+DELETE FROM recipe_drafts
+WHERE id = ? AND version = ? AND operation IS NULL
 `
 
-func (q *Queries) DeleteRecipeDraft(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteRecipeDraft, id)
-	return err
+type DeleteRecipeDraftParams struct {
+	ID      string `json:"id"`
+	Version int64  `json:"version"`
+}
+
+func (q *Queries) DeleteRecipeDraft(ctx context.Context, arg DeleteRecipeDraftParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRecipeDraft, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getRecipeDraft = `-- name: GetRecipeDraft :one
 SELECT id, version, state, source, resolved_commit, resolved_tree, manifest,
        candidates, selected_assets, diagnostics, package_digest, run_id,
-       created_at, updated_at
+       created_at, updated_at, operation, proposal, context_selection,
+       questions, acknowledged_warnings, resolved_references, parent_draft_id, change_context
 FROM recipe_drafts WHERE id = ?
 `
 
@@ -82,6 +192,14 @@ func (q *Queries) GetRecipeDraft(ctx context.Context, id string) (RecipeDraft, e
 		&i.RunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Operation,
+		&i.Proposal,
+		&i.ContextSelection,
+		&i.Questions,
+		&i.AcknowledgedWarnings,
+		&i.ResolvedReferences,
+		&i.ParentDraftID,
+		&i.ChangeContext,
 	)
 	return i, err
 }
@@ -89,7 +207,8 @@ func (q *Queries) GetRecipeDraft(ctx context.Context, id string) (RecipeDraft, e
 const listRecipeDrafts = `-- name: ListRecipeDrafts :many
 SELECT id, version, state, source, resolved_commit, resolved_tree, manifest,
        candidates, selected_assets, diagnostics, package_digest, run_id,
-       created_at, updated_at
+       created_at, updated_at, operation, proposal, context_selection,
+       questions, acknowledged_warnings, resolved_references, parent_draft_id, change_context
 FROM recipe_drafts ORDER BY updated_at DESC
 `
 
@@ -117,6 +236,14 @@ func (q *Queries) ListRecipeDrafts(ctx context.Context) ([]RecipeDraft, error) {
 			&i.RunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Operation,
+			&i.Proposal,
+			&i.ContextSelection,
+			&i.Questions,
+			&i.AcknowledgedWarnings,
+			&i.ResolvedReferences,
+			&i.ParentDraftID,
+			&i.ChangeContext,
 		); err != nil {
 			return nil, err
 		}
@@ -131,36 +258,244 @@ func (q *Queries) ListRecipeDrafts(ctx context.Context) ([]RecipeDraft, error) {
 	return items, nil
 }
 
+const listRecipeDraftsByPackageDigest = `-- name: ListRecipeDraftsByPackageDigest :many
+SELECT id, version, state, source, resolved_commit, resolved_tree, manifest,
+       candidates, selected_assets, diagnostics, package_digest, run_id,
+       created_at, updated_at, operation, proposal, context_selection,
+       questions, acknowledged_warnings, resolved_references, parent_draft_id, change_context
+FROM recipe_drafts
+WHERE package_digest = ?
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) ListRecipeDraftsByPackageDigest(ctx context.Context, packageDigest sql.NullString) ([]RecipeDraft, error) {
+	rows, err := q.db.QueryContext(ctx, listRecipeDraftsByPackageDigest, packageDigest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecipeDraft
+	for rows.Next() {
+		var i RecipeDraft
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.State,
+			&i.Source,
+			&i.ResolvedCommit,
+			&i.ResolvedTree,
+			&i.Manifest,
+			&i.Candidates,
+			&i.SelectedAssets,
+			&i.Diagnostics,
+			&i.PackageDigest,
+			&i.RunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Operation,
+			&i.Proposal,
+			&i.ContextSelection,
+			&i.Questions,
+			&i.AcknowledgedWarnings,
+			&i.ResolvedReferences,
+			&i.ParentDraftID,
+			&i.ChangeContext,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecipeDraftsByRepository = `-- name: ListRecipeDraftsByRepository :many
+SELECT id, version, state, source, resolved_commit, resolved_tree, manifest,
+       candidates, selected_assets, diagnostics, package_digest, run_id,
+       created_at, updated_at, operation, proposal, context_selection,
+       questions, acknowledged_warnings, resolved_references, parent_draft_id, change_context
+FROM recipe_drafts
+WHERE json_extract(change_context, '$.repository_id') = ?
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) ListRecipeDraftsByRepository(ctx context.Context, changeContext sql.NullString) ([]RecipeDraft, error) {
+	rows, err := q.db.QueryContext(ctx, listRecipeDraftsByRepository, changeContext)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecipeDraft
+	for rows.Next() {
+		var i RecipeDraft
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.State,
+			&i.Source,
+			&i.ResolvedCommit,
+			&i.ResolvedTree,
+			&i.Manifest,
+			&i.Candidates,
+			&i.SelectedAssets,
+			&i.Diagnostics,
+			&i.PackageDigest,
+			&i.RunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Operation,
+			&i.Proposal,
+			&i.ContextSelection,
+			&i.Questions,
+			&i.AcknowledgedWarnings,
+			&i.ResolvedReferences,
+			&i.ParentDraftID,
+			&i.ChangeContext,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pinRecipeDraftSource = `-- name: PinRecipeDraftSource :execrows
+UPDATE recipe_drafts
+SET resolved_commit = ?, resolved_tree = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND json_extract(operation, '$.id') = ?
+  AND (resolved_commit IS NULL OR resolved_commit = ?)
+`
+
+type PinRecipeDraftSourceParams struct {
+	ResolvedCommit   sql.NullString `json:"resolved_commit"`
+	ResolvedTree     sql.NullString `json:"resolved_tree"`
+	ID               string         `json:"id"`
+	Operation        sql.NullString `json:"operation"`
+	ResolvedCommit_2 sql.NullString `json:"resolved_commit_2"`
+}
+
+func (q *Queries) PinRecipeDraftSource(ctx context.Context, arg PinRecipeDraftSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pinRecipeDraftSource,
+		arg.ResolvedCommit,
+		arg.ResolvedTree,
+		arg.ID,
+		arg.Operation,
+		arg.ResolvedCommit_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reserveRecipeDraftOperation = `-- name: ReserveRecipeDraftOperation :execrows
+UPDATE recipe_drafts
+SET version = version + 1, state = 'analyzing', operation = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND version = ? AND operation IS NULL
+`
+
+type ReserveRecipeDraftOperationParams struct {
+	Operation sql.NullString `json:"operation"`
+	ID        string         `json:"id"`
+	Version   int64          `json:"version"`
+}
+
+func (q *Queries) ReserveRecipeDraftOperation(ctx context.Context, arg ReserveRecipeDraftOperationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reserveRecipeDraftOperation, arg.Operation, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateRecipeDraft = `-- name: UpdateRecipeDraft :execrows
 UPDATE recipe_drafts
-SET version = version + 1, state = ?, manifest = ?, selected_assets = ?,
-    diagnostics = ?, package_digest = ?, run_id = ?,
+SET version = version + 1, state = ?, source = ?, resolved_commit = ?,
+    resolved_tree = ?, manifest = ?, candidates = ?, selected_assets = ?,
+    diagnostics = ?, package_digest = ?, run_id = ?, proposal = ?,
+    context_selection = ?, questions = ?, acknowledged_warnings = ?,
+    resolved_references = ?, parent_draft_id = ?, change_context = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE id = ? AND version = ?
+WHERE id = ? AND version = ? AND operation IS NULL
 `
 
 type UpdateRecipeDraftParams struct {
-	State          string         `json:"state"`
-	Manifest       string         `json:"manifest"`
-	SelectedAssets string         `json:"selected_assets"`
-	Diagnostics    string         `json:"diagnostics"`
-	PackageDigest  sql.NullString `json:"package_digest"`
-	RunID          sql.NullString `json:"run_id"`
-	ID             string         `json:"id"`
-	Version        int64          `json:"version"`
+	State                string         `json:"state"`
+	Source               string         `json:"source"`
+	ResolvedCommit       sql.NullString `json:"resolved_commit"`
+	ResolvedTree         sql.NullString `json:"resolved_tree"`
+	Manifest             string         `json:"manifest"`
+	Candidates           string         `json:"candidates"`
+	SelectedAssets       string         `json:"selected_assets"`
+	Diagnostics          string         `json:"diagnostics"`
+	PackageDigest        sql.NullString `json:"package_digest"`
+	RunID                sql.NullString `json:"run_id"`
+	Proposal             sql.NullString `json:"proposal"`
+	ContextSelection     string         `json:"context_selection"`
+	Questions            string         `json:"questions"`
+	AcknowledgedWarnings string         `json:"acknowledged_warnings"`
+	ResolvedReferences   string         `json:"resolved_references"`
+	ParentDraftID        sql.NullString `json:"parent_draft_id"`
+	ChangeContext        sql.NullString `json:"change_context"`
+	ID                   string         `json:"id"`
+	Version              int64          `json:"version"`
 }
 
 func (q *Queries) UpdateRecipeDraft(ctx context.Context, arg UpdateRecipeDraftParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateRecipeDraft,
 		arg.State,
+		arg.Source,
+		arg.ResolvedCommit,
+		arg.ResolvedTree,
 		arg.Manifest,
+		arg.Candidates,
 		arg.SelectedAssets,
 		arg.Diagnostics,
 		arg.PackageDigest,
 		arg.RunID,
+		arg.Proposal,
+		arg.ContextSelection,
+		arg.Questions,
+		arg.AcknowledgedWarnings,
+		arg.ResolvedReferences,
+		arg.ParentDraftID,
+		arg.ChangeContext,
 		arg.ID,
 		arg.Version,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateRecipeDraftOperation = `-- name: UpdateRecipeDraftOperation :execrows
+UPDATE recipe_drafts
+SET operation = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND json_extract(operation, '$.id') = ?
+`
+
+type UpdateRecipeDraftOperationParams struct {
+	Operation   sql.NullString `json:"operation"`
+	ID          string         `json:"id"`
+	Operation_2 sql.NullString `json:"operation_2"`
+}
+
+func (q *Queries) UpdateRecipeDraftOperation(ctx context.Context, arg UpdateRecipeDraftOperationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateRecipeDraftOperation, arg.Operation, arg.ID, arg.Operation_2)
 	if err != nil {
 		return 0, err
 	}

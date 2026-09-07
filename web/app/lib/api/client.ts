@@ -69,6 +69,24 @@ export function notifyUnauthorized(): void {
   onUnauthorized();
 }
 
+// A 403 auth.csrf means the session cookie is still valid but the one-time
+// CSRF token is gone (cleared sessionStorage / brand-new tab). Only login
+// reissues that token, so surface an explicit re-verification that returns to
+// the current page — never bounce an authenticated visitor through /login back
+// to the Overview, which silently discards the action they were taking.
+interface ReauthInfo {
+  next: string;
+}
+let onReauth: (info: ReauthInfo) => void = ({ next }) => {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams({ reauth: "1" });
+  if (next && !next.startsWith("/login")) params.set("next", next);
+  window.location.assign(`/login?${params.toString()}`);
+};
+export function setOnReauth(fn: (info: ReauthInfo) => void): void {
+  onReauth = fn;
+}
+
 export interface RequestInit {
   method?: string;
   json?: unknown;
@@ -123,10 +141,15 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     const errBody = (parsed && typeof parsed === "object" ? parsed : {}) as Partial<ApiErrorBody>;
     const code = errBody.code ?? `http.${res.status}`;
     // A CSRF rejection means the session token the server issued can no
-    // longer be recovered (it is only sent at login): force re-login.
+    // longer be recovered (it is only sent at login). The cookie is still
+    // valid, so route to an explicit re-verification that returns to this
+    // page — not the cookie-bouncing onUnauthorized path.
     if (res.status === 403 && code === "auth.csrf") {
       setSession(null);
-      onUnauthorized();
+      const next = typeof window !== "undefined"
+        ? window.location.pathname + window.location.search
+        : "";
+      onReauth({ next });
     }
     throw new ApiError(res.status, {
       code,
@@ -157,4 +180,6 @@ export const http = {
     request<T>(path, { ...init, method: "PUT", json }),
   del: <T>(path: string, init?: Omit<RequestInit, "method" | "json">) =>
     request<T>(path, { ...init, method: "DELETE" }),
+  delJson: <T>(path: string, json: unknown, init?: Omit<RequestInit, "method" | "json">) =>
+    request<T>(path, { ...init, method: "DELETE", json }),
 };

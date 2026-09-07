@@ -97,6 +97,8 @@ func (m *Module) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch run.Kind {
+	case "recipe-download":
+		err = m.env.Downloads.Cancel(r.Context(), rid)
 	case "recipe-update":
 		err = m.env.Deploy.CancelRepositoryUpdate(r.Context(), rid)
 	case "serve":

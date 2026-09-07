@@ -38,8 +38,8 @@ workloads:
         host: 8000
         protocol: tcp
     resources:
-      cpu: 1
-      memoryBytes: 2147483648
+      
+      
       shmBytes: 67108864
       pids: 1024
     readiness:
