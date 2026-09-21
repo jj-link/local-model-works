@@ -4,8 +4,12 @@ import "net/http"
 
 var _ ServerInterface = (*Module)(nil)
 
-func (m *Module) TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, _ ID) {
-	m.testRecipeAssistantProvider(w, r)
+func (m *Module) ListRecipeAssistantProviders(w http.ResponseWriter, r *http.Request) {
+	m.listRecipeAssistantProviders(w, r)
+}
+
+func (m *Module) TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, id ID) {
+	m.testRecipeAssistantProvider(w, r, id)
 }
 func (m *Module) GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request) {
 	m.getRecipeAssistantCodexStatus(w, r)
@@ -87,6 +91,12 @@ func (m *Module) PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.
 }
 func (m *Module) StartRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, _ string) {
 	m.startRecipeRepositoryReplacement(w, r)
+}
+func (m *Module) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, _ string) {
+	m.planRecipeRepositoryUpdate(w, r)
+}
+func (m *Module) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, _ string) {
+	m.startRecipeRepositoryUpdate(w, r)
 }
 
 func (m *Module) ListRecipes(w http.ResponseWriter, r *http.Request) { m.listRecipes(w, r) }

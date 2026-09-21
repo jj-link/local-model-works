@@ -2,9 +2,13 @@ package backend
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -41,6 +45,7 @@ func TestGenerationPreviewRequiresFreshExplicitConsentWithoutProviderCalls(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedInspectedGenerationSource(t, database, root, draft.ID)
 	registry := settings.New(q)
 	if err := registry.Register("library", nil); err != nil {
 		t.Fatal(err)
@@ -106,6 +111,27 @@ func TestGenerationPreviewRequiresFreshExplicitConsentWithoutProviderCalls(t *te
 	}
 	if calls.Load() != 0 || current.Operation != nil || current.Version != draft.Version {
 		t.Fatalf("preview or rejected consent performed work: provider calls=%d draft=%+v", calls.Load(), current)
+	}
+}
+
+func seedInspectedGenerationSource(t *testing.T, database *sql.DB, root, draftID string) {
+	t.Helper()
+	content := []byte("Run the documented upstream launch script.\n")
+	hash := sha256.Sum256(content)
+	digest := hex.EncodeToString(hash[:])
+	sourceRoot := filepath.Join(root, "drafts", draftID, "source")
+	if err := os.MkdirAll(sourceRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "sha256-"+digest), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := json.Marshal([]recipebuilder.Candidate{{Path: "README.md", Size: int64(len(content)), SHA256: digest, Origin: recipebuilder.OriginSource}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE recipe_drafts SET resolved_commit=?,candidates=? WHERE id=?`, strings.Repeat("a", 40), string(candidates), draftID); err != nil {
+		t.Fatal(err)
 	}
 }
 

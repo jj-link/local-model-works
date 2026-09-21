@@ -68,6 +68,9 @@ func (s *Service) UpdateGeneratedFile(ctx context.Context, draftID string, versi
 	if row.State == "installed" {
 		return nil, newError("recipe.draft_immutable", "installed drafts are immutable", false)
 	}
+	if upstreamManifest([]byte(row.Manifest)) {
+		return nil, newError("recipe.draft_file_immutable", "Source-owned recipes cannot edit or generate launcher assets.", false)
+	}
 	candidates := renderCandidates(row.Candidates)
 	index := -1
 	for i := range candidates {
@@ -184,12 +187,16 @@ func contextIdentity(file ContextFile) string {
 }
 
 func proposalAssets(inventory []Candidate, proposal Proposal) ([]Candidate, []AssetSelection) {
+	sourceOwned := upstreamManifest(proposal.Manifest)
 	generated := make(map[string]bool, len(proposal.Files))
 	for _, file := range proposal.Files {
 		generated[file.Path] = true
 	}
 	candidates := make([]Candidate, 0, len(inventory)+len(proposal.Files))
 	for _, candidate := range inventory {
+		if sourceOwned && candidate.Origin != OriginSource {
+			continue
+		}
 		if candidate.Origin != OriginGenerated || !generated[candidate.Path] {
 			candidates = append(candidates, candidate)
 		}
@@ -228,7 +235,32 @@ func pinnedManifest(row db.RecipeDraft, manifest json.RawMessage) (json.RawMessa
 	if source.Path == "" {
 		source.Path = "."
 	}
-	metadata["source"], _ = json.Marshal(recipe.Source{URL: source.Remote, Path: source.Path, Revision: row.ResolvedCommit.String})
+	procedureID := ""
+	var change ChangeContext
+	if row.ChangeContext.Valid && json.Unmarshal([]byte(row.ChangeContext.String), &change) == nil {
+		if change.Review != nil {
+			procedureID = change.Review.ID
+		} else if len(change.BaseManifest) != 0 {
+			if base, err := recipe.Parse(change.BaseManifest); err == nil && base.Metadata.Source != nil {
+				procedureID = base.Metadata.Source.Procedure
+			}
+		}
+	}
+	if upstreamManifest(manifest) {
+		var proposed recipe.Source
+		if raw := metadata["source"]; len(raw) != 0 {
+			if err := json.Unmarshal(raw, &proposed); err != nil {
+				return nil, newError("recipe.draft_manifest_invalid", "upstream source must be an object", false)
+			}
+			if proposed.Path != "" {
+				if proposed.Path != "." && !canonicalDraftPath(proposed.Path) {
+					return nil, newError("recipe.draft_manifest_invalid", "upstream working directory must be repository-relative", false)
+				}
+				source.Path = proposed.Path
+			}
+		}
+	}
+	metadata["source"], _ = json.Marshal(recipe.Source{URL: source.Remote, Path: source.Path, Revision: row.ResolvedCommit.String, Procedure: procedureID})
 	object["metadata"], _ = json.Marshal(metadata)
 	return json.Marshal(object)
 }

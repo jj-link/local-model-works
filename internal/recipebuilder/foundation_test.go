@@ -52,7 +52,18 @@ func foundationGenerate(t *testing.T, service *Service, draft *Draft, result rec
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated, err := service.GenerateProposal(ctx, draft.ID, reserved.Operation.ID, "", approval, providerFunc(func(context.Context, recipeassistant.Request, func(string)) (recipeassistant.Result, error) {
+	generated, err := service.GenerateProposal(ctx, draft.ID, reserved.Operation.ID, "", approval, providerFunc(func(ctx context.Context, request recipeassistant.Request, _ func(string)) (recipeassistant.Result, error) {
+		if request.Mode == "add" {
+			source, err := request.ReadSource(ctx, draft.Candidates[0].Path)
+			if err != nil {
+				return recipeassistant.Result{}, err
+			}
+			return recipeassistant.Result{Procedures: []recipeassistant.Procedure{{
+				ID: "documented", Name: "Documented procedure", Description: "Launch documented by the retained source",
+				Manifest: result.Manifest, Files: result.Files, SelectedSourceAssets: result.SelectedSourceAssets, Questions: result.Questions, Adaptations: result.Adaptations,
+				Evidence: []recipeassistant.Evidence{{Path: "runtime", SourcePath: source.Path, SHA256: source.SHA256, SourceCommit: source.SourceCommit, StartLine: 1, EndLine: 1}},
+			}}}, nil
+		}
 		return result, nil
 	}), nil)
 	if err != nil {
@@ -71,7 +82,7 @@ func TestProposalRemainsInertAndRejectsEditedBase(t *testing.T) {
 	if generated.State != draft.State || generated.Operation != nil || string(generated.Manifest) != string(draft.Manifest) || generated.PackageDigest != "saved-package" {
 		t.Fatalf("generation changed active work: %+v", generated)
 	}
-	if generated.Proposal.BaseVersion != generated.Version || len(generated.Proposal.Diagnostics) == 0 {
+	if generated.Proposal.BaseVersion != generated.Version || len(generated.Proposal.Procedures[0].Diagnostics) == 0 {
 		t.Fatalf("proposal is not reviewable: %+v", generated.Proposal)
 	}
 	edited, err := service.Update(ctx, generated.ID, generated.Version, UpdateRequest{Manifest: json.RawMessage(`{"metadata":{"description":"operator edit"}}`)})
@@ -269,5 +280,22 @@ func TestChangeContextSurvivesDraftCASAndSourceRevisionSelection(t *testing.T) {
 	listed, err := service.ListByRepository(ctx, "repository")
 	if err != nil || len(listed) != 1 || listed[0].ID != draft.ID {
 		t.Fatalf("repository lookup: %+v %v", listed, err)
+	}
+}
+
+func TestDraftJSONKeepsEmptyCollectionsIterable(t *testing.T) {
+	_, draft := foundationDraft(t)
+	raw, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"candidates", "selected_assets", "diagnostics", "context_selection", "questions", "acknowledged_warnings", "resolved_references"} {
+		if _, iterable := response[field].([]any); !iterable {
+			t.Fatalf("draft response %s is not an array; the review client cannot iterate it: %s", field, raw)
+		}
 	}
 }

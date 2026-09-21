@@ -251,6 +251,7 @@ func TestGenerationSetupFailureReleasesDraftForEditing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedInspectedGenerationSource(t, database, state, draft.ID)
 	outbound, err := builder.GenerationRequest(ctx, draft.ID, draft.Version, "", "selected-model", nil)
 	if err != nil {
 		t.Fatal(err)

@@ -3,8 +3,10 @@ package backend
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -82,11 +84,14 @@ func (m *Module) resolveEnrolledLocal(ctx context.Context, deploymentID string) 
 		return recipeassistant.LocalEndpoint{}, err
 	}
 	if len(deployment.Placements) == 0 {
-		return recipeassistant.LocalEndpoint{}, invalidSelection("local provider has no enrolled placement")
+		return recipeassistant.LocalEndpoint{}, &recipeassistant.Error{Code: "assistant.deployment_not_ready", Message: "local provider has no enrolled placement", Retryable: true}
 	}
 	for _, placement := range deployment.Placements {
 		node, err := m.env.Q.GetNode(ctx, placement.NodeID)
-		if err != nil || node.Status != "online" {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return recipeassistant.LocalEndpoint{}, err
+		}
+		if errors.Is(err, sql.ErrNoRows) || node.Status != "online" {
 			return recipeassistant.LocalEndpoint{}, &recipeassistant.Error{Code: "assistant.deployment_not_ready", Message: "local provider requires online enrolled devices", Retryable: true}
 		}
 	}
@@ -109,15 +114,17 @@ func (m *Module) prepareGeneration(ctx context.Context, draftID string, version 
 	if input.ProviderVersion != settingsVersion {
 		return approval, config, consentStale("provider settings changed after review")
 	}
-	settings, err := decodeAssistantSettings(stored)
+	providers, err := m.assistantProviders(ctx, stored)
 	if err != nil {
 		return approval, config, err
 	}
-	selected := findAssistantProvider(settings, input.ProviderID)
-	if selected == nil {
-		return approval, config, invalidSelection("selected saved provider does not exist")
+	config, err = selectAssistantProvider(providers, input.ProviderID)
+	if err != nil {
+		return approval, config, err
 	}
-	config = *selected
+	if (config.Kind == "local" || config.Kind == "codex") && input.Model != "" && input.Model != config.Model {
+		return approval, config, invalidSelection("provider model must match the selected deployment or account model")
+	}
 	if input.Model != "" {
 		config.Model = input.Model
 	}
@@ -141,15 +148,12 @@ func (m *Module) prepareGeneration(ctx context.Context, draftID string, version 
 			}
 		}
 	case "codex":
-		if m.env.RecipeAssistant == nil {
-			return approval, config, &recipeassistant.Error{Code: "assistant.codex_unavailable", Message: "Codex provider is unavailable", Retryable: true}
-		}
 		config.BaseURL, config.APIKeySecretID = "codex://saved-account", ""
 	default:
-		return approval, config, invalidSelection("saved provider kind is invalid")
+		return approval, config, invalidSelection("provider kind is invalid")
 	}
 	if strings.TrimSpace(config.Model) == "" {
-		return approval, config, invalidSelection("select and save an explicit provider model")
+		return approval, config, invalidSelection("select an explicit provider model")
 	}
 	outbound, err := m.env.RecipeBuilder.GenerationRequest(ctx, draftID, version, input.Instruction, config.Model, input.DiagnosticIDs)
 	if err != nil {
@@ -211,7 +215,7 @@ func (m *Module) executeGeneration(ctx context.Context, job *jobs.Context) (outp
 		}
 		provider = m.env.RecipeAssistant
 	default:
-		return nil, invalidSelection("saved provider kind is invalid")
+		return nil, invalidSelection("provider kind is invalid")
 	}
 	draft, err := m.env.RecipeBuilder.GenerateProposal(ctx, input.DraftID, input.OperationID, job.RunID, approval, provider, m.draftProgress(ctx, job, draftOperationInput{DraftID: input.DraftID, OperationID: input.OperationID}))
 	if err != nil {

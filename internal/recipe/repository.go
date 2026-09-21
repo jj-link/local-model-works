@@ -40,6 +40,7 @@ type Repository struct {
 	ID                 string                      `json:"id"`
 	SourceURL          string                      `json:"source_url"`
 	SourcePath         string                      `json:"source_path"`
+	Procedure          string                      `json:"procedure,omitempty"`
 	TrackingRef        string                      `json:"tracking_ref"`
 	Current            *Recipe                     `json:"current_recipe,omitempty"`
 	InstalledCommit    string                      `json:"installed_commit,omitempty"`
@@ -56,7 +57,7 @@ type Repository struct {
 	UpdatedAt          string                      `json:"updated_at"`
 }
 
-// ListRepositories returns one aggregate per normalized source URL and path.
+// ListRepositories returns one aggregate per source URL, path, and launch procedure.
 func (s *Service) ListRepositories(ctx context.Context) ([]Repository, error) {
 	rows, err := s.q.ListRecipeRepositories(ctx)
 	if err != nil {
@@ -94,6 +95,7 @@ func (s *Service) renderRepository(ctx context.Context, row db.RecipeRepository)
 		ID:                 row.ID,
 		SourceURL:          row.SourceUrl,
 		SourcePath:         row.SourcePath,
+		Procedure:          row.Procedure,
 		TrackingRef:        row.TrackingRef,
 		ObservedHeadCommit: nullStrValue(row.ObservedHeadCommit),
 		ObservedHeadTree:   nullStrValue(row.ObservedHeadTree),
@@ -248,6 +250,7 @@ func attachRepositoryVersion(ctx context.Context, q *db.Queries, manifest *Manif
 	if err := q.UpsertRecipeRepository(ctx, db.UpsertRecipeRepositoryParams{
 		ID: id, SourceUrl: sourceURL, SourcePath: sourcePath, TrackingRef: trackingRef,
 		CreatedAt: installedAt, UpdatedAt: now,
+		Procedure: manifest.Metadata.Source.Procedure,
 	}); err != nil {
 		return err
 	}

@@ -19,6 +19,7 @@ type ownershipRuntime struct {
 	list    []runtime.ContainerInfo
 	calls   []string
 	created bool
+	logsErr error
 }
 
 func (r *ownershipRuntime) Ping(context.Context) (string, error) { return "test", nil }
@@ -71,6 +72,9 @@ func (r *ownershipRuntime) LogsFollow(context.Context, string, bool, bool) (io.R
 }
 func (r *ownershipRuntime) LogsStreams(context.Context, string) (io.ReadCloser, io.ReadCloser, error) {
 	r.calls = append(r.calls, "logs-streams")
+	if r.logsErr != nil {
+		return nil, nil, r.logsErr
+	}
 	return io.NopCloser(strings.NewReader("")), io.NopCloser(strings.NewReader("")), nil
 }
 
@@ -306,6 +310,80 @@ func TestRunningStateRefreshesWithoutTransition(t *testing.T) {
 		}
 	default:
 		t.Fatal("missing periodic running state refresh")
+	}
+}
+
+func TestStateReportsRetainOriginatingRunAfterRestart(t *testing.T) {
+	old := runtime.ContainerInfo{
+		ID:     "container-old",
+		State:  "running",
+		Labels: runtime.ManagedLabels("deployment-1234", "run-old", "recipe", "1.0.0", 0, "serving"),
+	}
+	current := runtime.ContainerInfo{
+		ID:     "container-current",
+		State:  "running",
+		Labels: runtime.ManagedLabels("deployment-1234", "run-current", "recipe", "1.0.0", 0, "serving"),
+	}
+	fake := &ownershipRuntime{list: []runtime.ContainerInfo{old}}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", fake, nil)
+	expectState := func(containerID, runID, state string) {
+		t.Helper()
+		select {
+		case message := <-a.sendQ:
+			update := message.GetStateUpdate()
+			if update == nil || update.GetDeploymentId() != "deployment-1234" ||
+				update.GetContainerId() != containerID || update.GetRunId() != runID ||
+				update.GetState() != state {
+				t.Fatalf("report = %+v, want container=%s run=%s state=%s", update, containerID, runID, state)
+			}
+		default:
+			t.Fatalf("missing report for container=%s run=%s state=%s", containerID, runID, state)
+		}
+	}
+
+	a.workloads.tick(t.Context())
+	expectState(old.ID, "run-old", "running")
+
+	// The retained old container may still change state beside the restarted run.
+	old.State = "exited"
+	fake.list = []runtime.ContainerInfo{current, old}
+	a.workloads.tick(t.Context())
+	expectState(current.ID, "run-current", "running")
+	expectState(old.ID, "run-old", "exited")
+
+	// Losing the old container must not report the current run as missing.
+	fake.list = []runtime.ContainerInfo{current}
+	a.workloads.tick(t.Context())
+	expectState(old.ID, "run-old", "missing")
+}
+
+func TestLogUnavailableRetainsTailerRunAfterRestart(t *testing.T) {
+	fake := &ownershipRuntime{logsErr: errors.New("container no longer exists")}
+	a := New(config.Agent{StateRoot: t.TempDir()}, "test", "test", fake, nil)
+	oldTailer := &tailer{
+		a:   a,
+		key: tailKey{deploymentID: "deployment-1234", runID: "run-old"},
+		id:  "container-old",
+	}
+	a.workloads.reportState(&runtime.ContainerInfo{
+		ID:     "container-current",
+		State:  "running",
+		Labels: runtime.ManagedLabels("deployment-1234", "run-current", "recipe", "1.0.0", 0, "serving"),
+	})
+	<-a.sendQ
+
+	oldTailer.run(t.Context())
+
+	select {
+	case message := <-a.sendQ:
+		update := message.GetStateUpdate()
+		if update == nil || update.GetDeploymentId() != "deployment-1234" ||
+			update.GetRunId() != "run-old" || update.GetContainerId() != "container-old" ||
+			update.GetDiagnosticCode() != "logs.unavailable" {
+			t.Fatalf("log failure report = %+v, want old run diagnostic", update)
+		}
+	default:
+		t.Fatal("missing log failure report")
 	}
 }
 

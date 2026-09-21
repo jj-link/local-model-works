@@ -311,3 +311,94 @@ func TestUnavailableRetainedSourceDoesNotLoseSavedHelpers(t *testing.T) {
 		t.Fatalf("late current change escaped save preflight: %v", err)
 	}
 }
+
+func TestUpstreamAcceptanceDropsLegacyHelpersWithoutChangingSavedVersion(t *testing.T) {
+	service, saved := savedChangeFixture(t)
+	ctx := context.Background()
+	baseline, err := service.recipes.Get(ctx, saved.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := service.AllocateChange(ctx, saved.Digest, ChangeRequest{Kind: "repair", ExpectedCurrentDigest: saved.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyAsset := draft.SelectedAssets[0]
+	draft, err = service.SetContext(ctx, draft.ID, draft.Version, []ContextFile{{Path: legacyAsset.Path, SHA256: legacyAsset.SHA256, Origin: legacyAsset.Origin}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, source := retainApprovalSource(t, service, draft, "README.md", "From repository root (.), ./start.sh starts upstream-owned and ./stop.sh stops it. No install step is required.\n")
+	var manifest map[string]any
+	if err := json.Unmarshal(draft.Manifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	delete(manifest, "assets")
+	manifest["workloads"] = []any{map[string]any{
+		"upstream":    map[string]any{"start": []string{"./start.sh"}, "stop": []string{"./stop.sh"}, "containers": []string{"upstream-owned"}},
+		"permissions": []string{"host.upstream-exec"},
+	}}
+	body, _ := json.Marshal(manifest)
+	proposal := Proposal{ID: "upstream", BaseVersion: draft.Version, ProviderID: "compiler", Manifest: body}
+	for _, field := range []string{"metadata.source.path", "workloads[0].upstream.start", "workloads[0].upstream.stop", "workloads[0].upstream.containers"} {
+		proposal.Evidence = append(proposal.Evidence, Evidence{Path: field, SourcePath: source.Path, SHA256: source.SHA256, SourceCommit: draft.ResolvedCommit, StartLine: 1, EndLine: 1})
+	}
+	proposal.Questions = []Question{{ID: "install", Path: "workloads[0].upstream.install", Question: "Does the pinned source require a separate install step?"}}
+	unsafe := proposal
+	unsafe.Files = []ProposalFile{{Path: "patch.sh", Content: "sed -i replacement start.sh"}}
+	unsafeJSON, _ := json.Marshal(unsafe)
+	if _, err := service.db.ExecContext(ctx, `UPDATE recipe_drafts SET proposal=? WHERE id=?`, string(unsafeJSON), draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AcceptProposal(ctx, draft.ID, draft.Version, unsafe.ID); err == nil {
+		t.Fatal("stored compiler proposal smuggled a source patch through acceptance")
+	}
+	encoded, _ := json.Marshal(proposal)
+	if _, err := service.db.ExecContext(ctx, `UPDATE recipe_drafts SET proposal=? WHERE id=?`, string(encoded), draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := service.AcceptProposal(ctx, draft.ID, draft.Version, proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted.SelectedAssets) != 0 || len(accepted.ResolvedReferences) != 0 || len(accepted.Candidates) != 1 || accepted.Candidates[0].SHA256 != source.SHA256 || len(accepted.ContextSelection) != 0 {
+		t.Fatalf("legacy composition survived acceptance: %+v", accepted)
+	}
+	if !jsonEqual(accepted.ChangeContext.BaseManifest, baseline.Manifest) || len(accepted.ChangeContext.BaseAssets) != 1 {
+		t.Fatal("conversion destroyed the immutable saved baseline")
+	}
+	current, err := service.recipes.Get(ctx, saved.Digest)
+	if err != nil || !jsonEqual(current.Manifest, baseline.Manifest) {
+		t.Fatalf("acceptance mutated saved recipe: %v", err)
+	}
+	if _, err := service.UpdateGeneratedFile(ctx, accepted.ID, accepted.Version, legacyAsset.Path, "replacement"); errorCode(err) != "recipe.draft_file_immutable" {
+		t.Fatalf("source-owned recipe allowed editing its obsolete helper: %v", err)
+	}
+	parsed, err := recipe.Parse(accepted.Manifest)
+	if err != nil || !referenceEvidenceReady(parsed, nil) {
+		t.Fatalf("source-owned save incorrectly requires managed image/model resolution: %v", err)
+	}
+	if _, err := service.Update(ctx, accepted.ID, accepted.Version, UpdateRequest{Manifest: accepted.Manifest, SelectedAssets: []AssetSelection{legacyAsset}}); err == nil {
+		t.Fatal("obsolete helper selection was resurrected")
+	}
+	answered, err := service.Update(ctx, accepted.ID, accepted.Version, UpdateRequest{Manifest: accepted.Manifest, Answers: []Answer{{QuestionID: "install", Answer: "No; the README says no install step is required."}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.checkReadiness(ctx, answered); errorCode(err) != "recipe.draft_review_required" || !strings.Contains(err.Error(), "upstream.install") {
+		t.Fatalf("an answer resolved an unreviewed lifecycle fact without a new proposal: %v", err)
+	}
+	proposal.ID, proposal.BaseVersion, proposal.Manifest = "resolved-install", answered.Version, answered.Manifest
+	proposal.Evidence = append(proposal.Evidence, Evidence{Path: "workloads[0].upstream.install", SourcePath: source.Path, SHA256: source.SHA256, SourceCommit: draft.ResolvedCommit, StartLine: 1, EndLine: 1})
+	encoded, _ = json.Marshal(proposal)
+	if _, err := service.db.ExecContext(ctx, `UPDATE recipe_drafts SET proposal=? WHERE id=?`, string(encoded), draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := service.AcceptProposal(ctx, answered.ID, answered.Version, proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.checkReadiness(ctx, resolved); err != nil {
+		t.Fatalf("new evidence-backed review did not resolve the answered fact: %v", err)
+	}
+}

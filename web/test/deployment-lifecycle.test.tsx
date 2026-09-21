@@ -51,6 +51,7 @@ function renderDetail(
     http.get("*/api/v1/deployments/dep-1", () => HttpResponse.json(deployment)),
     http.get("*/api/v1/deployments/deployments", () => HttpResponse.json(null, { status: 404 })),
     http.get("*/api/v1/nodes", () => HttpResponse.json([])),
+    http.get("*/api/v1/recipe-repositories", () => HttpResponse.json([])),
     http.get("*/api/v1/runs/run-1", () => HttpResponse.json(run)),
     http.delete("*/api/v1/deployments/dep-1", () => new HttpResponse(null, { status: 204 })),
   );

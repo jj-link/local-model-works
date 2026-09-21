@@ -74,6 +74,7 @@ func (s *Service) AllocateChange(ctx context.Context, baseDigest string, input C
 	}
 	target := change.BaseCommit
 	if input.Kind == "update" {
+		change.UpstreamReviewRequired = true
 		if change.RepositoryID == "" {
 			return nil, newError("recipe.source_unavailable", "this saved package has no verified repository source", false)
 		}
@@ -233,6 +234,9 @@ func (s *Service) prepareChange(ctx context.Context, draftID, operationID, runID
 	}
 	fail := func(cause error) (*Draft, error) { return s.failOperation(ctx, row, op, nil, nil, nil, cause) }
 	change := draft.ChangeContext
+	if change.Kind == "update" {
+		change.UpstreamReviewRequired = true
+	}
 	if change.Kind == "repair" && !inspectSource {
 		return s.completeOperation(ctx, row, op, "needs_input", nil, nil, nil, nil, "", runID)
 	}
@@ -254,6 +258,9 @@ func (s *Service) prepareChange(ctx context.Context, draftID, operationID, runID
 	row, err = s.getDraftRow(ctx, draftID)
 	if err != nil {
 		return nil, err
+	}
+	if base, err := recipe.Parse(change.BaseManifest); err == nil && base.Metadata.Source != nil && base.Metadata.Source.Procedure != "" {
+		inspectDir = filepath.Join(s.root, draftID, "inspection", op.ID, "checkout")
 	}
 	inventory, exclusions, findings, err := s.ingestAndCopy(inspectDir, filepath.Join(s.root, draftID, "source"))
 	if err != nil {
@@ -284,7 +291,7 @@ func (s *Service) prepareChange(ctx context.Context, draftID, operationID, runID
 		if compiler, ok := s.registry.Lookup(repoSource, checkout); ok {
 			packed, compileErr := compiler.Compile(ctx, repoSource, checkout, &previous)
 			if compileErr != nil {
-				finding := Diagnostic{Code: "recipe.compile_failed", Severity: "warning", Message: compileErr.Error(), Phase: PhaseInspect, Retryable: true}
+				finding := Diagnostic{Code: "recipe.compile_failed", Severity: "error", Blocking: true, Message: "The target source could not be compiled. The saved launch contract remains at its original revision; repinning a reconstructed helper is not an upstream update. " + compileErr.Error(), Remediation: "Inspect target instructions and review a source-owned execution proposal or the target's native LMW manifest.", Phase: PhaseInspect, Retryable: true}
 				finding.ID = DiagnosticID(finding, op.ID)
 				findings = append(findings, finding)
 			} else {
@@ -300,10 +307,14 @@ func (s *Service) prepareChange(ctx context.Context, draftID, operationID, runID
 			}
 		}
 	}
-	manifest, err := pinnedManifest(row, draft.Manifest)
+	// Inspection updates source evidence only. Never label the old saved launch
+	// contract with a new revision before an explicit proposal acceptance.
+	manifest := draft.Manifest
+	encodedChange, err := marshalJSON(change)
 	if err != nil {
 		return fail(err)
 	}
+	row.ChangeContext = nullable(encodedChange)
 	findings = append(findings, s.validatorFindings(manifest)...)
 	return s.completeOperation(ctx, row, op, "needs_input", manifest, candidates, nil, findings, "", runID)
 }
@@ -331,6 +342,7 @@ func (s *Service) compilerChangeProposal(row db.RecipeDraft, op *Operation, runI
 			return nil, newError("recipe.draft_asset_invalid", "compiler helper is not reviewable UTF-8: "+candidate.Path, false)
 		}
 		proposal.Files = append(proposal.Files, ProposalFile{Path: candidate.Path, Content: string(body), SourcePath: candidate.SourcePath})
+		proposal.Adaptations = append(proposal.Adaptations, Adaptation{Path: candidate.Path, Description: "Repository compiler supplies this generated helper.", Reason: "Adapts the documented launch procedure to the recipe runtime; review its commands against upstream before acceptance."})
 	}
 	return proposal, nil
 }
@@ -506,6 +518,9 @@ func (s *Service) checkChangeBaseline(ctx context.Context, draft *Draft) error {
 			return newError("recipe.draft_stale_version", "saved recipe changed; review a new change before saving", false)
 		}
 	}
+	if (change.Kind == "update" || change.UpstreamReviewRequired) && !reviewedSourceContract(draft.Manifest, change.Review) {
+		return newError("recipe.proposal_upstream_required", "Accept a reviewed source-owned execution contract or the target's native LMW manifest before saving; repinning the old managed helper is not an upstream update.", false)
+	}
 	return nil
 }
 
@@ -546,14 +561,19 @@ func (s *Service) CheckSaveBaseline(ctx context.Context, draftID string) error {
 		return nil
 	}
 	if draft.ChangeContext == nil || draft.ChangeContext.BaseRecipeDigest == "" {
-		var source GitSource
-		if err := json.Unmarshal(draft.Source, &source); err != nil {
+		parsed, err := recipe.Parse(draft.Manifest)
+		if err != nil {
 			return err
 		}
-		if source.Remote != "" {
-			repositoryID := repositoryID(source)
-			if _, err := s.q.GetRecipeRepository(ctx, repositoryID); err == nil {
-				return &recipe.PackError{Code: "recipe.repository_exists", Message: "This repository is already in the library; open its recipe instead: " + repositoryID}
+		if parsed.Metadata.Source != nil {
+			repositoryID, _, _, err := recipe.RepositoryIdentity(*parsed.Metadata.Source)
+			if err != nil {
+				return err
+			}
+			if repository, err := s.q.GetRecipeRepository(ctx, repositoryID); err == nil {
+				if draft.PackageDigest == "" || value(repository.CurrentDigest) != draft.PackageDigest {
+					return &recipe.PackError{Code: "recipe.repository_exists", Message: "This procedure is already in the library; open its saved recipe: " + repositoryID}
+				}
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}

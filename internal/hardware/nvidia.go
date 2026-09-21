@@ -180,7 +180,7 @@ func throttleReasons(reasons uint64) []string {
 // sentinel are dropped; names resolve from /proc/<pid>/comm, empty when
 // unreadable.
 func computeProcesses(dev nvml.Device) []AcceleratorProcess {
-	procs, rc := dev.GetComputeRunningProcesses()
+	procs, rc := deviceComputeProcesses(dev)
 	if rc != nvml.SUCCESS {
 		return nil
 	}

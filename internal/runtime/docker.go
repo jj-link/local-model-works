@@ -343,6 +343,9 @@ func encodeRegistryAuth(auth *Auth) (string, error) {
 }
 
 func (r *dockerRuntime) Create(ctx context.Context, spec *ContainerSpec) (string, error) {
+	if spec != nil && spec.Upstream != nil {
+		return "", fmt.Errorf("upstream.wrapper_required")
+	}
 	if err := ValidateManagedSpec(spec); err != nil {
 		return "", err
 	}

@@ -106,6 +106,28 @@ type Evidence struct {
 	EndLine      int    `json:"end_line,omitempty"`
 }
 
+// Adaptation records a deliberate difference from the documented upstream procedure.
+type Adaptation struct {
+	Path        string `json:"path"`
+	Description string `json:"description"`
+	Reason      string `json:"reason"`
+}
+
+// Procedure is one independently reviewable documented launch procedure.
+type Procedure struct {
+	ID                   string           `json:"id"`
+	Name                 string           `json:"name"`
+	Description          string           `json:"description"`
+	Manifest             json.RawMessage  `json:"manifest"`
+	Files                []ProposalFile   `json:"files"`
+	SelectedSourceAssets []AssetSelection `json:"selected_source_assets"`
+	Questions            []Question       `json:"questions"`
+	Evidence             []Evidence       `json:"evidence"`
+	Summary              string           `json:"summary,omitempty"`
+	Adaptations          []Adaptation     `json:"adaptations,omitempty"`
+	Diagnostics          []Diagnostic     `json:"diagnostics,omitempty"`
+}
+
 // Proposal is model- or operator-suggested content, inert until accepted.
 type Proposal struct {
 	ID                   string           `json:"id"`
@@ -122,6 +144,8 @@ type Proposal struct {
 	Summary              string           `json:"summary,omitempty"`
 	Diagnostics          []Diagnostic     `json:"diagnostics"`
 	PreviewSHA256        string           `json:"preview_sha256,omitempty"`
+	Procedures           []Procedure      `json:"procedures,omitempty"`
+	Adaptations          []Adaptation     `json:"adaptations,omitempty"`
 }
 
 // ResolvedReference is server-owned evidence for one reference input.
@@ -154,19 +178,24 @@ type ContextExclusion struct {
 
 // ChangeContext freezes the saved baseline; the draft source remains the target pin.
 type ChangeContext struct {
-	Kind                  string           `json:"kind"`
-	RepositoryID          string           `json:"repository_id,omitempty"`
-	BaseRecipeDigest      string           `json:"base_recipe_digest,omitempty"`
-	ExpectedCurrentDigest string           `json:"expected_current_digest,omitempty"`
-	BaseSource            *GitSource       `json:"base_source,omitempty"`
-	BaseCommit            string           `json:"base_commit,omitempty"`
-	BaseTree              string           `json:"base_tree,omitempty"`
-	BaseManifest          json.RawMessage  `json:"base_manifest,omitempty"`
-	BaseAssets            []AssetSelection `json:"base_assets,omitempty"`
-	BaseCandidates        []Candidate      `json:"base_candidates,omitempty"`
-	BaseSourceStatus      string           `json:"base_source_status"`
-	BaseSourceError       string           `json:"base_source_error,omitempty"`
-	DeploymentID          string           `json:"deployment_id,omitempty"`
+	Kind                   string           `json:"kind"`
+	RepositoryID           string           `json:"repository_id,omitempty"`
+	BaseRecipeDigest       string           `json:"base_recipe_digest,omitempty"`
+	ExpectedCurrentDigest  string           `json:"expected_current_digest,omitempty"`
+	BaseSource             *GitSource       `json:"base_source,omitempty"`
+	BaseCommit             string           `json:"base_commit,omitempty"`
+	BaseTree               string           `json:"base_tree,omitempty"`
+	BaseManifest           json.RawMessage  `json:"base_manifest,omitempty"`
+	BaseAssets             []AssetSelection `json:"base_assets,omitempty"`
+	BaseCandidates         []Candidate      `json:"base_candidates,omitempty"`
+	BaseSourceStatus       string           `json:"base_source_status"`
+	BaseSourceError        string           `json:"base_source_error,omitempty"`
+	DeploymentID           string           `json:"deployment_id,omitempty"`
+	Review                 *Procedure       `json:"review,omitempty"`
+	RelatedDraftIDs        []string         `json:"related_draft_ids,omitempty"`
+	AcceptedProposalID     string           `json:"accepted_proposal_id,omitempty"`
+	AcceptedVersion        int64            `json:"accepted_version,omitempty"`
+	UpstreamReviewRequired bool             `json:"upstream_review_required,omitempty"`
 }
 
 // Draft is the persisted correction workspace document.
@@ -189,6 +218,8 @@ type Draft struct {
 	ResolvedReferences   []ResolvedReference `json:"resolved_references"`
 	ParentDraftID        string              `json:"parent_draft_id,omitempty"`
 	ChangeContext        *ChangeContext      `json:"change_context,omitempty"`
+	Review               *Procedure          `json:"review,omitempty"`
+	RelatedDraftIDs      []string            `json:"related_draft_ids,omitempty"`
 	PackageDigest        string              `json:"package_digest,omitempty"`
 	RunID                string              `json:"run_id,omitempty"`
 	CreatedAt            string              `json:"created_at"`

@@ -95,6 +95,7 @@ func (t *tailer) run(ctx context.Context) {
 		t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_StateUpdate{
 			StateUpdate: &agentv1.StateUpdate{
 				DeploymentId:      t.key.deploymentID,
+				RunId:             t.key.runID,
 				ContainerId:       t.id,
 				DiagnosticCode:    "logs.unavailable",
 				DiagnosticMessage: err.Error(),

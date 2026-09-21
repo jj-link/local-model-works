@@ -2,18 +2,24 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-27b-radixark-nvfp4-dflash2-avt
-  version: 1.0.4
-  model: Qwen3.8-27B
+  version: 2.2.0
+  model: qwen3.8-27b-6000pro
   engine: sglang
   description: >-
-    RadixArk Qwen3.8-27B NVFP4 on one RTX PRO 6000 (SM120) with SGLang,
-    DFlash2 speculative decoding, native 262K context, FP8 KV cache, eight
-    concurrent requests, WSL-safe CPU multimodal transport, protected admin
-    endpoints, and the pinned MiaAI-Lab DFlash2 backport overlay.
+    Runs the original pinned MiaAI-Lab start.sh and stop.sh from a complete
+    writable checkout on one RTX PRO 6000. Upstream owns its SGLang image,
+    DFlash2 overlay, target/drafter downloads and persistent caches. The
+    original privileged Docker command uses all GPUs, host network and host
+    IPC, and inherits the image entrypoint. The reviewed GPU placement and
+    port 8000 are bound into the original script. No local
+    launcher, CPU multimodal workaround or admin-authentication substitution
+    is applied. The source pin does not pin upstream image tags or model
+    downloads. Requires Bash, Docker/NVIDIA GPU access and curl on the node;
+    the agent account must have any required Hugging Face access.
   license: Apache-2.0
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark
-    revision: "c172405482871566033d4d8f5ac519e7a3ce1f79"
+    revision: "a0743929ee2b8946bbc62aa0835c7634ae823ffc"
     path: .
 compatibility:
   nodeCount: 1
@@ -22,99 +28,33 @@ compatibility:
     architectures:
       - sm_120
     count: 1
-artifacts:
-  - name: model
-    kind: model
-    defaultVariant: radixark_nvfp4
-    variants:
-      - name: radixark_nvfp4
-        label: RadixArk Qwen3.8 27B NVFP4
-        source:
-          type: huggingface
-          identity: hf://RadixArk/Qwen3.8-27B-NVFP4
-          revision: "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
-    mount: /models/base
-    validation: snapshot
-  - name: drafter
-    kind: model
-    defaultVariant: zlab_dflash2
-    variants:
-      - name: zlab_dflash2
-        label: z-lab Qwen3.8 27B DFlash2
-        source:
-          type: huggingface
-          identity: hf://z-lab/Qwen3.8-27B-DFlash2
-          revision: "50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
-    mount: /models/drafter
-    validation: snapshot
+artifacts: []
 parameters:
-  - name: kv_cache_dtype
-    type: enum
-    default: fp8_e4m3
-    enum:
-      - fp8_e4m3
-    description: SGLang KV-cache quantization supported by this pinned runtime.
-assets:
-  - assets/capabilities.json
-  - assets/serve.sh
-  - patch/sglang/srt/models/dflash.py
-  - patch/sglang/kernels/ops/speculative/dflash.py
-  - patch/sglang/srt/speculative/dflash_utils.py
-  - patch/sglang/srt/speculative/dflash_worker_v2.py
-  - patch/sglang/srt/speculative/dflash_info.py
-  - patch/sglang/srt/speculative/dflash_info_v2.py
-  - patch/sglang/srt/speculative/draft_worker_common.py
-  - patch/sglang/srt/speculative/spec_utils.py
-  - patch/sglang/srt/mem_cache/allocation_sizing.py
-  - patch/sglang/srt/layers/moe/utils.py
-  - patch/sglang/srt/layers/logprob_processor.py
-  - patch/sglang/LICENSE
-  - patch/sglang/README.md
+  - name: model_id
+    type: string
+    default: RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead
+    minLength: 1
+    description: Upstream MODEL_ID input; the served API model name remains fixed.
+  - name: max_concurrent_requests
+    type: int
+    default: 8
+    min: 1
+    description: Upstream MAX_CONCURRENT_REQUESTS input.
 workloads:
-  - image:
-      reference: lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-      digest: sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-    command:
-      - /bin/bash
-      - /lmw/assets/assets/serve.sh
-    args:
-      - --model
-      - "${artifact.model.path}"
-      - --drafter
-      - "${artifact.drafter.path}"
-      - --served
-      - qwen3.8-27b-6000pro
-      - --port
-      - "8000"
+  - upstream:
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [qwen3.8-27b-sglang-6000pro]
+      logFile: .sglang.log
     env:
-      HOME: /tmp/home
-      NUMBA_CACHE_DIR: /tmp/numba
-      TORCH_EXTENSIONS_DIR: /tmp/torch-extensions
-      TRITON_CACHE_DIR: /tmp/triton
-      XDG_CACHE_HOME: /tmp/cache
-      KV_CACHE_DTYPE: "${setting.kv_cache_dtype}"
-    devices:
-      accelerator:
-        all: true
-    networkMode: bridge
-    permissions:
-      - memory.shm-large
+      MODEL_ID: "${setting.model_id}"
+      MAX_CONCURRENT_REQUESTS: "${setting.max_concurrent_requests}"
+    permissions: [host.upstream-exec]
     ports:
       - container: 8000
         host: 8000
         protocol: tcp
     readiness:
-      httpGet:
-        method: GET
-        path: /health
-        port: 8000
-    resources:
-      pids: 4096
-      shmBytes: 34359738368
-      tmpfsBytes: 4294967296
-    verify:
-      expect:
-        statusCode: 200
       httpGet:
         method: GET
         path: /v1/models

@@ -81,7 +81,18 @@ message ServerMessage {
     ArtifactCommand artifact_command = 8;
     ExtensionCommand extension_command = 9;
     DownloadCommand download_command = 10;
+    WorkerSSHCommand worker_ssh_command = 11;
   }
+}
+
+// Resolve or check worker SSH in the head agent's actual service account.
+// There is intentionally no caller-supplied remote command.
+message WorkerSSHCommand {
+  string command_id = 1;
+  repeated string addresses = 2;
+  string username = 3;
+  string target = 4;
+  bool resolve_only = 5;
 }
 
 message Ack {
@@ -120,6 +131,12 @@ message Inventory {
   // and non-legacy TransferCommand operations.
   repeated string protocol_features = 10;
   DownloadRoots download_roots = 11;
+  // Explicit serving IP chosen by the node administrator; empty uses discovery.
+  string advertise_address = 12;
+  // Agent process account and absolute paths; empty means unavailable.
+  string agent_username = 13 [json_name = "agent_username"];
+  string agent_home = 14 [json_name = "agent_home"];
+  string agent_workspace = 15 [json_name = "agent_workspace"];
 }
 
 // Exact configured acquisition destinations reported by the enrolled agent.
@@ -276,6 +293,8 @@ message StateUpdate {
   string diagnostic_message = 7;
   int32 exit_code = 9;
   bool oom_killed = 10;
+  // Originating run UUID; never inferred from the deployment's current run.
+  string run_id = 11;
 }
 
 message LogChunk {
@@ -312,6 +331,9 @@ enum ArtifactOp {
   ARTIFACT_OP_VALIDATE = 1;
   ARTIFACT_OP_FETCH = 2;
   ARTIFACT_OP_CANCEL = 3;
+  // Fetch and verify the recipe, then prepare retained source installations.
+  // A separate opcode makes older agents fail instead of skipping preservation.
+  ARTIFACT_OP_UPDATE_RECIPE = 4;
 }
 
 message ArtifactCommand {
@@ -325,6 +347,8 @@ message ArtifactCommand {
   string bearer_token = 5;
   // Original fetch/validate command to cancel when op is CANCEL.
   string target_command_id = 6;
+  // Bounded JSON array of recipe.InstallationUpdateSpec envelopes, update only.
+  bytes upstream_specs = 7;
 }
 message PlacementReport {
   string artifact_id = 1;

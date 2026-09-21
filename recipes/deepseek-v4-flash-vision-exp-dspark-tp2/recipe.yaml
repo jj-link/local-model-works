@@ -2,23 +2,29 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: deepseek-v4-flash-vision-exp-dspark-tp2
-  version: "1.1.0"
-  model: DeepSeek V4 Flash Vision
+  version: 2.2.1
+  model: deepseek-v4-flash-vision-exp
   engine: vllm
   description: >-
-    Two-node GB10 (DGX Spark) vLLM TP=2 with DSpark speculative decoding for
-    deepseek-ai/DeepSeek-V4-Flash-Vision-Exp. 1M-token ceiling, nvfp4_ds_mla KV
-    cache, native image input (image_url, up to 8 images per request), RoCE
-    fabric between the two ranks. Applies the upstream Vision-Exp overlay and
-    encoder-output hotfixes at container boot and serves the checkpoint's
-    encoder; remaining upstream shell hotfixes are omitted as in version 1.0.0.
-    The gated uncensored checkpoint variant is intentionally not offered. Head
-    node serves the OpenAI API on :8888; the worker rank is headless. Sourced
-    from MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark.
+    Runs the original pinned DeepSeek DSpark procedure across two GB10
+    Sparks. Both nodes pull the selected image (digest-pinned by default);
+    the head runs original selected-model preparation and start/stop
+    coordinators. The worker is independently observed, not given a
+    reconstructed rank launcher. Upstream owns Compose, model preparation,
+    overlays, host network/IPC, RDMA, persistent caches and restart behavior.
+    Stop also cleans the authored legacy project/sidecar scope. Requires
+    Docker/Compose with NVIDIA and RDMA access, curl, SSH/scp and working
+    noninteractive head-to-worker authentication. Hosts must satisfy the
+    original memory/service prerequisites, including disabled earlyoom.
+    Worker deployment/cache paths must be explicitly chosen for its SSH
+    account. Preserving source/version records does not undo shared cache,
+    image, service or remote-file changes made by upstream.
+    Reviewed runtime bindings include the original Compose dependency and
+    preserve its engine command, computed defaults and hotfix ordering.
   license: MIT
   source:
     url: https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark
-    revision: "9cce187ff596b8bc90faa751010bf60542f93da0"
+    revision: "957890ac5e26ce149646719298169f80603a3e1f"
     path: .
 compatibility:
   nodeCount: 2
@@ -30,126 +36,58 @@ compatibility:
   fabric:
     transport: roce
     minBandwidthGbps: 100
-artifacts:
-  - name: model
-    kind: model
-    source:
-      type: huggingface
-      identity: hf://deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
-      revision: "86f746b36186f0e567729a5c06a8c918caba82a9"
-    mount: /models/hub/models--deepseek-ai--DeepSeek-V4-Flash-Vision-Exp
-    validation: snapshot
+artifacts: []
+parameters:
+  - name: worker_host
+    type: string
+    minLength: 1
+    description: Upstream WORKER_HOST; an existing SSH alias or user@host for the selected worker, reachable noninteractively from the head agent account.
+  - name: worker_directory
+    type: string
+    minLength: 1
+    description: Upstream WORKER_SCRIPT_DIR; writable absolute deployment path on the worker.
+  - name: worker_hf_cache
+    type: string
+    minLength: 1
+    description: Upstream WORKER_HF_CACHE; writable absolute Hugging Face cache on the worker.
+  - name: dspark_vllm_image
+    type: string
+    default: ghcr.io/anemll/dspark-vllm-gx10:0.1.1@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
+    minLength: 1
+    description: Original image used by both node pulls, model preparation and Compose serving. Alternate images must support this pinned upstream lifecycle.
 workloads:
-  - match:
-      nodeCount: 2
-      accelerator:
-        vendor: nvidia
-    image:
-      reference: ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
-      digest: sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
-    command:
-      - /bin/bash
-      - /lmw/assets/serve.sh
-    args: []
-    ranks:
-      - 0
-      - 1
+  - ranks: [0, 1]
+    upstream:
+      coordinatorRank: 0
+      install:
+        - ["docker", "pull", "${setting.dspark_vllm_image}"]
+        - ["./prepare-dspark-model-cache.sh", "--yes"]
+      installByRank:
+        "1":
+          - ["docker", "pull", "${setting.dspark_vllm_image}"]
+      start: ["./start-deepseek-v4-flash-dspark.sh"]
+      stop: ["./stop-deepseek-v4-flash-dspark.sh"]
+      containers: [deepseek-v4-flash-vllm-dspark-1]
+      envFile: .env.dspark
+      envTemplate: .env.dspark.example
+      envFormat: shell
     env:
-      # rank / distributed wiring
-      NODE_RANK: "${node.rank}"
-      WORLD_SIZE: "2"
-      MASTER_ADDR: "${fabric.address}"
-      MASTER_PORT: "25000"
-      # model / serve
-      MODEL_PATH: "${artifact.model.path}"
-      SERVED: "deepseek-v4-flash-vision-exp"
-      API_HOST: "0.0.0.0"
-      API_PORT: "8888"
-      MAX_MODEL_LEN: "1048576"
-      MAX_NUM_SEQS: "6"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      LONG_PREFILL_TOKEN_THRESHOLD: "1024"
-      MTP_NUM_TOKENS: "6"
-      KV_CACHE_DTYPE: "nvfp4_ds_mla"
-      GPU_MEMORY_UTILIZATION: "0.85"
-      CUDA_VISIBLE_DEVICES: "0"
-      # capability profile + custom vllm modules (recipe assets)
-      PYTHONPATH: "/lmw/assets/patches:/lmw/assets"
-      DGX_MODEL_CAPABILITIES_PATH: "/lmw/assets/capabilities.json"
-      DGX_MODEL_CAPABILITIES_SHA256: "37c875792727c52a4ad8f8822794e17c6128d35491e0bf2b19a134cd973d4765"
-      # NCCL / RoCE fabric
-      VLLM_HOST_IP: "${node.address}"
-      GLOO_SOCKET_IFNAME: "enp1s0f1np1"
-      TP_SOCKET_IFNAME: "enp1s0f1np1"
-      NCCL_SOCKET_IFNAME: "enp1s0f1np1"
-      NCCL_IB_HCA: "rocep1s0f1"
-      NCCL_IB_GID_INDEX: "5"
-      NCCL_IB_ADDR_FAMILY: "AF_INET"
-      NCCL_IB_ROCE_VERSION_NUM: "2"
-      NCCL_IB_DISABLE: "0"
-      NCCL_NET: "IB"
-      NCCL_CROSS_NIC: "1"
-      NCCL_NVLS_ENABLE: "0"
-      NCCL_IGNORE_CPU_AFFINITY: "1"
-      NCCL_CUMEM_ENABLE: "0"
-      NCCL_DEBUG: "INFO"
-      # CUDA / arch
-      TORCH_CUDA_ARCH_LIST: "12.1a"
-      FLASHINFER_CUDA_ARCH_LIST: "12.1a"
-      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-      TILELANG_CLEANUP_TEMP_FILES: "1"
-      DG_JIT_USE_NVRTC: "0"
-      DG_JIT_NVCC_COMPILER: "/usr/local/cuda/bin/nvcc"
-      # DSpark / B12X tuning (matching the production contract)
-      VLLM_USE_B12X_MOE: "1"
-      VLLM_USE_B12X_WO_PROJECTION: "1"
-      VLLM_TRITON_MLA_SPARSE: "1"
-      VLLM_USE_FLASHINFER_SAMPLER: "1"
-      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "256"
-      VLLM_B12X_W4A16_FORCE_BLOCKS_PER_SM: "0"
-      VLLM_B12X_W4A16_FORCE_BLOCKS_MAX_M: "16"
-      VLLM_B12X_W4A16_FORCE_TILE_CONFIG: ""
-      B12X_W4A16_TC_DECODE: "0"
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
-      VLLM_SKIP_INIT_MEMORY_CHECK: "1"
-      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
-      VLLM_DSPARK_CONFIDENCE_SCHEDULER: "off"
-      VLLM_DSPARK_CONFIDENCE_THRESHOLD: "0.0"
-      VLLM_DSPARK_HARDWARE_SCHEDULER_EARLY_STOP: "1"
-      VLLM_DSPARK_REPLICATE_MARKOV_W1: "1"
-      VLLM_DSPARK_LOCAL_ARGMAX: "1"
-      VLLM_DSPARK_FUSED_MARKOV_ARGMAX: "0"
-      VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK: "1"
-      VLLM_DSPARK_REFERENCE_KV_QUANT_DEQUANT: "0"
-      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE: "0"
-      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE_EXACT: "0"
-      VLLM_DSV4_B12X_COMPRESSED_MLA: "0"
-      DECODE_AWARE_PREFILL_INTERVAL: "8"
-      DECODE_AWARE_THROTTLED_TOKENS: "6"
-      DSPARK_SLOT_CLAMP: "1"
-      FLASHINFER_DISABLE_VERSION_CHECK: "1"
-      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
-      # offline HF (model artifact is pre-placed by LMW)
-      HF_HOME: "/models/hub"
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-      # writable scratch
-      HOME: "/tmp/home"
-      NUMBA_CACHE_DIR: "/tmp/numba"
-      TRITON_CACHE_DIR: "/tmp/triton"
-      XDG_CACHE_HOME: "/tmp/cache"
-      VLLM_CACHE_ROOT: "/tmp/vllm-cache"
-    devices:
-      accelerator:
-        all: true
-      rdma:
-        all: true
-    networkMode: host
-    permissions:
-      - devices.rdma
-      - network.host
-      - memory.shm-large
-      - rootfs.write
+      WORKER_HOST: "${setting.worker_host}"
+      WORKER_SCRIPT_DIR: "${setting.worker_directory}"
+      WORKER_HF_CACHE: "${setting.worker_hf_cache}"
+      DSPARK_VLLM_IMAGE: "${setting.dspark_vllm_image}"
+      MASTER_ADDR: "${cluster.node.0.fabric.node_addr}"
+      VLLM_HOST_IP: "${cluster.node.0.fabric.node_addr}"
+      WORKER_VLLM_HOST_IP: "${cluster.node.1.fabric.node_addr}"
+      NCCL_IB_HCA: "=${cluster.node.0.fabric.rdma_device}"
+      NCCL_SOCKET_IFNAME: "${cluster.node.0.fabric.interface}"
+      TP_SOCKET_IFNAME: "${cluster.node.0.fabric.interface}"
+      GLOO_SOCKET_IFNAME: "${cluster.node.0.fabric.interface}"
+      WORKER_NCCL_IB_HCA: "=${cluster.node.1.fabric.rdma_device}"
+      WORKER_NCCL_SOCKET_IFNAME: "${cluster.node.1.fabric.interface}"
+      WORKER_TP_SOCKET_IFNAME: "${cluster.node.1.fabric.interface}"
+      WORKER_GLOO_SOCKET_IFNAME: "${cluster.node.1.fabric.interface}"
+    permissions: [host.upstream-exec]
     ports:
       - container: 8888
         host: 8888
@@ -159,30 +97,4 @@ workloads:
         method: GET
         path: /health
         port: 8888
-      intervalSeconds: 60
       timeoutSeconds: 5
-      failureThreshold: 30
-    verify:
-      expect:
-        statusCode: 200
-      httpGet:
-        method: GET
-        path: /health
-        port: 8888
-    resources:
-      shmBytes: 34359738368
-      tmpfsBytes: 8589934592
-      pids: 8192
-assets:
-  - serve.sh
-  - model_capabilities.py
-  - decode_aware_scheduler.py
-  - capabilities.json
-  - patches/hotfix-encoding-dsv4-issue21.py
-  - patches/hotfix-dsv4-vision-exp.py
-  - patches/hotfix-vllm-empty-encoder-output.py
-  - patches/vision_exp/__init__.py
-  - patches/vision_exp/apply.py
-  - patches/vision_exp/image_processor.py
-  - patches/vision_exp/processor.py
-  - patches/vision_exp/vision.py

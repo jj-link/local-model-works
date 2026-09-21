@@ -63,10 +63,14 @@ func (s *Service) ResolveReferences(ctx context.Context, draftID, operationID, r
 			return newError("recipe.reference_digest_mismatch", "registry digest differs from the supplied immutable digest at "+pointer, false)
 		}
 		image.Digest = digest
+		image.Reference = ref.Registry + "/" + ref.Repository + "@" + digest
 		evidence = append(evidence, ResolvedReference{Path: pointer, InputIdentity: image.Reference + "|credential:" + credential, ResolvedValue: digest, Origin: "registry", VerifiedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 		return nil
 	}
 	for i := range manifest.Workloads {
+		if manifest.Workloads[i].Upstream != nil {
+			continue
+		}
 		if err := resolveImage("/workloads/"+itoa(i)+"/image", &manifest.Workloads[i].Image); err != nil {
 			return s.failOperation(ctx, row, op, nil, nil, nil, err)
 		}
@@ -206,6 +210,9 @@ func referenceEvidenceReady(manifest *recipe.Manifest, evidence []ResolvedRefere
 			strings.HasPrefix(item.InputIdentity, image.Reference+"|credential:")
 	}
 	for i, workload := range manifest.Workloads {
+		if workload.Upstream != nil {
+			continue
+		}
 		if !imageReady("/workloads/"+itoa(i)+"/image", workload.Image) {
 			return false
 		}

@@ -44,6 +44,23 @@ type Placement struct {
 	Container        string   `json:"container,omitempty"`
 }
 
+// acceleratorBinding preserves the reviewed group's order and never substitutes
+// a partial group or host enumeration index for missing UUIDs.
+func (p *Placement) acceleratorBinding() string {
+	if len(p.Accelerators) == 0 {
+		if strings.TrimSpace(p.AcceleratorUUID) == "" {
+			return ""
+		}
+		return p.AcceleratorUUID
+	}
+	for _, uuid := range p.Accelerators {
+		if strings.TrimSpace(uuid) == "" {
+			return ""
+		}
+	}
+	return strings.Join(p.Accelerators, ",")
+}
+
 // PlacementOverride is an operator-pinned rank->node (create request).
 type PlacementOverride struct {
 	NodeID string `json:"node_id"`
@@ -152,6 +169,7 @@ type Plan struct {
 	Images            []ImagePreview           `json:"images,omitempty"`
 	Storage           []StoragePreview         `json:"storage,omitempty"`
 	HostPreparation   []HostPreparationPreview `json:"host_preparation,omitempty"`
+	Upstream          []UpstreamPreview        `json:"upstream,omitempty"`
 	Ports             []PortPreview            `json:"ports,omitempty"`
 	Endpoint          Endpoint                 `json:"endpoint,omitempty"`
 	Risks             []string                 `json:"risks,omitempty"`
@@ -246,11 +264,14 @@ func (p *Plan) PlanDigest() string {
 		Fabric               *string            `json:"fabric,omitempty"`
 		Ports                []PortPreview      `json:"ports,omitempty"`
 		Endpoint             Endpoint           `json:"endpoint,omitempty"`
+		Upstream             []UpstreamPreview  `json:"upstream,omitempty"`
+		Risks                []string           `json:"risks,omitempty"`
 	}{
 		RecipeDigest: p.RecipeDigest, RecipeName: p.RecipeName, Variants: p.Variants,
 		Parameters: p.Parameters, WorkloadIndex: p.WorkloadIndex, Placements: p.Placements,
 		AcquisitionPolicy: p.AcquisitionPolicy,
 		Fabric:            p.Fabric, Ports: p.Ports, Endpoint: p.Endpoint,
+		Upstream: p.Upstream, Risks: p.Risks,
 	}
 	if p.Acquisition != nil {
 		contract.AcquisitionTargets = p.Acquisition.Targets
@@ -277,6 +298,9 @@ func (p *Plan) LeaseResources() []string {
 			seen[r] = true
 			out = append(out, r)
 		}
+	}
+	for _, upstream := range p.Upstream {
+		add("upstream-node:" + upstream.NodeID)
 	}
 	for _, pl := range p.Placements {
 		if len(pl.Accelerators) > 0 {
@@ -360,12 +384,15 @@ type nodeInfo struct {
 	Inventory   sql.NullString
 }
 
-// firstNonLoopback returns a usable controller-facing address. A Tailscale
-// CGNAT address is preferred when present; fabric-only and container bridge
-// addresses may not be reachable from the operator console.
+// firstNonLoopback returns the configured serving address, or discovers a
+// usable controller-facing address. Tailscale CGNAT addresses are preferred
+// over fabric-only and container bridge addresses when no override is set.
 func firstNonLoopback(inv *inventory.Inventory) string {
 	if inv == nil {
 		return ""
+	}
+	if inv.AdvertiseAddress != "" {
+		return inv.AdvertiseAddress
 	}
 	var fallback string
 	for _, iface := range inv.Interfaces {

@@ -1,7 +1,6 @@
-// Package runtime defines the container-runtime contract used by agents to
-// execute recipe workloads. The Docker Engine implementation is the first
-// and, for this release, only implementation; specs are typed so the
-// runtime is swappable without touching scheduling code.
+// Package runtime defines the agent workload contract for Docker containers and
+// explicitly reviewed upstream host lifecycles. Host lifecycle execution is not
+// a container security boundary.
 package runtime
 
 import (
@@ -11,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/jj-link/local-model-works/internal/downloads"
+	"github.com/jj-link/local-model-works/internal/sourceconfig"
 )
 
 // MountSpec is one explicit bind mount.
@@ -42,10 +42,37 @@ type HostPreparationSpec struct {
 	DropPageCache bool `json:"dropPageCache,omitempty"`
 }
 
+// UpstreamProtocolFeature gates reviewed host lifecycle dispatch to capable nodes.
+const UpstreamProtocolFeature = "upstream-execution-v1"
+
+// UpstreamConfigurationProtocolFeature prevents older workers ignoring source edits.
+const UpstreamConfigurationProtocolFeature = "upstream-configuration-v1"
+
+// UpstreamSpec executes a reviewed repository's authored host lifecycle. It is
+// not a container security boundary; Approved acknowledges host/Docker authority.
+type UpstreamSpec struct {
+	SourceURL           string                      `json:"sourceURL"`
+	Revision            string                      `json:"revision"`
+	SourcePath          string                      `json:"sourcePath"`
+	Install             [][]string                  `json:"install,omitempty"`
+	Start               []string                    `json:"start"`
+	Stop                []string                    `json:"stop"`
+	Containers          []string                    `json:"containers"`
+	AuxiliaryContainers []string                    `json:"auxiliaryContainers,omitempty"`
+	ObserveOnly         bool                        `json:"observeOnly,omitempty"`
+	EnvFile             string                      `json:"envFile,omitempty"`
+	EnvTemplate         string                      `json:"envTemplate,omitempty"`
+	EnvFormat           string                      `json:"envFormat,omitempty"`
+	LogFile             string                      `json:"logFile,omitempty"`
+	Approved            bool                        `json:"approved"`
+	Configuration       []sourceconfig.ResolvedFile `json:"configuration,omitempty"`
+}
+
 // ContainerSpec is the typed, JSON-stable workload description sent to an
 // agent inside a WorkloadCommand.
 type ContainerSpec struct {
 	Name                 string                   `json:"name"`
+	Upstream             *UpstreamSpec            `json:"upstream,omitempty"`
 	Image                string                   `json:"image"`
 	ImageDigest          string                   `json:"imageDigest,omitempty"`
 	AcquisitionPolicy    string                   `json:"acquisitionPolicy,omitempty"`
@@ -90,7 +117,7 @@ type ContainerInfo struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
-// Runtime is the container engine abstraction.
+// Runtime is the workload lifecycle and observation abstraction.
 type Runtime interface {
 	// Ping verifies the engine is reachable and returns its version.
 	Ping(ctx context.Context) (version string, err error)
@@ -102,9 +129,9 @@ type Runtime interface {
 	ImageStorage(ctx context.Context) (*ImageStorageInfo, error)
 	// PrepareHost applies the bounded host-memory controls on a managed spec.
 	PrepareHost(ctx context.Context, spec *ContainerSpec) error
-	// Create materializes a stopped container from the spec.
+	// Create materializes a stopped container or a persistent logical installation.
 	Create(ctx context.Context, spec *ContainerSpec) (string, error)
-	// Start launches a created container.
+	// Start launches a container or supervises an approved upstream lifecycle.
 	Start(ctx context.Context, id string) error
 	// Stop halts a running container within the given timeout (0 = engine default).
 	Stop(ctx context.Context, id string, timeoutSeconds int) error
@@ -162,8 +189,9 @@ type ImagePullProgress struct {
 	BytesTotal int64
 }
 
-// Label keys for LMW-managed containers. Only containers carrying the
-// managed label are ever touched by the runtime.
+// Label keys for LMW-managed Docker containers and logical upstream installations.
+// Authored upstream containers retain their original names/labels; persistent
+// observed engine IDs, not injected labels, establish their runtime ownership.
 const (
 	LabelManaged       = "dev.localmodelworks.managed"
 	LabelDeployment    = "dev.localmodelworks.deployment"

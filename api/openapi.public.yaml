@@ -456,6 +456,68 @@ paths:
           $ref: '#/components/responses/NotFound'
       tags:
         - deployments
+  /deployments/{id}/configuration:
+    post:
+      operationId: applyDeploymentConfiguration
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentConfigurationRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdateAccepted'
+          description: Durable configuration replacement accepted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+      summary: Apply reviewed configuration using source-state-aware replacement and rollback
+      tags:
+        - deployments
+  /deployments/{id}/configuration/plan:
+    post:
+      operationId: planDeploymentConfiguration
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentConfigurationPlanRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdatePlan'
+          description: Effective replacement plan preserving deployment devices and fabric; repository_id is empty for deployment-scoped configuration
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+      summary: Review same-recipe configuration without requiring repository ownership
+      tags:
+        - deployments
   /deployments/{id}/logs:
     get:
       operationId: deploymentLogs
@@ -1273,6 +1335,25 @@ paths:
           description: Dedicated Codex account status
       tags:
         - recipes
+  /recipe-assistant/providers:
+    get:
+      description: Lists healthy enrolled local deployments, connected Codex account models, and configured remote API endpoints without requiring saved local or Codex profiles. No prompts are sent. The version is the library settings version used by generation consent; preview additionally binds the resolved destination and model.
+      operationId: listRecipeAssistantProviders
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeAssistantProviderCatalog'
+          description: Available providers without credentials or secret references
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "502":
+          description: Provider discovery failed
+      tags:
+        - recipes
   /recipe-assistant/providers/{id}/test:
     parameters:
       - $ref: '#/components/parameters/ID'
@@ -1918,6 +1999,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/RecipeUpdatePlan'
           description: Exact hardware replacement preview
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - recipes
+  /recipe-repositories/{id}/updates:
+    post:
+      operationId: startRecipeRepositoryUpdate
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRepositoryUpdateRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdateAccepted'
+          description: Durable package-only update accepted for the confirmed installed devices
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      tags:
+        - recipes
+  /recipe-repositories/{id}/updates/plan:
+    post:
+      operationId: planRecipeRepositoryUpdate
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeRepositoryUpdatePlan'
+          description: Latest saved recipe and exact installed devices; no deployment replacements
         "404":
           $ref: '#/components/responses/NotFound'
         "409":
@@ -3363,11 +3498,55 @@ components:
         updated_at:
           format: date-time
           type: string
+        variants:
+          additionalProperties:
+            type: string
+          description: Exact artifact variants selected for this deployment.
+          type: object
+        workload_index:
+          description: Exact runtime selected for this deployment, when recorded.
+          minimum: 0
+          type: integer
       required:
         - id
         - recipe_digest
         - desired_state
         - observed_state
+      type: object
+    DeploymentConfigurationPlanRequest:
+      additionalProperties: false
+      description: Explicit launch inputs for the deployment's current immutable recipe. Omitted values resolve declared defaults. Does not permit version, placement or fabric changes.
+      properties:
+        parameters:
+          additionalProperties: true
+          type: object
+        variants:
+          additionalProperties:
+            type: string
+          type: object
+        workload_index:
+          minimum: 0
+          type: integer
+      type: object
+    DeploymentConfigurationRequest:
+      additionalProperties: false
+      properties:
+        parameters:
+          additionalProperties: true
+          type: object
+        plan_digest:
+          description: Digest of the reviewed effective plan and live source deployment contract.
+          minLength: 1
+          type: string
+        variants:
+          additionalProperties:
+            type: string
+          type: object
+        workload_index:
+          minimum: 0
+          type: integer
+      required:
+        - plan_digest
       type: object
     DeploymentCreateRequest:
       properties:
@@ -3420,6 +3599,7 @@ components:
         acquisition:
           $ref: '#/components/schemas/RecipeDownloadPlan'
         acquisition_policy:
+          description: Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
           enum:
             - require-existing
             - download-missing
@@ -3534,6 +3714,10 @@ components:
         transfers:
           items:
             $ref: '#/components/schemas/TransferPreview'
+          type: array
+        upstream:
+          items:
+            $ref: '#/components/schemas/UpstreamExecutionPreview'
           type: array
         variants:
           additionalProperties:
@@ -3769,6 +3953,9 @@ components:
           items:
             $ref: '#/components/schemas/Accelerator'
           type: array
+        advertise_address:
+          description: Explicit serving IP configured by the node administrator; empty uses inventory address selection.
+          type: string
         arch:
           type: string
         cache_roots:
@@ -4359,6 +4546,43 @@ components:
         - name
         - version
         - installed_at
+      type: object
+    RecipeAssistantProvider:
+      properties:
+        base_url:
+          description: Server-resolved destination; never a client endpoint override
+          type: string
+        deployment_id:
+          type: string
+        id:
+          description: local:<deployment ID>, codex:<model ID>, or a configured remote provider ID
+          type: string
+        kind:
+          enum:
+            - local
+            - codex
+            - openai_compatible
+          type: string
+        label:
+          type: string
+        model:
+          type: string
+      required:
+        - id
+        - label
+        - kind
+      type: object
+    RecipeAssistantProviderCatalog:
+      properties:
+        providers:
+          items:
+            $ref: '#/components/schemas/RecipeAssistantProvider'
+          type: array
+        version:
+          type: string
+      required:
+        - version
+        - providers
       type: object
     RecipeAvailability:
       properties:
@@ -4972,6 +5196,10 @@ components:
           items:
             $ref: '#/components/schemas/RecipeDraftQuestion'
           type: array
+        related_draft_ids:
+          items:
+            type: string
+          type: array
         resolved_commit:
           type: string
         resolved_references:
@@ -4980,6 +5208,8 @@ components:
           type: array
         resolved_tree:
           type: string
+        review:
+          $ref: '#/components/schemas/RecipeDraftProcedure'
         run_id:
           type: string
         selected_assets:
@@ -5017,6 +5247,19 @@ components:
         - resolved_references
         - created_at
         - updated_at
+      type: object
+    RecipeDraftAdaptation:
+      properties:
+        description:
+          type: string
+        path:
+          type: string
+        reason:
+          type: string
+      required:
+        - path
+        - description
+        - reason
       type: object
     RecipeDraftAssetSelection:
       additionalProperties: false
@@ -5167,6 +5410,80 @@ components:
         - draft_id
         - run_id
       type: object
+    RecipeDraftProcedure:
+      properties:
+        adaptations:
+          items:
+            $ref: '#/components/schemas/RecipeDraftAdaptation'
+          type: array
+        description:
+          type: string
+        diagnostics:
+          items:
+            $ref: '#/components/schemas/RecipeDraftDiagnostic'
+          type: array
+        evidence:
+          items:
+            properties:
+              end_line:
+                type: integer
+              path:
+                type: string
+              sha256:
+                type: string
+              source_commit:
+                type: string
+              source_path:
+                type: string
+              start_line:
+                type: integer
+            required:
+              - path
+              - sha256
+            type: object
+          type: array
+        files:
+          items:
+            properties:
+              content:
+                type: string
+              path:
+                type: string
+              source_path:
+                type: string
+            required:
+              - path
+              - content
+            type: object
+          type: array
+        id:
+          type: string
+        manifest:
+          additionalProperties: true
+          type: object
+        name:
+          type: string
+        questions:
+          items:
+            $ref: '#/components/schemas/RecipeDraftQuestion'
+          type: array
+        selected_source_assets:
+          items:
+            $ref: '#/components/schemas/RecipeDraftAssetSelection'
+          type: array
+        summary:
+          type: string
+      required:
+        - id
+        - name
+        - description
+        - manifest
+        - files
+        - selected_source_assets
+        - questions
+        - evidence
+        - diagnostics
+      type: object
     RecipeDraftQuestion:
       properties:
         answer:
@@ -5195,6 +5512,10 @@ components:
       type: object
     RecipeDraftSuggestion:
       properties:
+        adaptations:
+          items:
+            $ref: '#/components/schemas/RecipeDraftAdaptation'
+          type: array
         base_version:
           type: integer
         diagnostics:
@@ -5244,6 +5565,10 @@ components:
           type: string
         preview_sha256:
           type: string
+        procedures:
+          items:
+            $ref: '#/components/schemas/RecipeDraftProcedure'
+          type: array
         provider_id:
           type: string
         provider_version:
@@ -5368,6 +5693,21 @@ components:
         - node_status
         - installed_digests
       type: object
+    RecipeReplacementLaunchSettings:
+      additionalProperties: false
+      description: Explicitly replace inherited launch inputs with these values and the target's declared defaults. Omitted deployment entries preserve their current settings.
+      properties:
+        parameters:
+          additionalProperties: true
+          type: object
+        variants:
+          additionalProperties:
+            type: string
+          type: object
+        workload_index:
+          minimum: 0
+          type: integer
+      type: object
     RecipeRepository:
       properties:
         created_at:
@@ -5391,6 +5731,8 @@ components:
         observed_head_commit:
           type: string
         observed_head_tree:
+          type: string
+        procedure:
           type: string
         source_path:
           type: string
@@ -5436,6 +5778,10 @@ components:
           minItems: 1
           type: array
           uniqueItems: true
+        deployment_settings:
+          additionalProperties:
+            $ref: '#/components/schemas/RecipeReplacementLaunchSettings'
+          type: object
         target_digest:
           minLength: 1
           type: string
@@ -5453,6 +5799,10 @@ components:
           minItems: 1
           type: array
           uniqueItems: true
+        deployment_settings:
+          additionalProperties:
+            $ref: '#/components/schemas/RecipeReplacementLaunchSettings'
+          type: object
         plan_digest:
           minLength: 1
           type: string
@@ -5462,6 +5812,37 @@ components:
       required:
         - target_digest
         - deployment_ids
+        - plan_digest
+      type: object
+    RecipeRepositoryUpdatePlan:
+      allOf:
+        - $ref: '#/components/schemas/RecipeUpdatePlan'
+        - properties:
+            repository_id:
+              type: string
+            target_digest:
+              type: string
+            target_version:
+              type: string
+            up_to_date:
+              type: boolean
+          required:
+            - repository_id
+            - target_digest
+            - target_version
+            - up_to_date
+          type: object
+    RecipeRepositoryUpdateRequest:
+      additionalProperties: false
+      properties:
+        plan_digest:
+          minLength: 1
+          type: string
+        target_digest:
+          minLength: 1
+          type: string
+      required:
+        - target_digest
         - plan_digest
       type: object
     RecipeRepositoryVersion:
@@ -5678,6 +6059,9 @@ components:
                 type: string
               source_digest:
                 type: string
+              source_was_stopped:
+                description: Rollback preserves the source deployment's stopped state instead of starting it.
+                type: boolean
               variants:
                 additionalProperties:
                   type: string
@@ -5719,10 +6103,15 @@ components:
           type: array
         target_digest:
           type: string
+        target_version:
+          type: string
         unchanged_deployment_ids:
           items:
             type: string
           type: array
+        up_to_date:
+          description: Every installed device has completed package acquisition and any required source preparation for the frozen saved settings.
+          type: boolean
       required:
         - plan_digest
         - ready
@@ -5823,6 +6212,32 @@ components:
         - tracking_ref
         - installed_revision
         - checked_at
+      type: object
+    ResolvedSourceConfiguration:
+      properties:
+        edits:
+          items:
+            properties:
+              end:
+                type: integer
+              replacement:
+                type: string
+              start:
+                type: integer
+            required:
+              - start
+              - end
+              - replacement
+            type: object
+          type: array
+        path:
+          type: string
+        sha256:
+          type: string
+      required:
+        - path
+        - sha256
+        - edits
       type: object
     Run:
       properties:
@@ -6244,4 +6659,146 @@ components:
           type: object
       required:
         - display_name
+      type: object
+    UpstreamExecutionPreview:
+      description: Pinned upstream lifecycle, environment and explicit runtime-configuration adaptations approved for this node.
+      properties:
+        configuration:
+          items:
+            $ref: '#/components/schemas/ResolvedSourceConfiguration'
+          type: array
+        environment:
+          additionalProperties:
+            type: string
+          type: object
+        execution:
+          properties:
+            auxiliaryContainers:
+              items:
+                type: string
+              type: array
+            configuration:
+              items:
+                properties:
+                  edits:
+                    items:
+                      description: Exactly one of parameter, template, variable or command supplies the source binding. Variable preserves an upstream-computed shell value; command preserves the output of one original zero-argument command with a shell identifier name. Both use shell-word serialization; prefix, suffix and indirection apply only to variables.
+                      properties:
+                        command:
+                          maxLength: 256
+                          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                          type: string
+                        end:
+                          type: integer
+                        flag:
+                          type: string
+                        format:
+                          enum:
+                            - shell
+                            - shell-word
+                            - shell-reparse
+                            - shell-heredoc
+                            - shell-quoted-heredoc
+                            - shell-double-quoted
+                            - shell-compose
+                            - json-compose
+                            - flag
+                            - flag-compose
+                            - argv
+                            - argv-heredoc
+                            - argv-quoted-heredoc
+                          type: string
+                        indirect:
+                          type: boolean
+                        parameter:
+                          type: string
+                        prefix:
+                          type: string
+                        start:
+                          type: integer
+                        suffix:
+                          type: string
+                        template:
+                          type: string
+                        variable:
+                          type: string
+                      required:
+                        - start
+                        - end
+                        - format
+                      type: object
+                    type: array
+                  path:
+                    type: string
+                  sha256:
+                    type: string
+                required:
+                  - path
+                  - sha256
+                  - edits
+                type: object
+              type: array
+            containers:
+              items:
+                type: string
+              type: array
+            coordinatorRank:
+              description: Only the head executes start/stop; other ranks finish their per-node install and independently observe its service.
+              type: integer
+            envFile:
+              type: string
+            envFormat:
+              enum:
+                - shell
+                - literal
+              type: string
+            envTemplate:
+              type: string
+            install:
+              items:
+                items:
+                  type: string
+                type: array
+              type: array
+            logFile:
+              type: string
+            start:
+              items:
+                type: string
+              type: array
+            stop:
+              items:
+                type: string
+              type: array
+          required:
+            - start
+            - stop
+            - containers
+          type: object
+        node_id:
+          format: uuid
+          type: string
+        node_name:
+          type: string
+        rank:
+          type: integer
+        source:
+          properties:
+            path:
+              type: string
+            procedure:
+              type: string
+            revision:
+              type: string
+            url:
+              type: string
+          required:
+            - url
+            - revision
+          type: object
+      required:
+        - node_id
+        - rank
+        - source
+        - execution
       type: object

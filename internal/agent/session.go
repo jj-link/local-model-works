@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/user"
 	"path/filepath"
 	goruntime "runtime"
 	"time"
@@ -14,6 +16,9 @@ import (
 
 	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/hardware"
+	"github.com/jj-link/local-model-works/internal/recipe"
+	"github.com/jj-link/local-model-works/internal/runtime"
+	"github.com/jj-link/local-model-works/internal/workerssh"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -96,6 +101,8 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.handleDownload(ctx, b.DownloadCommand)
 		case *agentv1.ServerMessage_ExtensionCommand:
 			go a.handleExtension(ctx, b.ExtensionCommand)
+		case *agentv1.ServerMessage_WorkerSshCommand:
+			go a.handleWorkerSSH(ctx, b.WorkerSshCommand)
 		case *agentv1.ServerMessage_ReconcileRequest:
 			a.noteReconcile(b.ReconcileRequest.GetReason())
 			if b.ReconcileRequest.GetReason() == "artifact.rescan" {
@@ -204,7 +211,30 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 		inv.CacheRoots = append(inv.CacheRoots, scanCacheRoot(ctx, r))
 	}
 	out := toProtoInventory(inv)
-	out.ProtocolFeatures = []string{downloads.ProtocolFeature}
+	out.AdvertiseAddress = a.cfg.AdvertiseAddress
+	// Resolve the account by ID as well: pure-Go user.Current can fall back
+	// to environment values when the process UID has no account entry.
+	if current, err := user.Current(); err == nil {
+		if account, err := user.LookupId(current.Uid); err == nil {
+			out.AgentUsername = account.Username
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		out.AgentHome = filepath.Clean(home)
+	}
+	workspace := a.cfg.Workspace
+	if workspace == "" && a.cfg.StateRoot != "" {
+		workspace = filepath.Join(a.cfg.StateRoot, "workspace")
+	}
+	if workspace != "" {
+		if absolute, err := filepath.Abs(workspace); err == nil {
+			out.AgentWorkspace = absolute
+		}
+	}
+	out.ProtocolFeatures = []string{downloads.ProtocolFeature, recipe.InstallationUpdateProtocolFeature}
+	if runtime.UpstreamEnabled(a.rt) {
+		out.ProtocolFeatures = append(out.ProtocolFeatures, runtime.UpstreamProtocolFeature, runtime.UpstreamConfigurationProtocolFeature, workerssh.ProtocolFeature)
+	}
 	out.DownloadRoots = &agentv1.DownloadRoots{RecipeRoot: filepath.Join(a.cfg.StateRoot, "recipes"), Platform: goruntime.GOOS + "/" + goruntime.GOARCH}
 	if storage, err := a.rt.ImageStorage(ctx); err == nil {
 		out.DownloadRoots.ImageRoot = storage.Root

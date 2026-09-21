@@ -14,6 +14,7 @@ import { useDeployments } from "~/lib/queries";
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { PlanDeploymentDialog } from "~/components/dialogs/plan-deployment-dialog";
+import { RecipeUpdateButton } from "~/components/recipes/recipe-update-button";
 import { endpointLabel, relativeTime, shortDigest } from "~/lib/format";
 import { isCurrentDeployment } from "~/lib/telemetry";
 import type { Deployment } from "~/lib/api";
@@ -89,12 +90,15 @@ function DeploymentTable({ deployments, stopped }: { deployments: Deployment[]; 
                 {deployment.created_at ? relativeTime(deployment.created_at) : "—"}
               </TableCell>
               <TableCell className="text-right">
+                <div className="flex items-center justify-end gap-3">
+                  <RecipeUpdateButton recipeDigest={deployment.recipe_digest} />
                 <Link
                   to={`/serving/deployments/${deployment.id}`}
                   className="control font-mono text-xs font-medium text-primary hover:text-foreground"
                 >
                   {stopped ? "Start →" : "Manage →"}
                 </Link>
+                </div>
               </TableCell>
             </TableRow>
           ))}

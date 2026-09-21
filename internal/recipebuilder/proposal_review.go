@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
+
+	"github.com/jj-link/local-model-works/internal/db"
 )
 
 // AcceptProposal materializes reviewed generated files into the draft's
@@ -14,6 +17,15 @@ func (s *Service) AcceptProposal(ctx context.Context, draftID string, version in
 	row, err := s.getDraftRow(ctx, draftID)
 	if err != nil {
 		return nil, err
+	}
+	var prior ChangeContext
+	if row.ChangeContext.Valid {
+		if err := json.Unmarshal([]byte(row.ChangeContext.String), &prior); err != nil {
+			return nil, err
+		}
+	}
+	if prior.AcceptedProposalID == proposalID && prior.AcceptedVersion == version && row.Version == version+1 && !row.Operation.Valid {
+		return s.Get(ctx, draftID)
 	}
 	if row.Version != version {
 		return nil, newError("recipe.draft_stale_version", "draft version changed; refetch and retry", false)
@@ -24,59 +36,174 @@ func (s *Service) AcceptProposal(ctx context.Context, draftID string, version in
 	if row.State == "installed" {
 		return nil, newError("recipe.draft_immutable", "installed drafts are immutable", false)
 	}
-	if !row.Proposal.Valid {
-		return nil, newError("recipe.proposal_unknown", "draft has no proposal to accept", false)
-	}
 	var proposal Proposal
-	if err := json.Unmarshal([]byte(row.Proposal.String), &proposal); err != nil || proposal.ID == "" || proposal.ID != proposalID {
+	if !row.Proposal.Valid || json.Unmarshal([]byte(row.Proposal.String), &proposal) != nil || proposal.ID == "" || proposal.ID != proposalID || proposal.BaseVersion != row.Version {
 		return nil, newError("recipe.proposal_stale", "proposal changed; refetch and review it again", false)
-	}
-	if proposal.BaseVersion != row.Version {
-		return nil, newError("recipe.proposal_stale", "draft changed since this proposal was generated; review a new suggestion", false)
 	}
 	if proposal.ProviderID != "" && proposal.ProviderID != "compiler" && proposal.PreviewSHA256 == "" {
-		return nil, newError("recipe.proposal_stale", "this suggestion predates explicit content approval; discard it and request a reviewed suggestion", false)
+		return nil, newError("recipe.proposal_stale", "this suggestion predates explicit content approval; request a reviewed suggestion", false)
 	}
-	proposal.Manifest, err = pinnedManifest(row, proposal.Manifest)
+	procedures := proposal.Procedures
+	if len(procedures) == 0 {
+		procedures = []Procedure{procedureFromProposal(proposal)}
+	}
+	if len(procedures) > 1 && prior.BaseRecipeDigest != "" {
+		return nil, newError("recipe.proposal_invalid", "Updates and repairs must retain one saved procedure.", false)
+	}
+	if s.db == nil {
+		return nil, newError("recipe.draft_io", "draft database is unavailable", true)
+	}
+	ids := make([]string, len(procedures))
+	ids[0] = draftID
+	for i := 1; i < len(ids); i++ {
+		sum := sha256.Sum256([]byte(proposalID + "\x00" + procedures[i].ID))
+		ids[i] = "procedure-" + hex.EncodeToString(sum[:16])
+	}
+	draft, err := render(row)
 	if err != nil {
 		return nil, err
 	}
-	proposal.Questions = proposalQuestions(renderQuestions(row.Questions), proposal.Questions)
-	candidates, selected := proposalAssets(renderCandidates(row.Candidates), proposal)
-	for _, file := range proposal.Files {
-		sum := sha256.Sum256([]byte(file.Content))
-		hash := hex.EncodeToString(sum[:])
-		blob := filepath.Join(s.root, draftID, "source", "sha256-"+hash)
-		if err := storeGeneratedBlob(blob, []byte(file.Content)); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	for i := range procedures {
+		procedure := &procedures[i]
+		if err := s.prepareProcedure(row, procedure); err != nil {
 			return nil, err
 		}
-	}
-	findings := append(retainedFindings(row.Diagnostics), s.validatorFindings(proposal.Manifest)...)
-	findings = append(findings, manifestAssetFindings(proposal.Manifest, candidates, selected)...)
-	for i := range findings {
-		if findings[i].ID == "" {
-			findings[i].ID = DiagnosticID(findings[i], proposal.ID)
+		inventory := renderCandidates(row.Candidates)
+		if err := s.verifyProcedureEvidence(ctx, draft, *procedure, inventory, proposal.ProviderID == "compiler"); err != nil {
+			return nil, err
+		}
+		candidates, selected := proposalAssets(inventory, proposalFromProcedure(*procedure))
+		if _, err := validateSelection(selected, candidates); err != nil {
+			return nil, err
+		}
+		for _, asset := range procedure.SelectedSourceAssets {
+			body, err := os.ReadFile(filepath.Join(s.root, draftID, "source", "sha256-"+asset.SHA256))
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(body)
+			if hex.EncodeToString(sum[:]) != asset.SHA256 {
+				return nil, newError("recipe.draft_source_changed", "Selected upstream asset changed: "+asset.Path, false)
+			}
+		}
+		target := filepath.Join(s.root, ids[i], "source")
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			return nil, err
+		}
+		for _, file := range procedure.Files {
+			sum := sha256.Sum256([]byte(file.Content))
+			if err := storeGeneratedBlob(filepath.Join(target, "sha256-"+hex.EncodeToString(sum[:])), []byte(file.Content)); err != nil {
+				return nil, err
+			}
+		}
+		if i > 0 {
+			// A sibling owns its own immutable blobs, including unselected source
+			// needed for later questions and further repository investigation.
+			hashes := make(map[string]bool, len(inventory)+len(procedure.Evidence))
+			for _, candidate := range inventory {
+				hashes[candidate.SHA256] = true
+			}
+			for _, evidence := range procedure.Evidence {
+				hashes[evidence.SHA256] = true
+			}
+			for hash := range hashes {
+				body, err := os.ReadFile(filepath.Join(s.root, draftID, "source", "sha256-"+hash))
+				if err != nil {
+					return nil, err
+				}
+				sum := sha256.Sum256(body)
+				if hex.EncodeToString(sum[:]) != hash {
+					return nil, newError("recipe.draft_source_changed", "source blob changed during acceptance", false)
+				}
+				if err := storeGeneratedBlob(filepath.Join(target, "sha256-"+hash), body); err != nil {
+					return nil, err
+				}
+			}
+			if exclusions, err := os.ReadFile(filepath.Join(s.root, draftID, "exclusions.json")); err == nil {
+				if err := os.WriteFile(filepath.Join(s.root, ids[i], "exclusions.json"), exclusions, 0o600); err != nil {
+					return nil, err
+				}
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
+		change := prior
+		if change.Kind == "" {
+			change.Kind = "add"
+		}
+		change.Review = procedure
+		change.RelatedDraftIDs = nil
+		for _, other := range ids {
+			if other != ids[i] {
+				change.RelatedDraftIDs = append(change.RelatedDraftIDs, other)
+			}
+		}
+		change.AcceptedProposalID, change.AcceptedVersion = proposalID, version
+		changeJSON, err := marshalJSON(change)
+		if err != nil {
+			return nil, err
+		}
+		contextJSON := row.ContextSelection
+		if upstreamManifest(procedure.Manifest) {
+			var contextFiles []ContextFile
+			if err := json.Unmarshal([]byte(contextJSON), &contextFiles); err != nil {
+				return nil, err
+			}
+			kept := contextFiles[:0]
+			for _, item := range contextFiles {
+				sourceInventory := inventory
+				if item.SourceCommit != "" && item.SourceCommit != value(row.ResolvedCommit) && item.SourceCommit == prior.BaseCommit {
+					sourceInventory = prior.BaseCandidates
+				}
+				candidate, err := findCandidate(sourceInventory, item.Path, item.SHA256, item.Origin)
+				if err == nil && candidate.Origin == OriginSource {
+					kept = append(kept, item)
+				}
+			}
+			contextJSON, err = marshalJSON(nonNilSlice(kept))
+			if err != nil {
+				return nil, err
+			}
+		}
+		state := editableState(procedure.Manifest, procedure.Questions, candidates, selected, procedure.Diagnostics, nil)
+		candidatesJSON, _ := marshalJSON(candidates)
+		selectedJSON, _ := marshalJSON(selected)
+		questionsJSON, _ := marshalJSON(procedure.Questions)
+		findingsJSON, _ := marshalJSON(procedure.Diagnostics)
+		if i == 0 {
+			result, err := tx.ExecContext(ctx, `UPDATE recipe_drafts SET state=?, manifest=?, candidates=?, selected_assets=?, diagnostics=?,
+proposal=NULL, questions=?, resolved_references='[]', acknowledged_warnings='[]', package_digest=NULL, change_context=?, context_selection=?, version=version+1,
+updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND version=? AND json_extract(proposal,'$.id')=? AND json_extract(proposal,'$.base_version')=version AND operation IS NULL AND state!='installed'`,
+				state, string(procedure.Manifest), candidatesJSON, selectedJSON, findingsJSON, questionsJSON, changeJSON, contextJSON, draftID, version, proposalID)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return nil, err
+			}
+			if rows != 1 {
+				return nil, newError("recipe.proposal_stale", "proposal changed; refetch and review it again", false)
+			}
+		} else {
+			if err := qtx.CreateRecipeDraft(ctx, db.CreateRecipeDraftParams{
+				ID: ids[i], State: state, Source: row.Source, ResolvedCommit: row.ResolvedCommit, ResolvedTree: row.ResolvedTree,
+				Manifest: string(procedure.Manifest), Candidates: candidatesJSON, SelectedAssets: selectedJSON, Diagnostics: findingsJSON,
+				ContextSelection: contextJSON, Questions: questionsJSON, AcknowledgedWarnings: "[]", ResolvedReferences: "[]",
+				ParentDraftID: nullable(draftID), ChangeContext: nullable(changeJSON),
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
-	state := editableState(proposal.Manifest, proposal.Questions, candidates, selected, findings, nil)
-	manifestJSON := string(proposal.Manifest)
-	candidatesJSON, _ := marshalJSON(candidates)
-	selectedJSON, _ := marshalJSON(selected)
-	questionsJSON, _ := marshalJSON(proposal.Questions)
-	findingsJSON, _ := marshalJSON(findings)
-	result, err := s.db.ExecContext(ctx, `UPDATE recipe_drafts SET state=?, manifest=?, candidates=?, selected_assets=?, diagnostics=?,
-proposal=NULL, questions=?, resolved_references='[]', acknowledged_warnings='[]', package_digest=NULL, version=version+1,
-updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND version=? AND json_extract(proposal,'$.id')=? AND json_extract(proposal,'$.base_version')=version AND operation IS NULL AND state!='installed'`,
-		state, manifestJSON, candidatesJSON, selectedJSON, findingsJSON, questionsJSON, draftID, version, proposalID)
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if rows != 1 {
-		return nil, newError("recipe.proposal_stale", "proposal changed; refetch and review it again", false)
 	}
 	return s.Get(ctx, draftID)
 }

@@ -55,12 +55,17 @@ type CacheRoot struct {
 
 // Inventory is the parsed node report.
 type Inventory struct {
-	Hostname     string        `json:"hostname"`
-	Accelerators []Accelerator `json:"accelerators"`
-	Interfaces   []Interface   `json:"interfaces"`
-	RdmaDevices  []RdmaDevice  `json:"rdma_devices"`
-	CacheRoots   []CacheRoot   `json:"cache_roots"`
-	PeerListen   string        `json:"peer_listen,omitempty"`
+	Hostname         string        `json:"hostname"`
+	Accelerators     []Accelerator `json:"accelerators"`
+	Interfaces       []Interface   `json:"interfaces"`
+	RdmaDevices      []RdmaDevice  `json:"rdma_devices"`
+	CacheRoots       []CacheRoot   `json:"cache_roots"`
+	PeerListen       string        `json:"peer_listen,omitempty"`
+	AdvertiseAddress string        `json:"advertise_address,omitempty"`
+	ProtocolFeatures []string      `json:"protocol_features,omitempty"`
+	AgentUsername    string        `json:"agent_username,omitempty"`
+	AgentHome        string        `json:"agent_home,omitempty"`
+	AgentWorkspace   string        `json:"agent_workspace,omitempty"`
 }
 
 // Parse decodes a persisted inventory JSON string.

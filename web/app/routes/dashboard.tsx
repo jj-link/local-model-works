@@ -11,7 +11,7 @@ import { useDeployments, useNodes, useRecipes, useRuns } from "~/lib/queries";
 import { StatTile } from "~/components/stat-tile";
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
-import { bytes, relativeTime } from "~/lib/format";
+import { acceleratorSummary, bytes, relativeTime } from "~/lib/format";
 import type { RunState } from "~/lib/api";
 import { isCurrentDeployment } from "~/lib/telemetry";
 
@@ -148,7 +148,7 @@ export default function DashboardRoute() {
         </div>
 
         {/* Fleet */}
-        <div className="lmw-panel min-h-64">
+        <div className="lmw-panel min-h-64 min-w-0">
           <header className="lmw-panel-head">
             <h2 className="lmw-label">fleet</h2>
           </header>
@@ -177,14 +177,12 @@ export default function DashboardRoute() {
                         {relativeTime(n.last_heartbeat)}
                       </span>
                     </div>
-                    <div className="mt-1.5 flex items-center gap-3 pl-5 font-mono text-[11px] text-muted">
-                      <span>
-                        {accels.length > 0
-                          ? `${accels.length}× ${accels[0].vendor ?? "?"} ${accels[0].name ?? ""}`
-                          : "no accelerators"}
+                    <div className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 pl-5 font-mono text-[11px] text-muted">
+                      <span className="min-w-0 break-words">
+                        {acceleratorSummary(accels) || "no accelerators"}
                       </span>
                       {accels.length > 0 ? (
-                        <span className="tabular-nums">{bytes(memTotal)} vram</span>
+                        <span className="shrink-0 whitespace-nowrap tabular-nums">{bytes(memTotal)} vram</span>
                       ) : null}
                     </div>
                   </li>

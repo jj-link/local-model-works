@@ -249,6 +249,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deployments/{id}/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply reviewed configuration using source-state-aware replacement and rollback */
+        post: operations["applyDeploymentConfiguration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deployments/{id}/configuration/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review same-recipe configuration without requiring repository ownership */
+        post: operations["planDeploymentConfiguration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deployments/{id}/logs": {
         parameters: {
             query?: never;
@@ -770,6 +804,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recipe-assistant/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lists healthy enrolled local deployments, connected Codex account models, and configured remote API endpoints without requiring saved local or Codex profiles. No prompts are sent. The version is the library settings version used by generation consent; preview additionally binds the resolved destination and model. */
+        get: operations["listRecipeAssistantProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recipe-assistant/providers/{id}/test": {
         parameters: {
             query?: never;
@@ -1132,6 +1183,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["planRecipeRepositoryReplacement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startRecipeRepositoryUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recipe-repositories/{id}/updates/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["planRecipeRepositoryUpdate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1801,6 +1884,33 @@ export interface components {
             run_id?: string | null;
             /** Format: date-time */
             updated_at?: string;
+            /** @description Exact artifact variants selected for this deployment. */
+            variants?: {
+                [key: string]: string;
+            };
+            /** @description Exact runtime selected for this deployment, when recorded. */
+            workload_index?: number;
+        };
+        /** @description Explicit launch inputs for the deployment's current immutable recipe. Omitted values resolve declared defaults. Does not permit version, placement or fabric changes. */
+        DeploymentConfigurationPlanRequest: {
+            parameters?: {
+                [key: string]: unknown;
+            };
+            variants?: {
+                [key: string]: string;
+            };
+            workload_index?: number;
+        };
+        DeploymentConfigurationRequest: {
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /** @description Digest of the reviewed effective plan and live source deployment contract. */
+            plan_digest: string;
+            variants?: {
+                [key: string]: string;
+            };
+            workload_index?: number;
         };
         DeploymentCreateRequest: {
             /**
@@ -1830,7 +1940,10 @@ export interface components {
         };
         DeploymentPlan: {
             acquisition?: components["schemas"]["RecipeDownloadPlan"];
-            /** @enum {string} */
+            /**
+             * @description Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
+             * @enum {string}
+             */
             acquisition_policy: "require-existing" | "download-missing";
             conflicts?: {
                 /** Format: uuid */
@@ -1879,6 +1992,7 @@ export interface components {
             risks?: string[];
             storage?: components["schemas"]["StoragePreview"][];
             transfers?: components["schemas"]["TransferPreview"][];
+            upstream?: components["schemas"]["UpstreamExecutionPreview"][];
             /** @description Resolved per-artifact model variants */
             variants?: {
                 [key: string]: string;
@@ -1987,6 +2101,8 @@ export interface components {
         };
         Inventory: {
             accelerators?: components["schemas"]["Accelerator"][];
+            /** @description Explicit serving IP configured by the node administrator; empty uses inventory address selection. */
+            advertise_address?: string;
             arch: string;
             cache_roots?: components["schemas"]["CacheRoot"][];
             docker: {
@@ -2261,6 +2377,21 @@ export interface components {
             /** @description Other installed versions of the same recipe name */
             version_count?: number;
         };
+        RecipeAssistantProvider: {
+            /** @description Server-resolved destination; never a client endpoint override */
+            base_url?: string;
+            deployment_id?: string;
+            /** @description local:<deployment ID>, codex:<model ID>, or a configured remote provider ID */
+            id: string;
+            /** @enum {string} */
+            kind: "local" | "codex" | "openai_compatible";
+            label: string;
+            model?: string;
+        };
+        RecipeAssistantProviderCatalog: {
+            providers: components["schemas"]["RecipeAssistantProvider"][];
+            version: string;
+        };
         RecipeAvailability: {
             devices: {
                 active_run_ids: string[];
@@ -2494,9 +2625,11 @@ export interface components {
             parent_draft_id?: string;
             proposal?: components["schemas"]["RecipeDraftSuggestion"];
             questions: components["schemas"]["RecipeDraftQuestion"][];
+            related_draft_ids?: string[];
             resolved_commit?: string;
             resolved_references: components["schemas"]["RecipeResolvedReference"][];
             resolved_tree?: string;
+            review?: components["schemas"]["RecipeDraftProcedure"];
             run_id?: string;
             selected_assets: components["schemas"]["RecipeDraftAssetSelection"][];
             source: Record<string, never>;
@@ -2505,6 +2638,11 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             version: number;
+        };
+        RecipeDraftAdaptation: {
+            description: string;
+            path: string;
+            reason: string;
         };
         RecipeDraftAssetSelection: {
             /** @enum {string} */
@@ -2562,6 +2700,32 @@ export interface components {
             draft_id: string;
             run_id: string;
         };
+        RecipeDraftProcedure: {
+            adaptations?: components["schemas"]["RecipeDraftAdaptation"][];
+            description: string;
+            diagnostics: components["schemas"]["RecipeDraftDiagnostic"][];
+            evidence: {
+                end_line?: number;
+                path: string;
+                sha256: string;
+                source_commit?: string;
+                source_path?: string;
+                start_line?: number;
+            }[];
+            files: {
+                content: string;
+                path: string;
+                source_path?: string;
+            }[];
+            id: string;
+            manifest: {
+                [key: string]: unknown;
+            };
+            name: string;
+            questions: components["schemas"]["RecipeDraftQuestion"][];
+            selected_source_assets: components["schemas"]["RecipeDraftAssetSelection"][];
+            summary?: string;
+        };
         RecipeDraftQuestion: {
             answer?: string;
             id: string;
@@ -2574,6 +2738,7 @@ export interface components {
             revision?: string;
         };
         RecipeDraftSuggestion: {
+            adaptations?: components["schemas"]["RecipeDraftAdaptation"][];
             base_version: number;
             diagnostics: components["schemas"]["RecipeDraftDiagnostic"][];
             evidence: {
@@ -2595,6 +2760,7 @@ export interface components {
             };
             model?: string;
             preview_sha256?: string;
+            procedures?: components["schemas"]["RecipeDraftProcedure"][];
             provider_id?: string;
             provider_version?: string;
             questions: components["schemas"]["RecipeDraftQuestion"][];
@@ -2635,6 +2801,16 @@ export interface components {
             node_name: string;
             node_status: string;
         };
+        /** @description Explicitly replace inherited launch inputs with these values and the target's declared defaults. Omitted deployment entries preserve their current settings. */
+        RecipeReplacementLaunchSettings: {
+            parameters?: {
+                [key: string]: unknown;
+            };
+            variants?: {
+                [key: string]: string;
+            };
+            workload_index?: number;
+        };
         RecipeRepository: {
             /** Format: date-time */
             created_at: string;
@@ -2647,6 +2823,7 @@ export interface components {
             installed_devices: components["schemas"]["RecipeInstalledDevice"][];
             observed_head_commit?: string;
             observed_head_tree?: string;
+            procedure?: string;
             source_path: string;
             source_url: string;
             tracking_ref: string;
@@ -2660,10 +2837,26 @@ export interface components {
         RecipeRepositoryDetail: components["schemas"]["RecipeRepository"];
         RecipeRepositoryReplacementPlanRequest: {
             deployment_ids: string[];
+            deployment_settings?: {
+                [key: string]: components["schemas"]["RecipeReplacementLaunchSettings"];
+            };
             target_digest: string;
         };
         RecipeRepositoryReplacementRequest: {
             deployment_ids: string[];
+            deployment_settings?: {
+                [key: string]: components["schemas"]["RecipeReplacementLaunchSettings"];
+            };
+            plan_digest: string;
+            target_digest: string;
+        };
+        RecipeRepositoryUpdatePlan: components["schemas"]["RecipeUpdatePlan"] & {
+            repository_id: string;
+            target_digest: string;
+            target_version: string;
+            up_to_date: boolean;
+        };
+        RecipeRepositoryUpdateRequest: {
             plan_digest: string;
             target_digest: string;
         };
@@ -2746,6 +2939,8 @@ export interface components {
                 removed_permissions: string[];
                 source_deployment_id: string;
                 source_digest: string;
+                /** @description Rollback preserves the source deployment's stopped state instead of starting it. */
+                source_was_stopped?: boolean;
                 variants?: {
                     [key: string]: string;
                 };
@@ -2759,7 +2954,10 @@ export interface components {
             repository_id?: string;
             running_deployments: components["schemas"]["RecipeUpdateRunningDeployment"][];
             target_digest?: string;
+            target_version?: string;
             unchanged_deployment_ids?: string[];
+            /** @description Every installed device has completed package acquisition and any required source preparation for the frozen saved settings. */
+            up_to_date?: boolean;
         };
         RecipeUpdateRunningDeployment: {
             current_step: number;
@@ -2789,6 +2987,15 @@ export interface components {
             /** @enum {string} */
             state: "current" | "available" | "error";
             tracking_ref: string;
+        };
+        ResolvedSourceConfiguration: {
+            edits: {
+                end: number;
+                replacement: string;
+                start: number;
+            }[];
+            path: string;
+            sha256: string;
         };
         Run: {
             /** Format: date-time */
@@ -2985,6 +3192,55 @@ export interface components {
             display_name: string;
             labels?: {
                 [key: string]: string;
+            };
+        };
+        /** @description Pinned upstream lifecycle, environment and explicit runtime-configuration adaptations approved for this node. */
+        UpstreamExecutionPreview: {
+            configuration?: components["schemas"]["ResolvedSourceConfiguration"][];
+            environment?: {
+                [key: string]: string;
+            };
+            execution: {
+                auxiliaryContainers?: string[];
+                configuration?: {
+                    edits: {
+                        command?: string;
+                        end: number;
+                        flag?: string;
+                        /** @enum {string} */
+                        format: "shell" | "shell-word" | "shell-reparse" | "shell-heredoc" | "shell-quoted-heredoc" | "shell-double-quoted" | "shell-compose" | "json-compose" | "flag" | "flag-compose" | "argv" | "argv-heredoc" | "argv-quoted-heredoc";
+                        indirect?: boolean;
+                        parameter?: string;
+                        prefix?: string;
+                        start: number;
+                        suffix?: string;
+                        template?: string;
+                        variable?: string;
+                    }[];
+                    path: string;
+                    sha256: string;
+                }[];
+                containers: string[];
+                /** @description Only the head executes start/stop; other ranks finish their per-node install and independently observe its service. */
+                coordinatorRank?: number;
+                envFile?: string;
+                /** @enum {string} */
+                envFormat?: "shell" | "literal";
+                envTemplate?: string;
+                install?: string[][];
+                logFile?: string;
+                start: string[];
+                stop: string[];
+            };
+            /** Format: uuid */
+            node_id: string;
+            node_name?: string;
+            rank: number;
+            source: {
+                path?: string;
+                procedure?: string;
+                revision: string;
+                url: string;
             };
         };
     };
@@ -3486,6 +3742,68 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    applyDeploymentConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeploymentConfigurationRequest"];
+            };
+        };
+        responses: {
+            /** @description Durable configuration replacement accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdateAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    planDeploymentConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeploymentConfigurationPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Effective replacement plan preserving deployment devices and fabric; repository_id is empty for deployment-scoped configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdatePlan"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     deploymentLogs: {
@@ -4431,6 +4749,34 @@ export interface operations {
             };
         };
     };
+    listRecipeAssistantProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available providers without credentials or secret references */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeAssistantProviderCatalog"];
+                };
+            };
+            /** @description Provider discovery failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     testRecipeAssistantProvider: {
         parameters: {
             query?: never;
@@ -5114,6 +5460,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecipeUpdatePlan"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    startRecipeRepositoryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeRepositoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Durable package-only update accepted for the confirmed installed devices */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeUpdateAccepted"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    planRecipeRepositoryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest saved recipe and exact installed devices; no deployment replacements */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeRepositoryUpdatePlan"];
                 };
             };
             404: components["responses"]["NotFound"];

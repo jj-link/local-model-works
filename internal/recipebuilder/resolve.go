@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"oras.land/oras-go/v2/registry"
+	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 )
 
 const referenceResponseLimit = 1 << 20
@@ -91,7 +92,7 @@ func (r *ReferenceResolver) ResolveImage(ctx context.Context, identity, expected
 		}
 		request.Header.Set("Authorization", "Bearer "+secret)
 	}
-	response, err := r.client().Do(request)
+	response, err := (&registryauth.Client{Client: r.client()}).Do(request)
 	if err != nil {
 		if errors.Is(requestCtx.Err(), context.DeadlineExceeded) {
 			return "", newError("recipe.reference_timeout", "registry lookup timed out", true)
@@ -99,9 +100,6 @@ func (r *ReferenceResolver) ResolveImage(ctx context.Context, identity, expected
 		return "", newError("recipe.reference_unavailable", "registry lookup failed", true)
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusUnauthorized && response.Header.Get("WWW-Authenticate") != "" {
-		return "", newError("recipe.reference_auth_challenge_unsupported", "registry token challenges are not followed; choose a direct registry credential", false)
-	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		return "", newError("recipe.reference_auth", "registry rejected the selected credential", false)
 	}

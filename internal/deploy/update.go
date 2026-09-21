@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,8 +18,10 @@ import (
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/id"
+	"github.com/jj-link/local-model-works/internal/inventory"
 	"github.com/jj-link/local-model-works/internal/recipe"
 	"github.com/jj-link/local-model-works/internal/runs"
+	"github.com/jj-link/local-model-works/internal/runtime"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
@@ -65,6 +69,7 @@ type RepositoryUpdateTarget struct {
 type RepositoryUpdateDeployment struct {
 	SourceDeploymentID string            `json:"source_deployment_id"`
 	SourceDigest       string            `json:"source_digest"`
+	SourceWasStopped   bool              `json:"source_was_stopped,omitempty"`
 	Parameters         map[string]any    `json:"parameters,omitempty"`
 	Placement          string            `json:"placement"`
 	Fabric             string            `json:"fabric,omitempty"`
@@ -81,6 +86,8 @@ type RepositoryUpdateDeployment struct {
 type RepositoryUpdatePlan struct {
 	RepositoryID           string                       `json:"repository_id"`
 	TargetDigest           string                       `json:"target_digest"`
+	TargetVersion          string                       `json:"target_version,omitempty"`
+	UpToDate               bool                         `json:"up_to_date"`
 	DeploymentIDs          []string                     `json:"deployment_ids"`
 	UnchangedDeploymentIDs []string                     `json:"unchanged_deployment_ids"`
 	CurrentPermissions     []string                     `json:"current_permissions"`
@@ -90,34 +97,46 @@ type RepositoryUpdatePlan struct {
 	InstalledDevices       []RepositoryUpdateDevice     `json:"installed_devices"`
 	RunningDeployments     []RepositoryUpdateTarget     `json:"running_deployments"`
 	Deployments            []RepositoryUpdateDeployment `json:"deployments"`
-	Diagnostics            []diag.Diagnostic            `json:"diagnostics,omitempty"`
+	Diagnostics            []diag.Diagnostic            `json:"diagnostics"`
 	Ready                  bool                         `json:"ready"`
 	Digest                 string                       `json:"plan_digest"`
+	installationSpecs      map[string][]recipe.InstallationUpdateSpec
 }
 
 func (p *RepositoryUpdatePlan) PlanDigest() string {
 	// Bind the reviewed replacement contract, not live verification timestamps
 	// or progress embedded in each acquisition preview.
 	type deploymentContract struct {
-		SourceDeploymentID string `json:"source_deployment_id"`
-		SourceDigest       string `json:"source_digest"`
-		PlanDigest         string `json:"plan_digest"`
+		SourceDeploymentID string         `json:"source_deployment_id"`
+		SourceDigest       string         `json:"source_digest"`
+		SourceWasStopped   bool           `json:"source_was_stopped,omitempty"`
+		SourceParameters   map[string]any `json:"source_parameters"`
+		SourcePlacement    string         `json:"source_placement"`
+		SourceFabric       string         `json:"source_fabric"`
+		PlanDigest         string         `json:"plan_digest"`
 	}
 	contract := struct {
-		RepositoryID           string               `json:"repository_id"`
-		TargetDigest           string               `json:"target_digest"`
-		DeploymentIDs          []string             `json:"deployment_ids"`
-		UnchangedDeploymentIDs []string             `json:"unchanged_deployment_ids"`
-		Deployments            []deploymentContract `json:"deployments"`
+		InstallationSpecDigests map[string]string        `json:"installation_spec_digests,omitempty"`
+		InstalledDevices        []RepositoryUpdateDevice `json:"installed_devices"`
+		RepositoryID            string                   `json:"repository_id"`
+		TargetDigest            string                   `json:"target_digest"`
+		DeploymentIDs           []string                 `json:"deployment_ids"`
+		UnchangedDeploymentIDs  []string                 `json:"unchanged_deployment_ids"`
+		Deployments             []deploymentContract     `json:"deployments"`
 	}{
-		RepositoryID: p.RepositoryID, TargetDigest: p.TargetDigest,
-		DeploymentIDs: p.DeploymentIDs, UnchangedDeploymentIDs: p.UnchangedDeploymentIDs,
+		InstallationSpecDigests: installationSpecDigests(p.installationSpecs),
+		RepositoryID:            p.RepositoryID, TargetDigest: p.TargetDigest,
+		InstalledDevices: p.InstalledDevices,
+		DeploymentIDs:    p.DeploymentIDs, UnchangedDeploymentIDs: p.UnchangedDeploymentIDs,
 		Deployments: make([]deploymentContract, 0, len(p.Deployments)),
 	}
 	for _, deployment := range p.Deployments {
 		contract.Deployments = append(contract.Deployments, deploymentContract{
 			SourceDeploymentID: deployment.SourceDeploymentID, SourceDigest: deployment.SourceDigest,
-			PlanDigest: deployment.DeploymentPlan.PlanDigest(),
+			SourceWasStopped: deployment.SourceWasStopped,
+			SourceParameters: deployment.Parameters, SourcePlacement: deployment.Placement,
+			SourceFabric: deployment.Fabric,
+			PlanDigest:   deployment.DeploymentPlan.PlanDigest(),
 		})
 	}
 	encoded, _ := json.Marshal(contract)
@@ -152,13 +171,144 @@ func permissionChanges(current, candidate []string) (added, removed []string) {
 }
 
 type RepositoryReplacementRequest struct {
-	TargetDigest  string   `json:"target_digest"`
-	DeploymentIDs []string `json:"deployment_ids"`
+	TargetDigest       string                                   `json:"target_digest"`
+	DeploymentIDs      []string                                 `json:"deployment_ids"`
+	DeploymentSettings map[string]RepositoryReplacementSettings `json:"deployment_settings,omitempty"`
 }
 
-// PlanRepositoryUpdate previews replacement of explicitly selected running
-// deployments with an immutable version that is already saved in the catalog.
+// RepositoryReplacementSettings explicitly replaces inherited launch inputs.
+// Omitted deployment entries preserve the source settings; an explicit entry
+// resolves only these values and the target's declared defaults.
+type RepositoryReplacementSettings struct {
+	Parameters    map[string]any    `json:"parameters,omitempty"`
+	Variants      map[string]string `json:"variants,omitempty"`
+	WorkloadIndex *int              `json:"workload_index,omitempty"`
+}
+
+// PlanRepositoryInstallationUpdate selects only physical package installations.
+// The library must already contain the freshly prepared current recipe.
+func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, repositoryID, targetDigest string) (*RepositoryUpdatePlan, error) {
+	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	if repository.CurrentDigest.String != targetDigest {
+		return nil, fmt.Errorf("%w: saved recipe changed", ErrPlanStale)
+	}
+	target, err := s.q.GetRecipe(ctx, targetDigest)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := recipe.Parse([]byte(target.Manifest))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest); err != nil {
+		return nil, fmt.Errorf("target package is unavailable: %w", err)
+	}
+	devices, err := recipe.ListRepositoryInstalledDevices(ctx, s.q, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	plan := &RepositoryUpdatePlan{
+		RepositoryID: repositoryID, TargetDigest: targetDigest, TargetVersion: target.Version,
+		Ready: true, UpToDate: true,
+		DeploymentIDs: []string{}, UnchangedDeploymentIDs: []string{},
+		Deployments: []RepositoryUpdateDeployment{}, RunningDeployments: []RepositoryUpdateTarget{},
+		InstalledDevices: []RepositoryUpdateDevice{}, Diagnostics: []diag.Diagnostic{},
+		CurrentPermissions: []string{}, CandidatePermissions: append([]string{}, manifest.HighRiskPermissions()...),
+		AddedPermissions: []string{}, RemovedPermissions: []string{},
+		installationSpecs: map[string][]recipe.InstallationUpdateSpec{},
+	}
+	for _, device := range devices {
+		plan.InstalledDevices = append(plan.InstalledDevices, RepositoryUpdateDevice{
+			NodeID: device.NodeID, NodeName: device.NodeName, NodeStatus: device.NodeStatus,
+			InstalledDigests: append([]string{}, device.InstalledDigests...),
+		})
+		specs, specErr := s.installationUpdateSpecs(ctx, device.NodeID, targetDigest)
+		if specErr != nil {
+			plan.Ready, plan.UpToDate = false, false
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_reconstruction_failed", specErr.Error()))
+		} else {
+			plan.installationSpecs[device.NodeID] = specs
+			if slices.ContainsFunc(manifest.Workloads, func(w recipe.Workload) bool { return w.Upstream != nil }) {
+				prepared, receiptErr := s.installationUpdatePrepared(ctx, repositoryID, targetDigest, device.NodeID, specs)
+				if receiptErr != nil {
+					return nil, receiptErr
+				}
+				if !prepared {
+					plan.UpToDate = false
+				}
+			}
+		}
+		node, nodeErr := s.q.GetNode(ctx, device.NodeID)
+		if nodeErr != nil {
+			return nil, nodeErr
+		}
+		var inv inventory.Inventory
+		if !node.Inventory.Valid || json.Unmarshal([]byte(node.Inventory.String), &inv) != nil || !slices.Contains(inv.ProtocolFeatures, recipe.InstallationUpdateProtocolFeature) {
+			plan.Ready = false
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_agent_unsupported",
+				fmt.Sprintf("node %s needs an agent supporting %s before recipe installation update", device.NodeName, recipe.InstallationUpdateProtocolFeature)))
+		}
+		if len(specs) > 0 && !slices.Contains(inv.ProtocolFeatures, runtime.UpstreamProtocolFeature) {
+			plan.Ready = false
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_source_authority_unavailable",
+				fmt.Sprintf("node %s needs its existing source-execution authority enabled to prepare retained source installations", device.NodeName)))
+		}
+		if !slices.Contains(device.InstalledDigests, targetDigest) {
+			plan.UpToDate = false
+		}
+	}
+	plan.Digest = plan.PlanDigest()
+	return plan, nil
+}
+
+// CreateRepositoryInstallationUpdate freezes the confirmed device set. It never
+// derives deployment work from installation state.
+func (s *Service) CreateRepositoryInstallationUpdate(ctx context.Context, repositoryID, targetDigest, planDigest string) (string, error) {
+	plan, err := s.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		return "", err
+	}
+	if plan.Digest != planDigest {
+		return "", fmt.Errorf("%w: installed devices changed", ErrPlanStale)
+	}
+	if !plan.Ready {
+		return "", fmt.Errorf("%w: retained installation configuration could not be reconstructed", ErrNotReady)
+	}
+	if plan.UpToDate {
+		return "", fmt.Errorf("%w: installed packages already match the target", ErrNotReady)
+	}
+	input := repositoryUpdateRunInput{
+		RepositoryID: repositoryID, TargetDigest: targetDigest,
+		InstalledDevices: plan.InstalledDevices, Plan: *plan, PackageInstallOnly: true,
+		InstallationSpecs: plan.installationSpecs,
+	}
+	runID, err := s.runs.Create(ctx, "library", "recipe-update", structMap(input), "")
+	if err != nil {
+		return "", err
+	}
+	if err := s.runs.SetState(ctx, runID, runs.Planning, "", ""); err != nil {
+		return "", err
+	}
+	if err := s.runs.SetState(ctx, runID, runs.Waiting, "", ""); err != nil {
+		return "", err
+	}
+	s.startRepositoryUpdate(context.WithoutCancel(ctx), runID)
+	return runID, nil
+}
+
+// PlanRepositoryUpdate previews replacement of explicitly selected deployments
+// with an immutable saved version, including fully stopped deployments.
 func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string, request RepositoryReplacementRequest) (*RepositoryUpdatePlan, error) {
+	if repositoryID == "" {
+		return nil, fmt.Errorf("%w: repository is required for version replacement", ErrRecipe)
+	}
+	return s.planReplacement(ctx, repositoryID, request)
+}
+
+func (s *Service) planReplacement(ctx context.Context, repositoryID string, request RepositoryReplacementRequest) (*RepositoryUpdatePlan, error) {
 	targetDigest := request.TargetDigest
 	if targetDigest == "" || len(request.DeploymentIDs) == 0 {
 		return nil, fmt.Errorf("%w: saved target and nonempty deployment selection are required", ErrRecipe)
@@ -170,9 +320,16 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		}
 		selected[deploymentID] = true
 	}
-	targetVersion, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, targetDigest)
-	if err != nil || targetVersion.RepositoryID != repositoryID {
-		return nil, fmt.Errorf("%w: target digest is not a saved version of repository", ErrRecipe)
+	for deploymentID := range request.DeploymentSettings {
+		if !selected[deploymentID] {
+			return nil, fmt.Errorf("%w: settings name an unselected deployment %s", ErrRecipe, deploymentID)
+		}
+	}
+	if repositoryID != "" {
+		targetVersion, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, targetDigest)
+		if err != nil || targetVersion.RepositoryID != repositoryID {
+			return nil, fmt.Errorf("%w: target digest is not a saved version of repository", ErrRecipe)
+		}
 	}
 	targetRow, err := s.q.GetRecipe(ctx, targetDigest)
 	if err != nil {
@@ -186,33 +343,34 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		RepositoryID: repositoryID, TargetDigest: targetDigest, Ready: true,
 		DeploymentIDs:          append([]string(nil), request.DeploymentIDs...),
 		UnchangedDeploymentIDs: []string{},
-		CurrentPermissions:     []string{}, CandidatePermissions: targetManifest.HighRiskPermissions(),
+		CurrentPermissions:     []string{}, CandidatePermissions: append([]string{}, targetManifest.HighRiskPermissions()...),
 		AddedPermissions: []string{}, RemovedPermissions: []string{},
 		InstalledDevices: []RepositoryUpdateDevice{}, RunningDeployments: []RepositoryUpdateTarget{},
-		Deployments: []RepositoryUpdateDeployment{},
+		Deployments: []RepositoryUpdateDeployment{}, Diagnostics: []diag.Diagnostic{},
 	}
 	sort.Strings(plan.DeploymentIDs)
-	rows, err := s.q.ListRepositoryActiveDeployments(ctx, repositoryID)
-	if err != nil {
-		return nil, err
-	}
-	found := make(map[string]bool, len(selected))
-	for _, row := range rows {
-		if selected[row.ID] {
-			found[row.ID] = true
-		}
-	}
+	rows := make([]db.GetDeploymentRow, 0, len(plan.DeploymentIDs))
 	for _, deploymentID := range plan.DeploymentIDs {
-		if !found[deploymentID] {
-			return nil, fmt.Errorf("%w: selected deployment %s is not active in this repository", ErrRecipe, deploymentID)
+		row, err := s.q.GetDeployment(ctx, deploymentID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: selected deployment %s does not exist", ErrRecipe, deploymentID)
 		}
+		if repositoryID != "" {
+			version, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, row.RecipeDigest)
+			if err != nil || version.RepositoryID != repositoryID {
+				return nil, fmt.Errorf("%w: selected deployment %s does not belong to this repository", ErrRecipe, deploymentID)
+			}
+		} else if row.RecipeDigest != targetDigest {
+			return nil, fmt.Errorf("%w: deployment configuration cannot switch recipe versions", ErrRecipe)
+		}
+		if row.DesiredState != "running" && (row.DesiredState != "stopped" || row.ObservedState != "stopped") {
+			return nil, fmt.Errorf("%w: selected deployment %s must finish stopping before reconfiguration", ErrState, deploymentID)
+		}
+		rows = append(rows, row)
 	}
 	devices := make(map[string]int)
 	for _, row := range rows {
-		if !selected[row.ID] {
-			continue
-		}
-		if row.RecipeDigest == targetDigest {
+		if _, configured := request.DeploymentSettings[row.ID]; row.RecipeDigest == targetDigest && !configured {
 			plan.UnchangedDeploymentIDs = append(plan.UnchangedDeploymentIDs, row.ID)
 			continue
 		}
@@ -224,7 +382,7 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		if err != nil {
 			return nil, err
 		}
-		currentPermissions := sourceManifest.HighRiskPermissions()
+		currentPermissions := append([]string{}, sourceManifest.HighRiskPermissions()...)
 		addedPermissions, removedPermissions := permissionChanges(currentPermissions, plan.CandidatePermissions)
 		plan.CurrentPermissions = unionPermissions(plan.CurrentPermissions, currentPermissions)
 		plan.AddedPermissions = unionPermissions(plan.AddedPermissions, addedPermissions)
@@ -245,14 +403,35 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		for _, placement := range placements {
 			overrides = append(overrides, PlacementOverride{NodeID: placement.NodeID, Rank: placement.Rank})
 		}
+		targetParameters, targetVariants, targetWorkload := parametersForValue(row.Parameters), placementSet.Variants, placementSet.Workload
+		settings, settingsChanged := request.DeploymentSettings[row.ID]
+		if settingsChanged {
+			targetParameters, targetVariants, targetWorkload = settings.Parameters, settings.Variants, settings.WorkloadIndex
+		}
 		deploymentPlan, planErr := s.plan(ctx, PlanRequest{
-			RecipeDigest: targetDigest, Parameters: parametersForValue(row.Parameters),
-			Placements: overrides, Variants: placementSet.Variants,
-			WorkloadIndex:     placementSet.Workload,
+			RecipeDigest: targetDigest, Parameters: targetParameters,
+			Placements: overrides, Variants: targetVariants,
+			WorkloadIndex:     targetWorkload,
 			AcquisitionPolicy: AcquisitionDownloadMissing,
 		}, map[string]bool{row.ID: true})
 		if planErr != nil {
 			return nil, planErr
+		}
+		if row.RecipeDigest == targetDigest {
+			currentSettings, err := sourceManifest.EffectiveSettings(parametersForValue(row.Parameters))
+			if err != nil {
+				return nil, fmt.Errorf("%w: current deployment settings are invalid: %v", ErrRecipe, err)
+			}
+			currentWorkload := 0
+			if placementSet.Workload != nil {
+				currentWorkload = *placementSet.Workload
+			}
+			if marshalParameters(currentSettings) == marshalParameters(deploymentPlan.Parameters) &&
+				maps.Equal(placementSet.Variants, deploymentPlan.Variants) &&
+				currentWorkload == deploymentPlan.WorkloadIndex {
+				plan.UnchangedDeploymentIDs = append(plan.UnchangedDeploymentIDs, row.ID)
+				continue
+			}
 		}
 		if mismatch := preservedPlacementMismatch(placements, deploymentPlan.Placements); mismatch != "" {
 			deploymentPlan.Ready = false
@@ -263,7 +442,7 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		workloadIndex := 0
 		if placementSet.Workload != nil {
 			workloadIndex = *placementSet.Workload
-			if deploymentPlan.WorkloadIndex != workloadIndex {
+			if !settingsChanged && deploymentPlan.WorkloadIndex != workloadIndex {
 				deploymentPlan.Ready = false
 				deploymentPlan.Diagnostics = append(deploymentPlan.Diagnostics, diag.Diagnostic{
 					Code: "recipe.update_workload_changed", Severity: "error", Message: "target recipe cannot preserve the selected workload",
@@ -287,7 +466,8 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 		deploymentPlan.Digest = deploymentPlan.PlanDigest()
 		plan.Deployments = append(plan.Deployments, RepositoryUpdateDeployment{
 			SourceDeploymentID: row.ID, SourceDigest: row.RecipeDigest, Parameters: parametersForValue(row.Parameters),
-			Placement: row.Placement, Fabric: fabric, WorkloadIndex: workloadIndex,
+			SourceWasStopped: row.DesiredState == "stopped",
+			Placement:        row.Placement, Fabric: fabric, WorkloadIndex: workloadIndex,
 			Variants: cloneVariants(placementSet.Variants), DeploymentPlan: *deploymentPlan,
 			CurrentPermissions: currentPermissions, AddedPermissions: addedPermissions, RemovedPermissions: removedPermissions,
 		})
@@ -307,6 +487,22 @@ func (s *Service) PlanRepositoryUpdate(ctx context.Context, repositoryID string,
 			if node.Status != "online" {
 				plan.Ready = false
 				plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_device_offline", fmt.Sprintf("selected device %s is %s", node.DisplayName, node.Status)))
+			}
+			if slices.Contains(currentPermissions, "host.upstream-exec") {
+				var inv inventory.Inventory
+				if !node.Inventory.Valid || json.Unmarshal([]byte(node.Inventory.String), &inv) != nil || !slices.Contains(inv.ProtocolFeatures, runtime.UpstreamProtocolFeature) {
+					plan.Ready = false
+					plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.stop_authority_unavailable",
+						fmt.Sprintf("node %s needs explicit upstream host authority to stop or restore the current source installation", node.DisplayName)))
+				}
+				configuredSource := slices.ContainsFunc(placementSet.Upstream, func(preview UpstreamPreview) bool {
+					return preview.NodeID == node.ID && len(preview.Configuration) != 0
+				})
+				if configuredSource && !slices.Contains(inv.ProtocolFeatures, runtime.UpstreamConfigurationProtocolFeature) {
+					plan.Ready = false
+					plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.configuration_restore_unavailable",
+						fmt.Sprintf("node %s needs runtime-configuration support to restore this deployment if reconfiguration fails", node.DisplayName)))
+				}
 			}
 			plan.RunningDeployments = append(plan.RunningDeployments, RepositoryUpdateTarget{
 				SourceDeploymentID: row.ID, NodeID: placement.NodeID,
@@ -390,15 +586,17 @@ func cloneVariants(input map[string]string) map[string]string {
 }
 
 type repositoryUpdateRunInput struct {
-	RepositoryID            string                   `json:"repository_id"`
-	FromDigest              string                   `json:"from_digest"`
-	FromCommit              string                   `json:"from_commit"`
-	ToCommit                string                   `json:"to_commit"`
-	TargetDigest            string                   `json:"target_digest"`
-	InstalledDevices        []RepositoryUpdateDevice `json:"installed_devices"`
-	Targets                 []RepositoryUpdateTarget `json:"running_deployments"`
-	Plan                    RepositoryUpdatePlan     `json:"plan"`
-	SavedVersionReplacement bool                     `json:"saved_version_replacement,omitempty"`
+	RepositoryID            string                                     `json:"repository_id"`
+	FromDigest              string                                     `json:"from_digest"`
+	FromCommit              string                                     `json:"from_commit"`
+	ToCommit                string                                     `json:"to_commit"`
+	TargetDigest            string                                     `json:"target_digest"`
+	InstalledDevices        []RepositoryUpdateDevice                   `json:"installed_devices"`
+	Targets                 []RepositoryUpdateTarget                   `json:"running_deployments"`
+	Plan                    RepositoryUpdatePlan                       `json:"plan"`
+	SavedVersionReplacement bool                                       `json:"saved_version_replacement,omitempty"`
+	PackageInstallOnly      bool                                       `json:"package_install_only,omitempty"`
+	InstallationSpecs       map[string][]recipe.InstallationUpdateSpec `json:"installation_specs,omitempty"`
 }
 
 type repositoryUpdateProgress struct {
@@ -425,11 +623,14 @@ func repositoryUpdateDeviceProgressFrom(devices []RepositoryUpdateDevice) []repo
 // CreateRepositoryUpdate validates a fresh plan before any source deployment
 // is stopped, persists the run, and starts the restart-safe coordinator.
 func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID string, request RepositoryReplacementRequest, planDigest string) (string, error) {
-	targetDigest := request.TargetDigest
 	plan, err := s.PlanRepositoryUpdate(ctx, repositoryID, request)
 	if err != nil {
 		return "", err
 	}
+	return s.createReplacement(ctx, plan, planDigest)
+}
+
+func (s *Service) createReplacement(ctx context.Context, plan *RepositoryUpdatePlan, planDigest string) (string, error) {
 	if plan.Digest != planDigest {
 		return "", fmt.Errorf("%w: %s != %s", ErrPlanStale, planDigest, plan.Digest)
 	}
@@ -437,7 +638,7 @@ func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID strin
 		return "", fmt.Errorf("%w: repository update plan is not ready", ErrNotReady)
 	}
 	input := repositoryUpdateRunInput{
-		RepositoryID: repositoryID, TargetDigest: targetDigest,
+		RepositoryID: plan.RepositoryID, TargetDigest: plan.TargetDigest,
 		InstalledDevices:        append([]RepositoryUpdateDevice(nil), plan.InstalledDevices...),
 		Targets:                 append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...),
 		Plan:                    *plan,
@@ -449,7 +650,7 @@ func (s *Service) CreateRepositoryUpdate(ctx context.Context, repositoryID strin
 			input.FromCommit = version.CommitSha
 		}
 	}
-	if version, versionErr := s.q.GetRecipeRepositoryVersionByDigest(ctx, targetDigest); versionErr == nil {
+	if version, versionErr := s.q.GetRecipeRepositoryVersionByDigest(ctx, plan.TargetDigest); versionErr == nil {
 		input.ToCommit = version.CommitSha
 	}
 	runID, err := s.runs.Create(ctx, "library", "recipe-update", structMap(input), "")
@@ -541,6 +742,10 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 		_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
 	}
 
+	if input.PackageInstallOnly {
+		s.coordinateRepositoryInstallationUpdate(ctx, runID, input, &progress)
+		return
+	}
 	if s.updateCancelled(ctx, runID) {
 		err = errRepositoryUpdateCancelled
 	} else {
@@ -622,17 +827,66 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 	_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.update_failed", err.Error())
 }
 
+// This branch has no deployment lifecycle calls, including on failure or cancel.
+func (s *Service) coordinateRepositoryInstallationUpdate(ctx context.Context, runID string, input repositoryUpdateRunInput, progress *repositoryUpdateProgress) {
+	if len(input.Plan.Deployments) != 0 || len(input.Targets) != 0 {
+		_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.update_input_invalid", "package update contains deployment replacements")
+		return
+	}
+	err := s.installRepositoryUpdateDevices(ctx, runID, input.TargetDigest, progress)
+	// Controller shutdown leaves the durable run resumable.
+	if ctx.Err() != nil {
+		return
+	}
+	if err == nil && s.updateCancelled(ctx, runID) {
+		err = errRepositoryUpdateCancelled
+	}
+	if err != nil {
+		_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(*progress))
+		if errors.Is(err, errRepositoryUpdateCancelled) {
+			_ = s.runs.Complete(ctx, runID, runs.Cancelled, "run.cancelled", "package update cancelled; existing packages and deployments retained")
+		} else {
+			_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.update_failed", err.Error())
+		}
+		return
+	}
+	progress.Phase = "ready"
+	s.persistUpdateProgress(ctx, runID, progress)
+	_ = s.runs.SetState(ctx, runID, runs.Verifying, "", "")
+	_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(*progress))
+	_ = s.runs.Complete(ctx, runID, runs.Succeeded, "", "")
+}
+
 func (s *Service) installRepositoryUpdateDevices(ctx context.Context, runID, targetDigest string, progress *repositoryUpdateProgress) error {
 	artifact, err := s.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest)
 	if err != nil {
 		return fmt.Errorf("candidate recipe package: %w", err)
 	}
+	run, err := s.runs.Get(ctx, runID)
+	if err != nil {
+		return err
+	}
+	var input repositoryUpdateRunInput
+	if err := mapStruct(run.Input, &input); err != nil {
+		return err
+	}
+	if input.PackageInstallOnly && input.InstallationSpecs == nil {
+		return fmt.Errorf("recipe.update_history_missing: update run predates target-bound source preparation; confirm a fresh update")
+	}
 	for index := range progress.InstalledDevices {
+		if s.updateCancelled(ctx, runID) {
+			return errRepositoryUpdateCancelled
+		}
 		device := &progress.InstalledDevices[index]
-		if _, valid := s.validPlacement(ctx, artifact.ID, device.NodeID); valid {
-			device.Status, device.Phase, device.CurrentStep = "succeeded", "ready", 2
-			s.persistUpdateProgress(ctx, runID, progress)
+		if device.Status == "succeeded" {
 			continue
+		}
+		if !input.PackageInstallOnly {
+			if _, valid := s.validPlacement(ctx, artifact.ID, device.NodeID); valid {
+				device.Status, device.Phase, device.CurrentStep = "succeeded", "ready", 2
+				s.persistUpdateProgress(ctx, runID, progress)
+				continue
+			}
 		}
 		if !s.nodes.Online(device.NodeID) {
 			device.Status, device.Phase = "waiting", "waiting_offline"
@@ -650,7 +904,15 @@ func (s *Service) installRepositoryUpdateDevices(ctx context.Context, runID, tar
 		progress.Phase = "installing_recipe"
 		device.Status, device.Phase, device.CurrentStep = "running", "fetching", 0
 		s.persistUpdateProgress(ctx, runID, progress)
-		if err := s.fetchRepositoryUpdatePackage(ctx, runID, int32(index), device.NodeID, artifact.Identity); err != nil {
+		var specs []recipe.InstallationUpdateSpec
+		if input.PackageInstallOnly {
+			var found bool
+			specs, found = input.InstallationSpecs[device.NodeID]
+			if !found {
+				return fmt.Errorf("recipe.update_history_missing: no frozen target configuration for node %s", device.NodeID)
+			}
+		}
+		if err := s.fetchRepositoryUpdatePackage(ctx, runID, int32(index), device.NodeID, artifact.Identity, specs); err != nil {
 			device.Status, device.Phase = "failed", "fetching"
 			device.ErrorCode = "recipe.update_package_failed"
 			device.ErrorMessage = err.Error()
@@ -679,10 +941,22 @@ func (s *Service) installRepositoryUpdateDevices(ctx context.Context, runID, tar
 	return nil
 }
 
-func (s *Service) fetchRepositoryUpdatePackage(ctx context.Context, runID string, index int32, nodeID, identity string) error {
+func (s *Service) fetchRepositoryUpdatePackage(ctx context.Context, runID string, index int32, nodeID, identity string, specs []recipe.InstallationUpdateSpec) error {
 	commandID, err := id.New()
 	if err != nil {
 		return err
+	}
+	op := agentv1.ArtifactOp_ARTIFACT_OP_FETCH
+	var payload []byte
+	if specs != nil {
+		op = agentv1.ArtifactOp_ARTIFACT_OP_UPDATE_RECIPE
+		payload, err = json.Marshal(specs)
+		if err != nil {
+			return err
+		}
+		if len(payload) > recipe.MaxInstallationUpdateBytes || len(specs) > recipe.MaxInstallationUpdateSpecs {
+			return fmt.Errorf("recipe.update_specs_oversized")
+		}
 	}
 	waiter := make(chan error, 1)
 	s.updateMu.Lock()
@@ -691,7 +965,7 @@ func (s *Service) fetchRepositoryUpdatePackage(ctx context.Context, runID string
 	s.inflightMark(commandID, runID, index, "repository-update-fetch")
 	if !s.nodes.Send(nodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
 		ArtifactCommand: &agentv1.ArtifactCommand{
-			CommandId: commandID, Op: agentv1.ArtifactOp_ARTIFACT_OP_FETCH, ArtifactIdentity: identity,
+			CommandId: commandID, Op: op, ArtifactIdentity: identity, UpstreamSpecs: payload,
 		},
 	}}) {
 		s.inflightTake(commandID)
@@ -702,21 +976,42 @@ func (s *Service) fetchRepositoryUpdatePackage(ctx context.Context, runID string
 	}
 	timer := time.NewTimer(30 * time.Minute)
 	defer timer.Stop()
-	select {
-	case err := <-waiter:
-		return err
-	case <-ctx.Done():
+	ticker := time.NewTicker(repositoryUpdatePollInterval)
+	defer ticker.Stop()
+	defer func() {
 		s.inflightTake(commandID)
 		s.updateMu.Lock()
 		delete(s.updateFetchWaiters, commandID)
 		s.updateMu.Unlock()
-		return ctx.Err()
-	case <-timer.C:
-		s.inflightTake(commandID)
-		s.updateMu.Lock()
-		delete(s.updateFetchWaiters, commandID)
-		s.updateMu.Unlock()
-		return fmt.Errorf("candidate package fetch timed out")
+	}()
+	cancel := func(cause error) error {
+		if !s.nodes.Send(nodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_ArtifactCommand{
+			ArtifactCommand: &agentv1.ArtifactCommand{CommandId: commandID + "-cancel", Op: agentv1.ArtifactOp_ARTIFACT_OP_CANCEL, TargetCommandId: commandID},
+		}}) {
+			return fmt.Errorf("recipe.update_cancel_unconfirmed: installed device is offline")
+		}
+		barrier := time.NewTimer(30 * time.Second)
+		defer barrier.Stop()
+		select {
+		case <-waiter:
+			return cause
+		case <-barrier.C:
+			return fmt.Errorf("recipe.update_cancel_unconfirmed: source preparation has not acknowledged cancellation")
+		}
+	}
+	for {
+		select {
+		case err := <-waiter:
+			return err
+		case <-ctx.Done():
+			return cancel(ctx.Err())
+		case <-timer.C:
+			return cancel(fmt.Errorf("candidate package update timed out"))
+		case <-ticker.C:
+			if s.updateCancelled(ctx, runID) {
+				return cancel(errRepositoryUpdateCancelled)
+			}
+		}
 	}
 }
 
@@ -823,7 +1118,7 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 	}
 	expectedPlacement := placementSetFromPlan(&deployment.DeploymentPlan)
 	existing, existingErr := s.q.GetDeploymentByRecipeParametersPlacement(ctx, db.GetDeploymentByRecipeParametersPlacementParams{
-		RecipeDigest: targetDigest, Parameters: marshalParameters(deployment.Parameters), Placement: expectedPlacement.Marshal(),
+		RecipeDigest: targetDigest, Parameters: marshalParameters(deployment.DeploymentPlan.Parameters), Placement: expectedPlacement.Marshal(),
 	})
 	var replacementID string
 	if existingErr == nil {
@@ -841,9 +1136,9 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 			policy = AcquisitionDownloadMissing
 		}
 		fresh, err := s.plan(ctx, PlanRequest{
-			RecipeDigest: targetDigest, Parameters: deployment.Parameters,
-			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.Variants,
-			WorkloadIndex: &deployment.WorkloadIndex, AcquisitionPolicy: policy,
+			RecipeDigest: targetDigest, Parameters: deployment.DeploymentPlan.Parameters,
+			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.DeploymentPlan.Variants,
+			WorkloadIndex: &deployment.DeploymentPlan.WorkloadIndex, AcquisitionPolicy: policy,
 		}, nil)
 		if err != nil {
 			return "", err
@@ -852,7 +1147,7 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 			return "", fmt.Errorf("%w: replacement plan changed before create", ErrPlanStale)
 		}
 		if !fresh.Ready || preservedPlacementMismatch(deployment.DeploymentPlan.Placements, fresh.Placements) != "" ||
-			fresh.WorkloadIndex != deployment.WorkloadIndex || valueOr(fresh.Fabric, "") != deployment.Fabric {
+			fresh.WorkloadIndex != deployment.DeploymentPlan.WorkloadIndex || valueOr(fresh.Fabric, "") != deployment.Fabric {
 			return "", fmt.Errorf("%w: frozen replacement placement, workload or fabric cannot be preserved", ErrNotReady)
 		}
 		replacement, err := s.createPlanned(ctx, fresh)
@@ -984,6 +1279,11 @@ func (s *Service) rollbackRepositoryUpdate(ctx context.Context, runID string, de
 			if err != nil {
 				rollbackErrors = append(rollbackErrors, err.Error())
 			}
+		}
+		if deployment.SourceWasStopped {
+			s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) { target.Status, target.Phase = "failed", "restored" })
+			s.persistUpdateProgress(ctx, runID, progress)
+			continue
 		}
 
 		progress.Phase = "restoring_old"

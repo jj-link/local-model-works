@@ -362,17 +362,11 @@ func collectManifest(ctx context.Context, root, contain string) ([]*agentv1.File
 		return nil, 0, "", fmt.Errorf("source root must not be a symlink")
 	}
 	if rootInfo.Mode().IsRegular() {
-		file, err := os.Open(root)
+		digest, size, err := digestFile(ctx, root)
 		if err != nil {
 			return nil, 0, "", err
 		}
-		hash := sha256.New()
-		size, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: file})
-		file.Close()
-		if copyErr != nil {
-			return nil, 0, "", copyErr
-		}
-		entry := &agentv1.FileEntry{Path: transferRootFile, Size: uint64(size), Mode: uint32(rootInfo.Mode().Perm()), Sha256: "sha256:" + hex.EncodeToString(hash.Sum(nil))}
+		entry := &agentv1.FileEntry{Path: transferRootFile, Size: uint64(size), Mode: uint32(rootInfo.Mode().Perm()), Sha256: digest}
 		tree := sha256.New()
 		fmt.Fprintf(tree, "%s\x00%d\x00%s\x00\n", entry.Path, entry.Size, entry.Sha256)
 		return []*agentv1.FileEntry{entry}, uint64(size), "sha256:" + hex.EncodeToString(tree.Sum(nil)), nil
@@ -409,20 +403,14 @@ func collectManifest(ctx context.Context, root, contain string) ([]*agentv1.File
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		file, err := os.Open(current)
-		if err != nil {
-			return err
-		}
-		hash := sha256.New()
-		read, err := io.Copy(hash, contextReader{ctx: ctx, reader: file})
-		file.Close()
+		digest, read, err := digestFile(ctx, current)
 		if err != nil {
 			return err
 		}
 		total += uint64(read)
 		entries = append(entries, &agentv1.FileEntry{
 			Path: filepath.ToSlash(rel), Size: uint64(read), Mode: uint32(info.Mode().Perm()),
-			Sha256: "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+			Sha256: digest,
 		})
 		return nil
 	})

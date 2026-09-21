@@ -92,3 +92,41 @@ func TestRecipeUpdateRunSurvivesInterruptedRecovery(t *testing.T) {
 		t.Fatalf("state = %s, want running", got.State)
 	}
 }
+
+func TestOneShotRecoveryFromEveryActivePhase(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	queries := db.New(database)
+	service := New(database, queries, events.NewEventBus(queries), t.TempDir())
+	var ids []string
+	for _, phase := range []State{Queued, Planning, Waiting, Running, Verifying, Cancelling} {
+		runID, err := service.Create(ctx, "library", "recipe-download", map[string]any{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if phase == Verifying {
+			if err := service.SetState(ctx, runID, Running, "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if phase != Queued {
+			if err := service.SetState(ctx, runID, phase, "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ids = append(ids, runID)
+	}
+	if count, err := service.MarkInterrupted(ctx); err != nil || count != len(ids) {
+		t.Fatalf("restart recovery: count=%d error=%v", count, err)
+	}
+	for _, runID := range ids {
+		run, err := service.Get(ctx, runID)
+		if err != nil || run.State != string(Interrupted) {
+			t.Fatalf("one-shot remained active after restart: %+v error=%v", run, err)
+		}
+	}
+}

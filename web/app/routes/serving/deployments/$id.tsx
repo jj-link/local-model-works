@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { MessageSquare, Play, Power, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { DeploymentSettings } from "~/components/recipes/deployment-settings";
+import { RecipeUpdateButton } from "~/components/recipes/recipe-update-button";
 import { useTailPathParam } from "~/lib/path-param";
 import {
   Table,
@@ -96,6 +98,7 @@ export default function DeploymentDetailRoute() {
   const del = useDeleteDeployment();
   const { data: nodes } = useNodes();
   const [logRank, setLogRank] = useState<number | undefined>(0);
+  const [configure, setConfigure] = useState(false);
 
   if (isPending) {
     return <p className="py-10 text-center font-mono text-xs text-faint">loading deployment…</p>;
@@ -140,6 +143,8 @@ export default function DeploymentDetailRoute() {
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <RecipeUpdateButton recipeDigest={d.recipe_digest} />
+            <Button size="sm" variant="outline" onClick={() => setConfigure(true)}>Configure</Button>
             {d.observed_state === "healthy" ? (
               <Button
                 size="sm"
@@ -296,6 +301,8 @@ export default function DeploymentDetailRoute() {
         </div>
       </div>
 
+      {configure ? <DeploymentSettings key={d.id} deploymentID={d.id} /> : null}
+
       {progressRows.length > 0 ? (
         <Section title="launch progress">
           <div className="grid gap-3 p-3 md:grid-cols-2">
@@ -357,7 +364,7 @@ export default function DeploymentDetailRoute() {
               to={`/library/recipes/packages/${encodeURIComponent(d.recipe_digest)}?deployment=${encodeURIComponent(d.id)}&section=configuration`}
               className="control w-fit font-medium text-primary underline-offset-2 hover:underline"
             >
-              Help fix this configuration
+              Configure this deployment
             </Link>
           </div>
         </Section>

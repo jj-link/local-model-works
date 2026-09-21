@@ -143,126 +143,199 @@ function installHandlers(
 beforeEach(() => sessionStorage.clear());
 
 describe("PlanDeploymentDialog", () => {
-  it("requires explicit ranked targets and a reviewed plan before starting without implicit downloads", async () => {
+  it("starts a single-device recipe with defaults without opening settings or restoring browser choices", async () => {
     const planned: Record<string, unknown>[] = [];
     let createBody: Record<string, unknown> | undefined;
-    installHandlers((body) => { planned.push(body); return plan; }, (body) => { createBody = body; });
+    const singlePlan = { ...plan, placements: [plan.placements[0]] };
+    installHandlers((body) => { planned.push(body); return singlePlan; }, (body) => { createBody = body; });
+    server.use(http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
+      ...recipeDetail, compatibility: { ...recipe.compatibility, nodeCount: 1 },
+      manifest: { ...recipeDetail.manifest, parameters: [{ name: "context_length", type: "integer", default: 4096 }] },
+    })));
+    sessionStorage.setItem(`lmw.recipe-launch.${D}`, JSON.stringify({ nodes: ["n-spark3"], parameters: { context_length: 8192 } }));
+    const user = userEvent.setup();
+    renderDialog(true, D);
+    expect(await screen.findByLabelText("Device")).toHaveValue("");
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore device choices" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check run plan" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(planned).toEqual([]);
+    await user.selectOptions(screen.getByLabelText("Device"), "n-spark2");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(createBody).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(createBody).toMatchObject({
+      acquisition_policy: "download-missing", parameters: { context_length: 4096 },
+      placements: [{ rank: 0, node_id: "n-spark2" }], plan_digest: singlePlan.plan_digest,
+    }));
+  });
+
+  it("requires all cluster devices and explicit Run before executing a source-owned recipe", async () => {
+    const planned: Record<string, unknown>[] = [];
+    let createdCount = 0;
+    installHandlers((body) => { planned.push(body); return { ...plan, risks: ["host.upstream-exec"] }; }, () => { createdCount++; });
+    server.use(http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
+      ...recipeDetail, manifest: { ...recipeDetail.manifest, workloads: [{ upstream: { start: ["bash", "start.sh"] } }] },
+    })));
     const user = userEvent.setup();
     renderDialog();
-    const recipeSelect = await screen.findByLabelText("Recipe");
     await screen.findByRole("option", { name: new RegExp(recipe.name) });
-    await user.selectOptions(recipeSelect, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    expect(screen.getByRole("button", { name: "Check run plan" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
+    await user.selectOptions(await screen.findByLabelText("Recipe"), D);
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
     expect(planned).toEqual([]);
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Run on device" }));
-    await waitFor(() => expect(createBody).toMatchObject({
-      recipe_digest: D, acquisition_policy: "require-existing", plan_digest: plan.plan_digest,
-      placements: [{ rank: 0, node_id: "n-spark2" }, { rank: 1, node_id: "n-spark3" }],
-    }));
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(screen.getByText(/Clicking Run authorizes/)).toBeVisible();
+    expect(createdCount).toBe(0);
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(createdCount).toBe(1));
   });
 
-  it("invalidates reviewed or in-flight plans when targets or acquisition consent change", async () => {
+  it("never enables a changed request from an older in-flight preview", async () => {
     installHandlers();
-    let release: (() => void) | undefined;
-    const planned: Record<string, unknown>[] = [];
-    server.use(http.post("*/api/v1/deployments/plan", async ({ request }) => {
-      planned.push(await request.json() as Record<string, unknown>);
-      if (planned.length === 1) await new Promise<void>((resolve) => { release = resolve; });
-      return HttpResponse.json(plan);
-    }));
+    let releaseOld: (() => void) | undefined;
+    let releaseCurrent: (() => void) | undefined;
+    let createBody: Record<string, unknown> | undefined;
+    const currentPlan = { ...plan, plan_digest: "sha256:current", placements: [
+      { node_id: "n-spark3", rank: 0 }, { node_id: "n-spark2", rank: 1 },
+    ] };
+    server.use(
+      http.post("*/api/v1/deployments/plan", async ({ request }) => {
+        const body = await request.json() as { placements: { node_id: string }[] };
+        if (body.placements[0].node_id === "n-spark2") {
+          await new Promise<void>((resolve) => { releaseOld = resolve; });
+          return HttpResponse.json(plan);
+        }
+        await new Promise<void>((resolve) => { releaseCurrent = resolve; });
+        return HttpResponse.json(currentPlan);
+      }),
+      http.post("*/api/v1/deployments", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
     const user = userEvent.setup();
     renderDialog(true, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(release).toBeTypeOf("function"));
-    await user.selectOptions(screen.getByLabelText("Rank 0 node"), "n-spark3");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
-    release!();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Check run plan" })).toBeEnabled());
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
-    await user.click(screen.getByRole("radio", { name: /Download missing files, then run/ }));
-    expect(screen.getByRole("button", { name: "Download and run" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Download and run" })).toBeEnabled());
-    expect(planned.at(-1)?.acquisition_policy).toBe("download-missing");
-    expect(planned).toHaveLength(3);
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
+    await waitFor(() => expect(releaseOld).toBeTypeOf("function"));
+    await user.selectOptions(screen.getByLabelText("Head device"), "n-spark3");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark2");
+    await waitFor(() => expect(releaseCurrent).toBeTypeOf("function"));
+    releaseOld!();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Checking device readiness"));
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    releaseCurrent!();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(createBody).toMatchObject({ placements: currentPlan.placements, plan_digest: currentPlan.plan_digest }));
   });
 
-  it("shows every blocking diagnostic and offers configuration help without enabling a run", async () => {
-    installHandlers(() => ({ ...plan, ready: false, diagnostics: [
-      { code: "placement.no_capacity", severity: "error", message: "no eligible node for rank 0" },
-      { code: "fabric.unavailable", severity: "error", message: "required fabric is unavailable" },
-    ] }));
+  it("keeps inferred settings device-dependent when another setting is edited or filtered", async () => {
+    let createBody: Record<string, unknown> | undefined;
+    installHandlers((body) => {
+      const placements = body.placements as { node_id: string; rank: number }[];
+      return { ...plan, placements, parameters: {
+        worker_home: placements[1].node_id === "n-spark3" ? "/home/worker-three" : "/home/worker-two",
+        ...body.parameters as Record<string, unknown>,
+      } };
+    }, (body) => { createBody = body; });
+    server.use(http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
+      ...recipeDetail, manifest: { ...recipeDetail.manifest, parameters: [
+        { name: "context_length", label: "Context length", type: "integer", default: 4096, group: "Memory" },
+        { name: "worker_home", label: "Worker home", type: "string", group: "Device" },
+      ] },
+    })));
     const user = userEvent.setup();
     renderDialog(true, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    expect(await screen.findByText(/placement.no_capacity: no eligible node for rank 0/)).toBeInTheDocument();
-    expect(screen.getByText(/fabric.unavailable: required fabric is unavailable/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await user.click(screen.getByText("Settings", { exact: false, selector: "summary" }));
+    expect(await screen.findByLabelText("Worker home")).toHaveValue("/home/worker-three");
+    await user.type(screen.getByRole("searchbox"), "context");
+    expect(screen.queryByLabelText("Worker home")).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Context length"));
+    await user.type(screen.getByLabelText("Context length"), "8192");
+    await user.clear(screen.getByRole("searchbox"));
+    await user.selectOptions(screen.getByLabelText("Head device"), "n-spark3");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark2");
+    await waitFor(() => expect(screen.getByLabelText("Worker home")).toHaveValue("/home/worker-two"));
+    expect(screen.getByLabelText("Context length")).toHaveValue(8192);
+    await user.click(screen.getByText("Settings", { exact: false, selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(createBody).toBeDefined());
+    expect(createBody?.parameters).toEqual({ context_length: 8192 });
+  });
+
+  it("keeps Run blocked until corrected prerequisites pass a requested check", async () => {
+    let prerequisitesReady = false;
+    let created = false;
+    const requests: Record<string, unknown>[] = [];
+    installHandlers((body) => {
+      requests.push(body);
+      return prerequisitesReady ? plan : { ...plan, ready: false, diagnostics: [
+        { code: "upstream.ssh_failed", severity: "error", message: "The head cannot authenticate to the selected worker." },
+        { code: "fabric.unavailable", severity: "error", message: "The required device connection is unavailable." },
+      ] };
+    }, () => { created = true; });
+    const user = userEvent.setup();
+    renderDialog(true, D);
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts).toHaveLength(2);
+    for (const alert of alerts) expect(alert).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(screen.getByRole("link", { name: "Open recipe configuration" })).toHaveAttribute("href", `/library/recipes/packages/${encodeURIComponent(D)}`);
+    prerequisitesReady = true;
+    await user.click(screen.getByRole("button", { name: "Retry readiness check" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(created).toBe(false);
   });
 
-  it("retains choices after a transient planning failure and retries only on explicit request", async () => {
+  it("retains selections after a preview failure and retries only on request", async () => {
     const bodies: Record<string, unknown>[] = [];
     installHandlers();
     server.use(http.post("*/api/v1/deployments/plan", async ({ request }) => {
       bodies.push(await request.json() as Record<string, unknown>);
-      return bodies.length === 1
-        ? HttpResponse.json({ code: "planner.unavailable", message: "planner unavailable" }, { status: 503 })
-        : HttpResponse.json(plan);
+      return bodies.length === 1 ? HttpResponse.json({ code: "planner.unavailable", message: "planner unavailable" }, { status: 503 }) : HttpResponse.json(plan);
     }));
     const user = userEvent.setup();
     renderDialog(true, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark2");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark3");
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
     expect(await screen.findByRole("alert")).toHaveTextContent("planner unavailable");
-    expect(bodies).toHaveLength(1);
-    expect(screen.getByLabelText("Rank 0 node")).toHaveValue("n-spark2");
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
+    expect(screen.getByLabelText("Head device")).toHaveValue("n-spark2");
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
     expect(bodies).toHaveLength(2);
-    expect(bodies[1]).toEqual(bodies[0]);
   });
 
-  it("restores choices explicitly after reopening without storing sensitive parameters or reusing consent", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    installHandlers((body) => { bodies.push(body); return plan; });
-    server.use(http.get(`*/api/v1/recipes/${D}`, () => HttpResponse.json({
-      ...recipeDetail, manifest: { ...recipeDetail.manifest, parameters: [
-        { name: "token_limit", type: "integer", enum: [32, 64], default: 32 },
-        { name: "access_token", type: "string", sensitive: true },
-      ] },
-    })));
+  it("invalidates readiness when the file policy changes and never replays an uncertain Run", async () => {
+    const planned: Record<string, unknown>[] = [];
+    let attempts = 0;
+    installHandlers((body) => { planned.push(body); return plan; });
+    server.use(http.post("*/api/v1/deployments", () => { attempts++; return HttpResponse.json({ message: "response interrupted" }, { status: 503 }); }));
     const user = userEvent.setup();
-    const view = renderDialog(true, D);
-    await user.selectOptions(await screen.findByLabelText("Rank 0 node"), "n-spark3");
-    await user.selectOptions(screen.getByLabelText("Rank 1 node"), "n-spark2");
-    await user.selectOptions(screen.getByLabelText("token_limit"), "64");
-    await user.type(screen.getByLabelText("access_token"), "never-persist-this-token");
-    await user.click(screen.getByRole("button", { name: "Check run plan" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run on device" })).toBeEnabled());
-    expect((bodies[0].parameters as Record<string, unknown>).token_limit).toBe(64);
-    expect(sessionStorage.getItem(`lmw.recipe-launch.${D}`)).not.toContain("never-persist-this-token");
-    view.rerenderDialog(false, D);
-    view.rerenderDialog(true, D);
-    await user.click(await screen.findByRole("button", { name: "Restore device choices" }));
-    expect(screen.getByLabelText("Rank 0 node")).toHaveValue("n-spark3");
-    expect(screen.getByLabelText("token_limit")).toHaveValue("64");
-    expect(screen.getByLabelText("access_token")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Run on device" })).toBeDisabled();
-    expect(bodies).toHaveLength(1);
+    renderDialog(true, D);
+    await user.selectOptions(await screen.findByLabelText("Head device"), "n-spark2");
+    await user.selectOptions(screen.getByLabelText("Worker 1"), "n-spark3");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await user.click(screen.getByText("Settings", { exact: false, selector: "summary" }));
+    await user.click(await screen.findByRole("radio", { name: "Use existing files only" }));
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(planned.at(-1)?.acquisition_policy).toBe("require-existing");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/The run may have been accepted/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(attempts).toBe(1);
   });
 });

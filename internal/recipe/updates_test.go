@@ -17,6 +17,77 @@ import (
 	"github.com/jj-link/local-model-works/internal/events"
 )
 
+func TestUpdatePackagePreservesSavedConfigurationAndAssets(t *testing.T) {
+	baseDocument := `{"apiVersion":"localmodelworks/v1alpha1","kind":"Recipe","metadata":{"name":"saved","version":"1","source":{"url":"https://github.com/example/update","path":".","revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"workloads":[{"env":{"PORT":"8000","UPSTREAM":"old"},"command":["serve","--old"]}],"assets":["config.env","upstream.txt"]}`
+	savedDocument := strings.Replace(baseDocument, `"PORT":"8000"`, `"PORT":"9000"`, 1)
+	savedDocument = strings.Replace(savedDocument, `"version":"1"`, `"version":"local"`, 1)
+	targetDocument := strings.Replace(baseDocument, `"UPSTREAM":"old"`, `"UPSTREAM":"new"`, 1)
+	targetDocument = strings.Replace(targetDocument, `"--old"`, `"--new"`, 1)
+	targetDocument = strings.Replace(targetDocument, `"version":"1"`, `"version":"2"`, 1)
+	targetDocument = strings.Replace(targetDocument, strings.Repeat("a", 40), strings.Repeat("b", 40), 1)
+	pack := func(document, config, upstream string) *PackResult {
+		t.Helper()
+		result, err := PackManifest([]byte(document), map[string][]byte{"config.env": []byte(config), "upstream.txt": []byte(upstream)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	merged, err := preserveSavedPackage(context.Background(), t.TempDir(), pack(baseDocument, "PORT=8000\nFEATURE=old\n", "old"), pack(savedDocument, "PORT=9000\nFEATURE=old\n", "old"), pack(targetDocument, "PORT=8000\nFEATURE=new\n", "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := Parse(merged.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Metadata.Version != "2" || manifest.Metadata.Source.Revision != strings.Repeat("b", 40) {
+		t.Fatalf("update retained obsolete provenance: %+v", manifest.Metadata)
+	}
+	if manifest.Workloads[0].Env["PORT"] != "9000" || manifest.Workloads[0].Env["UPSTREAM"] != "new" || manifest.Workloads[0].Command[1] != "--new" {
+		t.Fatalf("saved configuration or upstream changes lost: %+v", manifest.Workloads[0])
+	}
+	assets, err := updatePackageAssets(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(assets["config.env"]) != "PORT=9000\nFEATURE=new\n" || string(assets["upstream.txt"]) != "new" {
+		t.Fatalf("saved asset or upstream asset lost: %+v", assets)
+	}
+}
+
+func TestUpdateRetainsNamedSettingsWhenUpstreamAddsAndReordersParameters(t *testing.T) {
+	base := `{"apiVersion":"localmodelworks/v1alpha1","kind":"Recipe","metadata":{"name":"settings","version":"1"},"parameters":[{"name":"port","type":"int","default":8000},{"name":"context","type":"int","default":4096}],"workloads":[]}`
+	saved := strings.Replace(base, `"default":8000`, `"default":9000`, 1)
+	target := `{"apiVersion":"localmodelworks/v1alpha1","kind":"Recipe","metadata":{"name":"settings","version":"2"},"parameters":[{"name":"context","type":"int","default":8192},{"name":"batch","type":"int","default":32},{"name":"port","type":"int","default":8500}],"workloads":[]}`
+	packages := make([]*PackResult, 0, 3)
+	for _, document := range []string{base, saved, target} {
+		packed, err := PackManifest([]byte(document), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packages = append(packages, packed)
+	}
+	updated, err := preserveSavedPackage(context.Background(), t.TempDir(), packages[0], packages[1], packages[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := Parse(updated.ConfigJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := manifest.EffectiveSettings(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"port": "9000", "context": "8192", "batch": "32"} {
+		value, ok := (RenderContext{Settings: settings}).Resolve("${setting." + name + "}")
+		if !ok || value != want {
+			t.Fatalf("updated setting %s = %q, %v; want %q", name, value, ok, want)
+		}
+	}
+}
+
 func TestCheckUpdatesCachesGitHubHeadAcrossRecipes(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

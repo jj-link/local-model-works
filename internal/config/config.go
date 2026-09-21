@@ -17,22 +17,24 @@ const (
 	EnvPeerAddr  = "LMW_PEER_ADDR"
 	// EnvPeerAdvertise is the routable host:port a remote source dials;
 	// empty falls back to PeerAddr when it names an explicit host.
-	EnvPeerAdvertise   = "LMW_PEER_ADVERTISE"
-	EnvServerName      = "LMW_SERVER_NAME"
-	EnvStateRoot       = "LMW_STATE_ROOT"
-	EnvConfigDir       = "LMW_CONFIG_DIR"
-	EnvSessionTTL      = "LMW_SESSION_TTL"
-	EnvPublicOrigin    = "LMW_PUBLIC_ORIGIN"
-	EnvCodexBinary     = "LMW_CODEX_BINARY"
-	EnvPublicAgentURL  = "LMW_PUBLIC_AGENT_URL"
-	EnvAgentServer     = "LMW_AGENT_SERVER"
-	EnvAgentCASha256   = "LMW_AGENT_CA_SHA256"
-	EnvAgentToken      = "LMW_AGENT_TOKEN"
-	EnvAgentStateRoot  = "LMW_AGENT_STATE_ROOT"
-	EnvAgentDockerSock = "LMW_AGENT_DOCKER_SOCKET"
-	EnvAgentWorkspace  = "LMW_AGENT_WORKSPACE"
-	EnvAgentCacheRoots = "LMW_AGENT_CACHE_ROOTS"
-	EnvAgentTeleInt    = "LMW_AGENT_TELEMETRY_INTERVAL"
+	EnvPeerAdvertise          = "LMW_PEER_ADVERTISE"
+	EnvServerName             = "LMW_SERVER_NAME"
+	EnvStateRoot              = "LMW_STATE_ROOT"
+	EnvConfigDir              = "LMW_CONFIG_DIR"
+	EnvSessionTTL             = "LMW_SESSION_TTL"
+	EnvPublicOrigin           = "LMW_PUBLIC_ORIGIN"
+	EnvCodexBinary            = "LMW_CODEX_BINARY"
+	EnvPublicAgentURL         = "LMW_PUBLIC_AGENT_URL"
+	EnvAgentServer            = "LMW_AGENT_SERVER"
+	EnvAgentCASha256          = "LMW_AGENT_CA_SHA256"
+	EnvAgentToken             = "LMW_AGENT_TOKEN"
+	EnvAgentStateRoot         = "LMW_AGENT_STATE_ROOT"
+	EnvAgentDockerSock        = "LMW_AGENT_DOCKER_SOCKET"
+	EnvAgentWorkspace         = "LMW_AGENT_WORKSPACE"
+	EnvAgentCacheRoots        = "LMW_AGENT_CACHE_ROOTS"
+	EnvAgentTeleInt           = "LMW_AGENT_TELEMETRY_INTERVAL"
+	EnvAgentUpstreamExecution = "LMW_AGENT_UPSTREAM_EXECUTION"
+	EnvAgentAdvertiseAddress  = "LMW_AGENT_ADVERTISE_ADDRESS"
 )
 
 // Server holds controller-plane settings.
@@ -52,16 +54,18 @@ type Server struct {
 
 // Agent holds node-agent settings.
 type Agent struct {
-	ServerURL     string        // controller agent listener, e.g. https://<tailnet>:9443
-	CASha256      string        // pinned CA fingerprint (hex)
-	Token         string        // one-time enrollment token (first run only)
-	PeerAddr      string        // peer-transfer listener, default :9444
-	PeerAdvertise string        // routable peer host:port; "" = derive from PeerAddr
-	StateRoot     string        // default /var/lib/local-model-works-agent
-	DockerSocket  string        // default /var/run/docker.sock
-	Workspace     string        // default <StateRoot>/workspace
-	CacheRoots    []string      // existing model/cache roots reported as placements
-	TelemetryInt  time.Duration // sample interval, default 1s
+	ServerURL         string        // controller agent listener, e.g. https://<tailnet>:9443
+	CASha256          string        // pinned CA fingerprint (hex)
+	Token             string        // one-time enrollment token (first run only)
+	PeerAddr          string        // peer-transfer listener, default :9444
+	PeerAdvertise     string        // routable peer host:port; "" = derive from PeerAddr
+	AdvertiseAddress  string        // explicit serving IP; empty uses inventory address selection
+	StateRoot         string        // default /var/lib/local-model-works-agent
+	DockerSocket      string        // default /var/run/docker.sock
+	Workspace         string        // default <StateRoot>/workspace
+	CacheRoots        []string      // existing model/cache roots reported as placements
+	TelemetryInt      time.Duration // sample interval, default 1s
+	UpstreamExecution bool          // node-administrator permission for reviewed host commands; default false
 }
 
 func envStr(key, def string) string {
@@ -139,16 +143,30 @@ func sessionTTL() time.Duration {
 // LoadAgent reads node-agent settings.
 func LoadAgent() (Agent, error) {
 	a := Agent{
-		ServerURL:     envStr(EnvAgentServer, ""),
-		CASha256:      envStr(EnvAgentCASha256, ""),
-		Token:         envStr(EnvAgentToken, ""),
-		PeerAddr:      envStr(EnvPeerAddr, ":9444"),
-		PeerAdvertise: envStr(EnvPeerAdvertise, ""),
-		StateRoot:     envStr(EnvAgentStateRoot, "/var/lib/local-model-works-agent"),
-		DockerSocket:  envStr(EnvAgentDockerSock, "/var/run/docker.sock"),
-		Workspace:     envStr(EnvAgentWorkspace, ""),
-		CacheRoots:    splitColonList(os.Getenv(EnvAgentCacheRoots)),
-		TelemetryInt:  time.Second,
+		ServerURL:        envStr(EnvAgentServer, ""),
+		CASha256:         envStr(EnvAgentCASha256, ""),
+		Token:            envStr(EnvAgentToken, ""),
+		PeerAddr:         envStr(EnvPeerAddr, ":9444"),
+		PeerAdvertise:    envStr(EnvPeerAdvertise, ""),
+		AdvertiseAddress: envStr(EnvAgentAdvertiseAddress, ""),
+		StateRoot:        envStr(EnvAgentStateRoot, "/var/lib/local-model-works-agent"),
+		DockerSocket:     envStr(EnvAgentDockerSock, "/var/run/docker.sock"),
+		Workspace:        envStr(EnvAgentWorkspace, ""),
+		CacheRoots:       splitColonList(os.Getenv(EnvAgentCacheRoots)),
+		TelemetryInt:     time.Second,
+	}
+	if a.AdvertiseAddress != "" {
+		ip := net.ParseIP(a.AdvertiseAddress)
+		if ip == nil || ip.IsLoopback() || !ip.IsGlobalUnicast() {
+			return a, fmt.Errorf("%s: must be a non-loopback unicast IP address", EnvAgentAdvertiseAddress)
+		}
+	}
+	switch v := os.Getenv(EnvAgentUpstreamExecution); v {
+	case "", "false":
+	case "true":
+		a.UpstreamExecution = true
+	default:
+		return a, fmt.Errorf("%s: must be true or false, got %q", EnvAgentUpstreamExecution, v)
 	}
 	if a.Workspace == "" {
 		a.Workspace = a.StateRoot + "/workspace"

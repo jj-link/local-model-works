@@ -238,14 +238,17 @@ func (s *Service) acquireItem(ctx context.Context, row db.DownloadItem, creds []
 		s.quiesce(ctx, row, QuiescenceNeverDispatched)
 		return err
 	}
-	command := newID()
-	n, err := s.q.BindDownloadItemCommand(ctx, db.BindDownloadItemCommandParams{ID: row.ID, NodeID: row.NodeID, ExpectedState: row.State, CommandID: ns(command)})
-	if err != nil || n != 1 {
-		s.quiesce(ctx, row, QuiescenceNeverDispatched)
-		if err == nil {
-			err = failure("download.cancelled", "Acquisition was cancelled before dispatch", 409)
+	var command string
+	if v.Resource.Action != ActionPeerCopy {
+		command = newID()
+		n, bindErr := s.q.BindDownloadItemCommand(ctx, db.BindDownloadItemCommandParams{ID: row.ID, NodeID: row.NodeID, ExpectedState: row.State, CommandID: ns(command)})
+		if bindErr != nil || n != 1 {
+			s.quiesce(ctx, row, QuiescenceNeverDispatched)
+			if bindErr == nil {
+				bindErr = failure("download.cancelled", "Acquisition was cancelled before dispatch", 409)
+			}
+			return bindErr
 		}
-		return err
 	}
 	row, _ = s.q.GetDownloadItem(ctx, row.ID)
 	changed, err = s.transition(ctx, row, ItemTransferring, nil)
@@ -311,8 +314,10 @@ func (s *Service) Cancel(ctx context.Context, runID string) error {
 	if runs.State(run.State).Terminal() {
 		return nil
 	}
-	if err = s.runs.Cancel(ctx, runID); err != nil {
-		return err
+	if run.State != string(runs.Cancelling) {
+		if err = s.runs.Cancel(ctx, runID); err != nil {
+			return err
+		}
 	}
 	rows, err := s.q.ListDownloadItems(ctx, runID)
 	if err != nil {
@@ -334,7 +339,9 @@ func (s *Service) Cancel(ctx context.Context, runID string) error {
 			return e
 		}
 		_ = s.MarkCancelling(ctx, row.NodeID, v.Resource.Destination, OwnerDownload, row.ID)
-		if !row.CommandID.Valid && !row.TransferID.Valid {
+		// Peer dispatch requires a persisted transfer binding; an origin-command
+		// placeholder from an older attempt does not represent a peer writer.
+		if !row.TransferID.Valid && (v.Resource.Action == ActionPeerCopy || !row.CommandID.Valid) {
 			_ = s.quiesce(ctx, row, QuiescenceNeverDispatched)
 			_, _ = s.transition(ctx, row, ItemCancelled, nil)
 			continue
@@ -353,7 +360,10 @@ func (s *Service) cancelItem(ctx context.Context, row db.DownloadItem) {
 	if err != nil {
 		return
 	}
-	if row.TransferID.Valid {
+	proof := QuiescenceTerminalAck
+	if v.Resource.Action == ActionPeerCopy && !row.TransferID.Valid {
+		proof = QuiescenceNeverDispatched
+	} else if row.TransferID.Valid {
 		err = s.cancelPeer(ctx, row, v.Resource)
 	} else {
 		_, err = s.command(ctx, row.NodeID, newID(), row.ID, v.Resource.ResourceSpec, agentv1.DownloadOp_DOWNLOAD_OP_CANCEL, row.CommandID.String, nil)
@@ -361,7 +371,7 @@ func (s *Service) cancelItem(ctx context.Context, row db.DownloadItem) {
 	if err != nil {
 		return
 	}
-	_ = s.quiesce(ctx, row, QuiescenceTerminalAck)
+	_ = s.quiesce(ctx, row, proof)
 	latest, e := s.q.GetDownloadItem(ctx, row.ID)
 	if e == nil && latest.State == "cancelling" {
 		_, _ = s.transition(ctx, latest, ItemCancelled, nil)

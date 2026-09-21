@@ -142,6 +142,16 @@ func verifyRecipeBytes(ctx context.Context, root, digest string, manifest, confi
 		return fmt.Errorf("download.package_blob_mismatch")
 	}
 	if _, err := os.Stat(filepath.Join(root, "oci-layout")); err == nil {
+		for _, name := range []string{
+			"oci-layout", "index.json",
+			filepath.Join("blobs", "sha256", strings.TrimPrefix(digest, "sha256:")),
+			filepath.Join("blobs", "sha256", strings.TrimPrefix(decoded.Config.Digest, "sha256:")),
+			filepath.Join("blobs", "sha256", strings.TrimPrefix(decoded.Layers[0].Digest, "sha256:")),
+		} {
+			if err := safeDestination(filepath.Join(root, name)); err != nil {
+				return err
+			}
+		}
 		packed, err := recipe.ReadLayout(root)
 		if err != nil || packed.ManifestDigest != digest {
 			return fmt.Errorf("download.package_layout_invalid")

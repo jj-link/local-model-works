@@ -232,19 +232,29 @@ func acquisitionPath(ps placementSet, nodeID, identity string) (string, error) {
 
 func applyAcquisitionSpec(spec *runtime.ContainerSpec, ps placementSet, nodeID string) error {
 	imageFound := false
+	packageFound := false
 	for _, resource := range ps.AcquisitionResources {
 		if resource.NodeID != nodeID || !resource.Required {
 			continue
 		}
 		spec.AcquisitionResources = append(spec.AcquisitionResources, resource.ResourceSpec)
+		if resource.Kind == downloads.ResourceRecipe && resource.Identity == "recipe://"+spec.Labels[runtime.LabelRecipe] {
+			packageFound = true
+		}
 		if resource.Kind == downloads.ResourceImage && (resource.IndexDigest == spec.ImageDigest || resource.ManifestDigest == spec.ImageDigest) {
 			spec.Image = resource.Source.Reference
-			spec.ImageDigest = resource.ManifestDigest
+			// Docker can cache a child descriptor without a separately addressable
+			// repository reference. Launch the verified index; resource checks
+			// still enforce the exact child manifest and platform.
+			spec.ImageDigest = resource.IndexDigest
 			spec.ImagePlatform = resource.Platform
 			imageFound = true
 		}
 	}
-	if !imageFound {
+	if spec.Upstream != nil && !packageFound {
+		return fmt.Errorf("upstream recipe package has no reviewed resource on node %s", nodeID)
+	}
+	if spec.Upstream == nil && !imageFound {
 		return fmt.Errorf("container image has no reviewed platform manifest on node %s", nodeID)
 	}
 	spec.AcquisitionPolicy = AcquisitionRequireExisting

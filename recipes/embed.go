@@ -1,10 +1,10 @@
-// Package recipes embeds the controller-owned templates used to compile
-// supported third-party repository commits without modifying or executing them.
+// Package recipes embeds reviewed execution metadata for upstream-authored
+// procedures. Source repositories and their lifecycle scripts are not rebuilt.
 package recipes
 
 import "embed"
 
-// Templates contains the controller-managed third-party recipe bundles.
+// Templates contains metadata only; execution uses the exact original checkout.
 //
-//go:embed qwen38-27b-rtx6000pro-dflash2 deepseek-v4-flash-vision-exp-dspark-tp2 glm53-flash-exl3-dflash2-spark-tp2 glm53-flash-nvfp4-dflash2-spark-tp2 qwen38-27b-dgx-spark-mtp qwen38-flash-next-dspark-tp2
+//go:embed qwen38-27b-rtx6000pro-dflash2/recipe.yaml deepseek-v4-flash-vision-exp-dspark-tp2/recipe.yaml glm53-flash-exl3-dflash2-spark-tp2/recipe.yaml qwen38-27b-dgx-spark-mtp/recipe.yaml qwen38-flash-next-dspark-tp2/recipe.yaml qwen38-flash-next-spark-tp1/recipe.yaml
 var Templates embed.FS

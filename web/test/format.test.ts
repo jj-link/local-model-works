@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceleratorSummary,
   bytes,
   duration,
   endpointLabel,
@@ -80,6 +81,23 @@ describe("bytes", () => {
     expect(bytes(1536)).toBe("1.5 KiB");
     expect(bytes(5 * 1024 ** 3)).toBe("5.0 GiB");
     expect(bytes(null)).toBe("—");
+  });
+});
+
+describe("acceleratorSummary", () => {
+  it("shows each model separately on mixed-GPU nodes", () => {
+    expect(acceleratorSummary([
+      { vendor: "nvidia", name: "RTX PRO 6000 Blackwell Workstation Edition" },
+      { vendor: "nvidia", name: "GeForce RTX 4090" },
+    ])).toBe("1× nvidia RTX PRO 6000 Blackwell Workstation Edition · 1× nvidia GeForce RTX 4090");
+  });
+
+  it("compacts identical vendor/model pairs without merging different vendors", () => {
+    expect(acceleratorSummary([
+      { vendor: "vendor-a", name: "model" },
+      { vendor: "vendor-b", name: "model" },
+      { vendor: "vendor-a", name: "model" },
+    ])).toBe("2× vendor-a model · 1× vendor-b model");
   });
 });
 

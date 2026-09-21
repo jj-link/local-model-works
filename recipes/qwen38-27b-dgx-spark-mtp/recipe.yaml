@@ -2,23 +2,23 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark
-  version: 1.0.0
+  version: 2.2.0
   model: qwen3.8-27b-sglang
   engine: sglang
   description: >-
-    RadixArk Qwen3.8-27B NVFP4 on one NVIDIA GB10 DGX Spark with SGLang,
-    EAGLE/MTP speculative decoding (3/1/4), native 262K context, FP8 KV
-    cache, BF16 GDN state, FlashInfer attention, 8192-token prefill
-    chunks, reasoning and tool calling. LMW pins the image and every weight
-    snapshot; the upstream imperative start/stop scripts are reviewed
-    for layout drift but never executed. The packed-FP4 checkpoint
-    below mirrors the deployment already running on Spark1; the newer
-    dense-BF16-head rebuild is available as an explicit alternative and
-    costs about 3.2 GiB more runtime memory for the LM head.
+    Runs the original pinned MTP start.sh and stop.sh on one GB10 DGX Spark.
+    Copies the authored .env.sample as literal KEY=value configuration;
+    its actual concurrency default is 16, despite the older README text.
+    Upstream owns image/model downloads, CPU pinning, privileged Docker,
+    host network/IPC, port 8888 and persistent source-relative caches.
+    Stop also addresses the legacy qwen3.8-27b-sglang-mtp container.
+    No LMW swap, swappiness, cache-dropping or reconstructed serving command
+    is applied. Source pinning does not pin mutable image/model dependencies.
+    Requires Bash, Docker/NVIDIA GPU access and curl as the node agent account.
   license: MIT
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark
-    revision: "751e29eb6a3057ccfd8f992f87dfc260787e05a1"
+    revision: "9d21dcd331232792e7d39f4f84db7dd46635905d"
     path: .
 compatibility:
   nodeCount: 1
@@ -28,136 +28,38 @@ compatibility:
       - sm_121
     count: 1
     minMemoryBytes: 128849018880
-artifacts:
-  - name: model
-    kind: model
-    sizeBytes: 23772921363
-    defaultVariant: packed_fp4_current
-    variants:
-      - name: packed_fp4_current
-        label: Packed FP4 · currently serving on Spark1
-        description: >-
-          hf://RadixArk/Qwen3.8-27B-NVFP4@91cea059647696fd83964e43d57db122ff745993 —
-          the exact checkpoint the existing unmanaged Spark1 deployment
-          serves today. Choosing it keeps migration behavior identical.
-        source:
-          type: huggingface
-          identity: hf://RadixArk/Qwen3.8-27B-NVFP4
-          revision: "91cea059647696fd83964e43d57db122ff745993"
-      - name: dense_bf16_head
-        label: Dense BF16 head · newer upstream default
-        description: >-
-          hf://RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead@009632fef96dd349150baa780c984e62e70e91fe —
-          upstream's newer default rebuild with a dense BF16 LM head,
-          about 3.2 GiB larger at runtime than the packed variant.
-        source:
-          type: huggingface
-          identity: hf://RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead
-          revision: "009632fef96dd349150baa780c984e62e70e91fe"
-    mount: /models/base
-    validation: snapshot
+artifacts: []
+parameters:
+  - name: quant
+    type: enum
+    default: nvfp4
+    enum: [nvfp4, nvfp4-fp4, fp8, bf16]
+    description: The original QUANT selector chooses the checkpoint inside start.sh.
+  - name: max_concurrent_requests
+    type: int
+    default: 16
+    min: 1
+    description: Upstream MAX_CONCURRENT_REQUESTS; 16 is the pinned sample's actual value.
 workloads:
-  - match:
-      nodeCount: 1
-      accelerator:
-        vendor: nvidia
-        architectures:
-          - sm_121
-    image:
-      reference: lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-      digest: sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1
-    command:
-      - python3
-      - -m
-      - sglang.launch_server
-    args:
-      - --model-path
-      - "${artifact.model.path}"
-      - --served-model-name
-      - qwen3.8-27b-sglang
-      - --trust-remote-code
-      - --mem-fraction-static
-      - "0.95"
-      - --attention-backend
-      - flashinfer
-      - --chunked-prefill-size
-      - "8192"
-      - --disable-prefill-cuda-graph
-      - --kv-cache-dtype
-      - fp8_e4m3
-      - --mamba-ssm-dtype
-      - bfloat16
-      - --mamba-full-memory-ratio
-      - "4.21"
-      - --mamba-radix-cache-strategy
-      - extra_buffer_lazy
-      - --max-mamba-cache-size
-      - "16"
-      - --max-running-requests
-      - "4"
-      - --context-length
-      - "262144"
-      - --speculative-algorithm
-      - EAGLE
-      - --speculative-num-steps
-      - "3"
-      - --speculative-eagle-topk
-      - "1"
-      - --speculative-num-draft-tokens
-      - "4"
-      - --reasoning-parser
-      - qwen3
-      - --tool-call-parser
-      - qwen3_coder
-      - --sampling-defaults
-      - model
-      - --enable-metrics
-      - --enable-cache-report
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
+  - upstream:
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [qwen3.8-27b-sglang]
+      auxiliaryContainers: [qwen3.8-27b-sglang-mtp]
+      envFile: .env
+      envTemplate: .env.sample
+      envFormat: literal
+      logFile: .sglang.log
     env:
-      HF_HOME: /tmp/huggingface
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-      HOME: /tmp/home
-      TRITON_CACHE_DIR: /tmp/triton
-      TORCH_EXTENSIONS_DIR: /tmp/torch-extensions
-      NUMBA_CACHE_DIR: /tmp/numba
-      XDG_CACHE_HOME: /tmp/cache
-      VLLM_CACHE_ROOT: /tmp/vllm-cache
-    devices:
-      accelerator:
-        all: true
-    networkMode: bridge
-    permissions:
-      - memory.shm-large
-      - host.memory-tuning
-    hostPreparation:
-      requireSwap: true
-      swappiness: 60
-      dropPageCache: true
+      QUANT: "${setting.quant}"
+      MAX_CONCURRENT_REQUESTS: "${setting.max_concurrent_requests}"
+    permissions: [host.upstream-exec]
     ports:
-      - container: 8000
-        host: 8000
+      - container: 8888
+        host: 8888
         protocol: tcp
     readiness:
       httpGet:
         method: GET
-        path: /health
-        port: 8000
-      intervalSeconds: 60
-      timeoutSeconds: 5
-      failureThreshold: 30
-    resources:
-      shmBytes: 34359738368
-      tmpfsBytes: 8589934592
-      pids: 8192
-    verify:
-      expect:
-        statusCode: 200
-      httpGet:
-        method: GET
         path: /v1/models
-        port: 8000
+        port: 8888

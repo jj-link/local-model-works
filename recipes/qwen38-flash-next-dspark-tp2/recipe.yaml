@@ -2,22 +2,26 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-flash-next-dspark-tp2
-  version: 1.0.0
-  model: Qwen3.8 Flash Next
+  version: 2.2.0
+  model: qwen3.8-flash-next
   engine: vllm
   description: >-
-    Two-node GB10 (DGX Spark) vLLM TP=2 with expert parallelism and MTP-3
-    speculative decoding for RadixArk/Qwen3.8-Flash-Next-NVFP4. Native 262K
-    context extended to 1M with YaRN (factor 4.0), NVFP4 MoE via FlashInfer
-    CUTLASS with the upstream PLE FP8 patch applied at boot, 8192-token
-    prefill chunks, reasoning and tool calling, RoCE fabric between the two
-    ranks. Head node serves the OpenAI API on :8888; the worker rank is
-    headless and starts first. Sourced from
-    MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks.
-  license: MIT
+    Runs the original pinned start.sh and stop.sh once on the head Spark.
+    Upstream downloads and distributes the model, prepares its own image
+    overlays, generates its original rank commands and starts the worker
+    before the API head. LMW independently observes vllm-fn on both nodes.
+    The copied .env.sample selects NVIDIA NVFP4 and native 262144 context.
+    Requires two otherwise-idle GB10 Sparks, Docker/NVIDIA/RDMA access,
+    Python3, a supported Hugging Face download CLI, rsync/scp, curl and
+    noninteractive head-to-worker SSH over the selected fabric address.
+    Upstream uses one shared GID index, host network/IPC and persistent
+    caches. Its image tag and model download are not made immutable by the
+    source pin; upstream cache reuse does not prove a model revision update.
+    No generated LMW launcher or independently selected patch set is used.
+  license: AGPL-3.0-or-later AND Apache-2.0
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks
-    revision: "169fbad266f2791335a3102f0d3d625e7c295563"
+    revision: "c2325b22602b51a5faf55fc2bebccc34f3f80b9f"
     path: .
 compatibility:
   nodeCount: 2
@@ -29,120 +33,40 @@ compatibility:
   fabric:
     transport: roce
     minBandwidthGbps: 100
-artifacts:
-  - name: model
-    kind: model
-    sizeBytes: 135253622894
-    source:
-      type: huggingface
-      identity: hf://RadixArk/Qwen3.8-Flash-Next-NVFP4
-      revision: "7b719225242aacd3dbd3f9407468c2ee9a9d2594"
-    mount: /models/hub/models--RadixArk--Qwen3.8-Flash-Next-NVFP4
-    validation: snapshot
+    sharedGIDIndex: true
+artifacts: []
+parameters:
+  - name: worker_user
+    type: string
+    minLength: 1
+    description: Existing worker SSH account reachable over the fabric from the head agent account.
 workloads:
-  - match:
-      nodeCount: 2
-      accelerator:
-        vendor: nvidia
-    image:
-      reference: vllm/vllm-openai@sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8
-      digest: sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8
-    command:
-      - /bin/bash
-      - /lmw/assets/serve.sh
-    args: []
-    ranks:
-      - 0
-      - 1
-    startOrder: workers-first
+  - ranks: [0, 1]
+    upstream:
+      coordinatorRank: 0
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [vllm-fn]
+      envFile: .env
+      envTemplate: .env.sample
+      envFormat: shell
     env:
-      # rank / distributed wiring
-      NODE_RANK: "${node.rank}"
-      WORLD_SIZE: "2"
-      MASTER_ADDR: "${fabric.address}"
-      MASTER_PORT: "50000"
-      # model / serve
-      MODEL_PATH: "${artifact.model.path}"
-      SERVED: "qwen3.8-flash-next"
-      API_HOST: "0.0.0.0"
-      API_PORT: "8888"
-      MAX_MODEL_LEN: "1000000"
-      MAX_NUM_SEQS: "8"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      MTP_NUM_SPECULATIVE_TOKENS: "3"
-      YARN_FACTOR: "4.0"
-      KV_CACHE_DTYPE: "auto"
-      GPU_MEMORY_UTILIZATION: "0.835"
-      PLE_QUANT_OVERRIDE: "fp8"
-      CUDA_VISIBLE_DEVICES: "0"
-      # capability profile of the upstream PLE patch
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
-      # NCCL / RoCE fabric (cluster-proven values, identical to the DeepSeek recipe)
-      VLLM_HOST_IP: "${node.address}"
-      GLOO_SOCKET_IFNAME: "enp1s0f1np1"
-      TP_SOCKET_IFNAME: "enp1s0f1np1"
-      NCCL_SOCKET_IFNAME: "enp1s0f1np1"
-      NCCL_IB_HCA: "rocep1s0f1"
-      NCCL_IB_GID_INDEX: "5"
-      NCCL_IB_ADDR_FAMILY: "AF_INET"
-      NCCL_IB_ROCE_VERSION_NUM: "2"
-      NCCL_IB_DISABLE: "0"
-      NCCL_NET: "IB"
-      NCCL_CROSS_NIC: "1"
-      NCCL_NVLS_ENABLE: "0"
-      NCCL_IGNORE_CPU_AFFINITY: "1"
-      NCCL_CUMEM_ENABLE: "0"
-      NCCL_DEBUG: "INFO"
-      # CUDA / arch
-      TORCH_CUDA_ARCH_LIST: "12.1a"
-      FLASHINFER_CUDA_ARCH_LIST: "12.1a"
-      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-      FLASHINFER_DISABLE_VERSION_CHECK: "1"
-      VLLM_USE_FLASHINFER_SAMPLER: "1"
-      # offline HF (model artifact is pre-placed by LMW)
-      HF_HOME: "/models/hub"
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-      # writable scratch
-      HOME: "/tmp/home"
-      NUMBA_CACHE_DIR: "/tmp/numba"
-      TRITON_CACHE_DIR: "/tmp/triton"
-      XDG_CACHE_HOME: "/tmp/cache"
-      VLLM_CACHE_ROOT: "/tmp/vllm-cache"
-    devices:
-      accelerator:
-        all: true
-      rdma:
-        all: true
-    networkMode: host
-    permissions:
-      - devices.rdma
-      - network.host
-      - memory.shm-large
-      - rootfs.write
+      HEAD_IP: "${cluster.node.0.fabric.node_addr}"
+      WORKER_IP: "${cluster.node.1.fabric.node_addr}"
+      WORKER_USER: "${setting.worker_user}"
+      IFACE: "${cluster.node.0.fabric.interface}"
+      WORKER_IFACE: "${cluster.node.1.fabric.interface}"
+      IB_HCA: "=${cluster.node.0.fabric.rdma_device}"
+      WORKER_IB_HCA: "=${cluster.node.1.fabric.rdma_device}"
+      IB_GID_INDEX: "${cluster.node.0.fabric.gid_index}"
+    permissions: [host.upstream-exec]
     ports:
       - container: 8888
         host: 8888
         protocol: tcp
-    resources:
-      shmBytes: 34359738368
-      tmpfsBytes: 8589934592
-      pids: 8192
     readiness:
       httpGet:
         method: GET
         path: /health
         port: 8888
-      intervalSeconds: 60
       timeoutSeconds: 5
-      failureThreshold: 30
-    verify:
-      expect:
-        statusCode: 200
-      httpGet:
-        method: GET
-        path: /health
-        port: 8888
-assets:
-  - serve.sh
-  - files/ple_layer_patched.py

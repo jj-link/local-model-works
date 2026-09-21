@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import type { ReactNode } from "react";
 import { StatusDot } from "~/components/status-dot";
-import { bytes, relativeTime } from "~/lib/format";
+import { acceleratorSummary, bytes, relativeTime } from "~/lib/format";
 import { cn } from "~/lib/utils";
 import { MetricBar } from "~/components/fleet/metric-bar";
 import {
@@ -45,13 +45,12 @@ export function NodeCard({ node, sample, now = Date.now(), action }: NodeCardPro
   const agg = aggregateNodePayload(node.status === "pending" ? undefined : sample?.payload);
   const accels = node.inventory?.accelerators ?? [];
   const dimmed = node.status === "offline" || node.status === "pending";
-  const accelLabel =
-    accels.length > 0 ? `${accels.length}× ${accels[0].vendor ?? ""} ${accels[0].name ?? ""}`.trim() : "none";
+  const accelLabel = acceleratorSummary(accels) || "none";
 
   return (
     <article
       className={cn(
-        "lmw-panel flex flex-col gap-3 p-4",
+        "lmw-panel flex min-w-0 flex-col gap-3 p-4",
         dimmed && "opacity-70",
         node.status === "offline" && "border-hairline",
       )}
@@ -86,7 +85,7 @@ export function NodeCard({ node, sample, now = Date.now(), action }: NodeCardPro
         <footer className="mt-auto">{action}</footer>
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="font-mono text-[11px] text-muted">
+          <p className="min-w-0 break-words font-mono text-[11px] text-muted">
             {accelLabel} · <span className="text-faint">{bytes(agg.gpuMemTotal)}</span>
           </p>
           <MetricBar

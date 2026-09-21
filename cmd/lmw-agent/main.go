@@ -23,6 +23,13 @@ var (
 )
 
 func main() {
+	if handled, err := runtime.RunUpstreamWorker(os.Args[1:]); handled {
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	if len(os.Args) < 2 {
 		usage()
@@ -56,6 +63,10 @@ func run() error {
 	rt, err := runtime.NewDocker(cfg.DockerSocket)
 	if err != nil {
 		return fmt.Errorf("docker runtime: %w", err)
+	}
+	rt, err = runtime.WithUpstream(rt, cfg.StateRoot, cfg.UpstreamExecution)
+	if err != nil {
+		return fmt.Errorf("upstream runtime: %w", err)
 	}
 	a := agent.New(cfg, Version, Commit, rt, nil)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

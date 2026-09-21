@@ -403,7 +403,7 @@ func (s *Service) Inspect(ctx context.Context, draftID, operationID, runID strin
 	}
 
 	report(PhaseInspect, "resolving source revision")
-	commit, tree, inspectDir, err := s.checkoutPinned(ctx, draftID, op.ID, source, value(row.ResolvedCommit))
+	commit, tree, _, err := s.checkoutPinned(ctx, draftID, op.ID, source, value(row.ResolvedCommit))
 	if err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
 	}
@@ -419,7 +419,7 @@ func (s *Service) Inspect(ctx context.Context, draftID, operationID, runID strin
 	defer os.RemoveAll(filepath.Join(s.root, draftID, "inspection"))
 
 	report(PhaseInspect, "inventorying source files")
-	candidates, exclusions, findings, err := s.ingestAndCopy(inspectDir, filepath.Join(s.root, draftID, "source"))
+	candidates, exclusions, findings, err := s.ingestAndCopy(checkoutDir, filepath.Join(s.root, draftID, "source"))
 	if err != nil {
 		return s.failOperation(ctx, row, op, candidates, nil, findings, err)
 	}
@@ -462,11 +462,11 @@ func (s *Service) Inspect(ctx context.Context, draftID, operationID, runID strin
 	if err != nil {
 		return s.failOperation(ctx, row, op, candidates, nil, findings, err)
 	}
-	validateFindings := s.validatorFindings(manifest)
-	findings = append(findings, validateFindings...)
 	state := "needs_input"
 	var selected []AssetSelection
 	if recognized {
+		validateFindings := s.validatorFindings(manifest)
+		findings = append(findings, validateFindings...)
 		var assetFindings []Diagnostic
 		selected, assetFindings = selectManifestAssets(manifest, candidates)
 		findings = append(findings, assetFindings...)
@@ -729,7 +729,7 @@ func (s *Service) ingestAndCopy(srcRoot, destination string) ([]Candidate, []Con
 		lower := strings.ToLower(string(prefix))
 		if strings.Contains(lower, "docker run") || strings.Contains(lower, "--privileged") {
 			findings = append(findings, inspectFinding("recipe.draft_host_lifecycle",
-				"host Docker lifecycle is incompatible and will never execute", rel))
+				"upstream host lifecycle requires explicit host.upstream-exec review; it can download, build, and change host-accessible resources and is not fully rollbackable", rel))
 		}
 		return nil
 	})
@@ -740,14 +740,14 @@ func (s *Service) ingestAndCopy(srcRoot, destination string) ([]Candidate, []Con
 	return candidates, exclusions, findings, nil
 }
 
-// excludedDir reports whether a directory (by repository path) is tool-local
-// configuration or metadata that must stay out of the candidate store.
+// excludedDir excludes Git internals and assistant-local configuration. Build,
+// CI, editor launch, and devcontainer definitions remain repository evidence.
 func excludedDir(rel string) string {
 	base := strings.SplitN(rel, "/", 2)[0]
 	switch base {
 	case ".git":
 		return "dot_git"
-	case ".codex", ".agent", ".claude", ".cursor", ".github", ".idea", ".devcontainer", ".vscode":
+	case ".codex", ".agent", ".claude", ".cursor":
 		return "tool_config"
 	default:
 		return ""
@@ -1036,6 +1036,7 @@ func render(row db.RecipeDraft) (*Draft, error) {
 	if row.Proposal.Valid {
 		var p Proposal
 		if err := json.Unmarshal([]byte(row.Proposal.String), &p); err == nil {
+			normalizeProposalCollections(&p)
 			draft.Proposal = &p
 		}
 	}
@@ -1049,8 +1050,22 @@ func render(row db.RecipeDraft) (*Draft, error) {
 		if err := json.Unmarshal([]byte(row.ChangeContext.String), &draft.ChangeContext); err != nil {
 			return nil, err
 		}
+		if draft.ChangeContext != nil {
+			draft.Review = draft.ChangeContext.Review
+			if draft.Review != nil {
+				normalizeProcedureCollections(draft.Review)
+			}
+			draft.RelatedDraftIDs = draft.ChangeContext.RelatedDraftIDs
+		}
 	}
 	draft.ParentDraftID = value(row.ParentDraftID)
+	draft.Candidates = nonNilSlice(draft.Candidates)
+	draft.SelectedAssets = nonNilSlice(draft.SelectedAssets)
+	draft.Diagnostics = nonNilSlice(draft.Diagnostics)
+	draft.ContextSelection = nonNilSlice(draft.ContextSelection)
+	draft.Questions = nonNilSlice(draft.Questions)
+	draft.AcknowledgedWarnings = nonNilSlice(draft.AcknowledgedWarnings)
+	draft.ResolvedReferences = nonNilSlice(draft.ResolvedReferences)
 	return draft, nil
 }
 
@@ -1226,9 +1241,15 @@ func (s *Service) Update(ctx context.Context, draftID string, version int64, inp
 	if err != nil {
 		return nil, err
 	}
+	if draft.Review != nil && !reviewedSourceContract(input.Manifest, draft.Review) {
+		return nil, newError("recipe.draft_review_required", "The executable/source contract differs from the accepted review. Request and accept a new evidence-backed proposal; answers alone do not authorize manifest edits.", false)
+	}
 	newSelected, err := validateSelection(input.SelectedAssets, draft.Candidates)
 	if err != nil {
 		return nil, err
+	}
+	if draft.Review != nil && !reviewedAssetContract(newSelected, draft.Review) {
+		return nil, newError("recipe.draft_review_required", "Selected executable/source asset bytes differ from the accepted review; accept a new evidence-backed proposal.", false)
 	}
 	for _, a := range input.Answers {
 		found := false
@@ -1328,6 +1349,11 @@ func manifestAssetFindings(manifest json.RawMessage, candidates []Candidate, sel
 		return nil
 	}
 	var findings []Diagnostic
+	if upstreamManifest(manifest) && len(selected) != 0 {
+		d := Diagnostic{Code: "recipe.upstream_assets", Severity: "error", Path: "assets", Message: "Source-owned execution cannot select package helpers or assets.", Phase: PhaseValidate, Blocking: true}
+		d.ID = DiagnosticID(d, "")
+		findings = append(findings, d)
+	}
 	for _, asset := range parsed.Assets {
 		if !assetSelected(candidates, selected, asset) {
 			d := Diagnostic{
@@ -1592,12 +1618,36 @@ func (s *Service) checkReadiness(ctx context.Context, draft *Draft) error {
 	if err := s.checkChangeBaseline(ctx, draft); err != nil {
 		return err
 	}
+	if draft.Review != nil && !reviewedSourceContract(draft.Manifest, draft.Review) {
+		return newError("recipe.draft_review_required", "The current executable/source contract differs from the accepted review; accept a new evidence-backed proposal before saving.", false)
+	}
+	if draft.Review != nil && !reviewedAssetContract(draft.SelectedAssets, draft.Review) {
+		return newError("recipe.draft_review_required", "Selected executable/source asset bytes differ from the accepted review; accept a new evidence-backed proposal before saving.", false)
+	}
+	if draft.Review != nil {
+		if err := s.verifyProcedureEvidence(ctx, draft, *draft.Review, draft.Candidates, true); err != nil {
+			return err
+		}
+		if field := unresolvedSourceFact(draft.Review); field != "" {
+			return newError("recipe.draft_review_required", "An accepted proposal still has an unresolved upstream fact. Use its answer to obtain and accept a new evidence-backed proposal: "+field, false)
+		}
+	}
+	if upstreamManifest(draft.Manifest) && draft.Review == nil {
+		change := draft.ChangeContext
+		if change == nil || change.BaseRecipeDigest == "" || !sameSourceContract(draft.Manifest, change.BaseManifest, false) {
+			return newError("recipe.draft_review_required", "New or changed source-owned execution requires an accepted evidence-backed procedure review.", false)
+		}
+	}
 	var source GitSource
 	if err := json.Unmarshal(draft.Source, &source); err != nil {
 		return err
 	}
+	if source.Remote != "" && draft.ChangeContext != nil && draft.ChangeContext.Kind == "add" && draft.Review == nil {
+		return newError("recipe.draft_review_required", "Investigate the repository and accept its documented procedure review before saving.", false)
+	}
 	if source.Remote != "" && draft.ResolvedCommit != "" {
-		pinned, err := pinnedManifest(db.RecipeDraft{Source: string(draft.Source), ResolvedCommit: nullable(draft.ResolvedCommit)}, draft.Manifest)
+		changeJSON, _ := marshalJSON(draft.ChangeContext)
+		pinned, err := pinnedManifest(db.RecipeDraft{Source: string(draft.Source), ResolvedCommit: nullable(draft.ResolvedCommit), ChangeContext: nullable(changeJSON)}, draft.Manifest)
 		if err != nil {
 			return err
 		}

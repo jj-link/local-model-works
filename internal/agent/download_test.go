@@ -164,6 +164,9 @@ func TestDownloadImageRecognizesPinnedIndexAndRejectsWrongPlatformManifest(t *te
 			if output.State != tc.want || rt.pulls != 0 {
 				t.Fatalf("cached index verification = %+v, pulls=%d", output, rt.pulls)
 			}
+			if tc.want == downloads.ResourceAvailable && (output.VerifiedAt == nil || time.Since(*output.VerifiedAt) > 2*time.Minute) {
+				t.Fatalf("available image cannot pass controller freshness validation: %+v", output)
+			}
 		})
 	}
 }

@@ -89,6 +89,7 @@ function installHandlers() {
     http.get("*/api/v1/deployments", () => HttpResponse.json(deployments)),
     http.get("*/api/v1/deployments/telemetry", () => HttpResponse.json([])),
     http.get("*/api/v1/recipes", () => HttpResponse.json([])),
+    http.get("*/api/v1/recipe-repositories", () => HttpResponse.json([])),
     http.get("*/api/v1/fabrics", () => HttpResponse.json([])),
   );
 }

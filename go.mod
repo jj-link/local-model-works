@@ -22,6 +22,7 @@ require (
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.56.0
+	mvdan.cc/sh/v3 v3.12.0
 	oras.land/oras-go/v2 v2.6.2
 )
 

@@ -185,6 +185,8 @@ func (s *Service) inspect(ctx context.Context, node string, spec ResourceSpec, c
 	if spec.Kind == ResourceArtifact && spec.SizeBytes != nil && *spec.SizeBytes > 0 {
 		seconds := min(*spec.SizeBytes/(256<<20), int64((30*time.Minute-timeout)/time.Second))
 		timeout += time.Duration(seconds) * time.Second
+	} else if spec.Kind == ResourceArtifact {
+		timeout = 30 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,55 +24,35 @@ const (
 	QwenFlashNextRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks"
 )
 
-const qwenManagedLicense = "patch/sglang/LICENSE"
-
-var glm53UpstreamAssets = map[string]struct{}{
-	"files/chat_template.jinja":                    {},
-	"overlay/patch_glm_video_placeholders.py":      {},
-	"overlay/patch_suppress_stops_in_reasoning.py": {},
-	"overlay/patch_scheduler_decode_floor.py":      {},
-	"overlay/patch_glm5_drafter_group.py":          {},
-	"overlay/patch_hybrid_prefix_hit.py":           {},
-	"scripts/boot-shape-warmup.sh":                 {},
-}
-
-var glm53NVFP4UpstreamAssets = map[string]struct{}{
-	"chat_template_mm.jinja":                    {},
-	"docker/sparse_attn_indexer_kpool_sm121.py": {},
-}
+const QwenFlashNextSingleRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark"
 
 type Compiler = recipe.RepositoryCompiler
 
-// Registry selects an explicit driver before falling back to a native bundle.
+// Registry prefers upstream-authored native bundles, then reviewed source procedures.
 type Registry struct {
 	validator *recipe.Validator
 	drivers   map[string]Compiler
 }
 
 func NewRegistry(validator *recipe.Validator) *Registry {
-	qwenID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenRepositoryURL, Path: "."})
-	deepSeekID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: DeepSeekRepositoryURL, Path: "."})
-	glm53ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53RepositoryURL, Path: "."})
-	glm53NVFP4ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53NVFP4RepositoryURL, Path: "."})
-	qwenDGXID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenDGXSparkRepositoryURL, Path: "."})
-	qwenFlashNextID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: QwenFlashNextRepositoryURL, Path: "."})
-	return &Registry{
-		validator: validator,
-		drivers: map[string]Compiler{
-			qwenID:          &MiaQwenSGLangCompiler{validator: validator},
-			deepSeekID:      &MiaDeepSeekDSparkCompiler{validator: validator},
-			glm53ID:         &MiaGLM53EXL3Compiler{validator: validator},
-			glm53NVFP4ID:    &TonyGLM53NVFP4Compiler{validator: validator},
-			qwenDGXID:       &MiaQwenDGXSparkCompiler{validator: validator},
-			qwenFlashNextID: &MiaQwenFlashNextCompiler{validator: validator},
-		},
+	registry := &Registry{validator: validator, drivers: map[string]Compiler{}}
+	for _, entry := range []struct{ url, template string }{
+		{QwenRepositoryURL, "qwen38-27b-rtx6000pro-dflash2"},
+		{QwenDGXSparkRepositoryURL, "qwen38-27b-dgx-spark-mtp"},
+		{QwenFlashNextSingleRepositoryURL, "qwen38-flash-next-spark-tp1"},
+		{DeepSeekRepositoryURL, "deepseek-v4-flash-vision-exp-dspark-tp2"},
+		{QwenFlashNextRepositoryURL, "qwen38-flash-next-dspark-tp2"},
+		{GLM53RepositoryURL, "glm53-flash-exl3-dflash2-spark-tp2"},
+	} {
+		repositoryID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: entry.url, Path: "."})
+		registry.drivers[repositoryID] = &UpstreamCompiler{validator: validator, template: entry.template}
 	}
+	nvfp4ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53NVFP4RepositoryURL, Path: "."})
+	registry.drivers[nvfp4ID] = &UpstreamCompiler{blocked: "The reviewed NVFP4 source at 050081dc41ce6edd4d3f15fa19dc3410ba4210e3 has no authored TP2 stop procedure and hardcodes its author's fabric addresses and port 8000. Review an upstream revision with a complete applicable lifecycle; LMW will not substitute a generated launcher or edit those constants."}
+	return registry
 }
 
 func (r *Registry) Lookup(source recipe.RepositorySource, checkout string) (Compiler, bool) {
-	if compiler, ok := r.drivers[source.RepositoryID]; ok {
-		return compiler, true
-	}
 	sourceRoot, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, false
@@ -83,12 +62,19 @@ func (r *Registry) Lookup(source recipe.RepositorySource, checkout string) (Comp
 			return &NativeBundleCompiler{validator: r.validator}, true
 		}
 	}
-	return nil, false
+	compiler, ok := r.drivers[source.RepositoryID]
+	return compiler, ok
 }
 
 func (r *Registry) SupportsRepository(repositoryID string) bool {
 	_, ok := r.drivers[repositoryID]
 	return ok
+}
+
+// LookupUpstream resolves only a shipped reviewed procedure, without probing a checkout.
+func (r *Registry) LookupUpstream(source recipe.RepositorySource) (*UpstreamCompiler, bool) {
+	compiler, ok := r.drivers[source.RepositoryID].(*UpstreamCompiler)
+	return compiler, ok
 }
 
 // NativeBundleCompiler delegates native declarative bundles to the canonical
@@ -111,168 +97,31 @@ func (c *NativeBundleCompiler) Compile(_ context.Context, source recipe.Reposito
 	return packed, nil
 }
 
-// MiaQwenDGXSparkCompiler maps the upstream imperative DGX Spark
-// distribution to a fully declarative single-node LMW workload. The
-// reviewed start/stop scripts are required for layout drift detection
-// but never executed; the controller-owned template carries the whole
-// runtime contract.
-type MiaQwenDGXSparkCompiler struct {
+// UpstreamCompiler verifies the maintained authored lifecycle against target
+// source and binds configuration to those exact bytes without executing it.
+type UpstreamCompiler struct {
 	validator *recipe.Validator
+	template  string
+	blocked   string
 }
 
-func (c *MiaQwenDGXSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
+func (c *UpstreamCompiler) Compile(ctx context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
 	root, err := checkoutPath(checkout, source.Path)
 	if err != nil {
 		return nil, err
 	}
-	for _, required := range []string{"README.md", ".env.sample", "start.sh", "stop.sh"} {
-		info, statErr := os.Lstat(filepath.Join(root, required))
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
-		}
+	return c.CompileRetained(ctx, source, func(name string) ([]byte, error) {
+		return readRegular(filepath.Join(root, filepath.FromSlash(name)))
+	}, previous)
+}
+
+// CompileRetained verifies a maintained procedure against retained source files.
+// readSource must return verified original bytes at source-directory-relative paths.
+func (c *UpstreamCompiler) CompileRetained(_ context.Context, source recipe.RepositorySource, readSource func(string) ([]byte, error), previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
+	if c.blocked != "" {
+		return nil, &recipe.PackError{Code: "recipe.upstream_review_required", Message: c.blocked}
 	}
-	return compileManagedAssets(source, checkout, "qwen38-27b-dgx-spark-mtp", nil, false, previous, c.validator)
-}
-
-// MiaQwenFlashNextCompiler maps the upstream imperative dual-Spark
-// distribution to a declarative two-node LMW workload. The upstream PLE FP8
-// patch file is packaged verbatim from the pinned commit; the reviewed
-// start/stop scripts are required for layout drift detection but never
-// executed.
-type MiaQwenFlashNextCompiler struct {
-	validator *recipe.Validator
-}
-
-func (c *MiaQwenFlashNextCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	root, err := checkoutPath(checkout, source.Path)
-	if err != nil {
-		return nil, err
-	}
-	for _, required := range []string{"README.md", ".env.sample", "start.sh", "files/ple_layer_patched.py"} {
-		info, statErr := os.Lstat(filepath.Join(root, required))
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
-		}
-	}
-	return compileManagedAssets(source, checkout, "qwen38-flash-next-dspark-tp2", func(asset string) bool {
-		return strings.HasPrefix(asset, "files/")
-	}, false, previous, c.validator)
-}
-
-// MiaQwenSGLangCompiler combines the controller-owned runtime template with
-// the exact allow-listed SGLang patch files from the pinned upstream commit.
-type MiaQwenSGLangCompiler struct {
-	validator *recipe.Validator
-}
-
-func (c *MiaQwenSGLangCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	return compileManaged(source, checkout, "qwen38-27b-rtx6000pro-dflash2", true, previous, c.validator)
-}
-
-// MiaDeepSeekDSparkCompiler retains the declarative two-node runtime contract
-// and validates that the pinned upstream layout remains the supported one.
-type MiaDeepSeekDSparkCompiler struct {
-	validator *recipe.Validator
-}
-
-func (c *MiaDeepSeekDSparkCompiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	root, err := checkoutPath(checkout, source.Path)
-	if err != nil {
-		return nil, err
-	}
-	for _, required := range []string{".env.dspark.example", "docker-compose.dspark.yml", "dspark-numeric-knobs.sh"} {
-		info, statErr := os.Lstat(filepath.Join(root, required))
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
-		}
-	}
-	return compileManagedAssets(source, checkout, "deepseek-v4-flash-vision-exp-dspark-tp2", func(asset string) bool {
-		return strings.HasPrefix(asset, "patches/")
-	}, false, previous, c.validator)
-}
-
-// MiaGLM53EXL3Compiler maps the upstream two-Spark shell distribution to a
-// rank-local LMW workload while retaining only the exact reviewed overlay
-// files from the pinned commit.
-type MiaGLM53EXL3Compiler struct {
-	validator *recipe.Validator
-}
-
-func (c *MiaGLM53EXL3Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	root, err := checkoutPath(checkout, source.Path)
-	if err != nil {
-		return nil, err
-	}
-	for _, required := range []string{"Dockerfile", "start.sh", ".env.example"} {
-		info, statErr := os.Lstat(filepath.Join(root, required))
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
-		}
-	}
-	return compileManagedAssets(
-		source,
-		checkout,
-		"glm53-flash-exl3-dflash2-spark-tp2",
-		func(asset string) bool {
-			_, ok := glm53UpstreamAssets[filepath.ToSlash(asset)]
-			return ok
-		},
-		false,
-		previous,
-		c.validator,
-	)
-}
-
-// TonyGLM53NVFP4Compiler turns the reviewed imperative TP2 distribution into
-// an immutable LMW contract and packages only the two runtime assets required
-// from upstream. The upstream launch script is required for layout drift
-// detection but is never executed.
-type TonyGLM53NVFP4Compiler struct {
-	validator *recipe.Validator
-}
-
-func (c *TonyGLM53NVFP4Compiler) Compile(_ context.Context, source recipe.RepositorySource, checkout string, previous *recipe.RecipeDetail) (*recipe.PackResult, error) {
-	root, err := checkoutPath(checkout, source.Path)
-	if err != nil {
-		return nil, err
-	}
-	for _, required := range []string{
-		"README.md",
-		"launch-glm53-vllm-tp2-dflash2.sh",
-		"chat_template_mm.jinja",
-		"docker/sparse_attn_indexer_kpool_sm121.py",
-	} {
-		info, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(required)))
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: required, Message: "required upstream file is missing or unsafe"}
-		}
-	}
-	return compileManagedAssets(
-		source,
-		checkout,
-		"glm53-flash-nvfp4-dflash2-spark-tp2",
-		func(asset string) bool {
-			_, ok := glm53NVFP4UpstreamAssets[filepath.ToSlash(asset)]
-			return ok
-		},
-		false,
-		previous,
-		c.validator,
-	)
-}
-
-func compileManaged(source recipe.RepositorySource, checkout, template string, upstreamPatches bool, previous *recipe.RecipeDetail, validator *recipe.Validator) (*recipe.PackResult, error) {
-	var upstreamAsset func(string) bool
-	if upstreamPatches {
-		upstreamAsset = func(asset string) bool {
-			return strings.HasPrefix(asset, "patch/sglang/") && asset != qwenManagedLicense
-		}
-	}
-	return compileManagedAssets(source, checkout, template, upstreamAsset, upstreamPatches, previous, validator)
-}
-
-func compileManagedAssets(source recipe.RepositorySource, checkout, template string, upstreamAsset func(string) bool, rejectUnexpectedPatches bool, previous *recipe.RecipeDetail, validator *recipe.Validator) (*recipe.PackResult, error) {
-	manifestBytes, err := recipeassets.Templates.ReadFile(template + "/recipe.yaml")
+	manifestBytes, err := recipeassets.Templates.ReadFile(c.template + "/recipe.yaml")
 	if err != nil {
 		return nil, err
 	}
@@ -284,76 +133,97 @@ func compileManagedAssets(source recipe.RepositorySource, checkout, template str
 	if err != nil {
 		return nil, err
 	}
-	version, err := nextManagedVersion(manifest.Metadata.Version, previous)
+	if manifest.Metadata.Source == nil {
+		return nil, fmt.Errorf("maintained upstream procedure has no source identity")
+	}
+	expectedRepository, _, _, err := recipe.RepositoryIdentity(*manifest.Metadata.Source)
 	if err != nil {
 		return nil, err
 	}
-	manifest.Metadata.Version = version
-	manifest.Metadata.Source = &recipe.Source{URL: source.URL, Path: source.Path, Revision: source.CommitSHA}
-	if err := validatePinnedManifest(manifest); err != nil {
-		return nil, err
-	}
-
-	root, err := checkoutPath(checkout, source.Path)
+	actualRepository, _, _, err := recipe.RepositoryIdentity(recipe.Source{URL: source.URL, Path: source.Path})
 	if err != nil {
 		return nil, err
 	}
-	assets := make(map[string][]byte, len(manifest.Assets))
-	requiredUpstream := make(map[string]struct{})
-	optionalUpstream := map[string]struct{}{qwenManagedLicense: {}}
-	for _, asset := range manifest.Assets {
-		var content []byte
-		if upstreamAsset != nil && upstreamAsset(asset) {
-			requiredUpstream[filepath.ToSlash(asset)] = struct{}{}
-			content, err = readRegular(filepath.Join(root, filepath.FromSlash(asset)))
-		} else {
-			content, err = recipeassets.Templates.ReadFile(template + "/" + asset)
-		}
-		if err != nil {
-			return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: asset, Message: err.Error()}
-		}
-		assets[asset] = content
+	if actualRepository != expectedRepository {
+		return nil, layoutError(source.Path, fmt.Errorf("maintained lifecycle belongs to a different repository or source directory"))
 	}
-	if rejectUnexpectedPatches {
-		if err := rejectUnexpectedPatchFiles(
-			filepath.Join(root, "patch", "sglang"),
-			requiredUpstream,
-			optionalUpstream,
-		); err != nil {
-			return nil, err
+	if readSource == nil {
+		return nil, fmt.Errorf("verified source reader is required")
+	}
+	for _, workload := range manifest.Workloads {
+		if workload.Upstream == nil {
+			return nil, fmt.Errorf("reviewed upstream procedure has no authored lifecycle")
 		}
+		required := []string{workload.Upstream.Start[0], workload.Upstream.Stop[0]}
+		for _, command := range workload.Upstream.Install {
+			required = append(required, command[0])
+		}
+		for _, commands := range workload.Upstream.InstallByRank {
+			for _, command := range commands {
+				required = append(required, command[0])
+			}
+		}
+		if workload.Upstream.EnvTemplate != "" {
+			required = append(required, "./"+workload.Upstream.EnvTemplate)
+		}
+		for _, name := range required {
+			if !strings.HasPrefix(name, "./") {
+				continue
+			}
+			if _, err := readSource(strings.TrimPrefix(name, "./")); err != nil {
+				return nil, &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: name, Message: err.Error()}
+			}
+		}
+	}
+	if err := verifyLifecycle(manifest, readSource); err != nil {
+		return nil, err
+	}
+	if err := compileConfiguration(manifest, readSource); err != nil {
+		return nil, err
+	}
+	manifest.Metadata.Version, err = nextManagedVersion(manifest.Metadata.Version, previous)
+	if err != nil {
+		return nil, err
+	}
+	manifest.Metadata.Source.URL = source.URL
+	manifest.Metadata.Source.Path = source.Path
+	manifest.Metadata.Source.Revision = source.CommitSHA
+	if manifest.Metadata.Source.Path == "" {
+		manifest.Metadata.Source.Path = "."
 	}
 	canonical, err := json.Marshal(manifest)
 	if err != nil {
 		return nil, err
 	}
-	if _, diagnostics, err := validator.ValidateStrict(canonical); err != nil {
+	_, diagnostics, err := c.validator.ValidateStrict(canonical)
+	if err != nil {
 		return nil, err
-	} else {
-		var errors []string
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Severity == "error" {
-				errors = append(errors, diagnostic.Message)
-			}
-		}
-		if len(errors) > 0 {
-			return nil, fmt.Errorf("recipe validation: %s", strings.Join(errors, "; "))
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == "error" {
+			return nil, fmt.Errorf("recipe validation: %s", diagnostic.Message)
 		}
 	}
-	return recipe.PackManifest(canonical, assets, map[string]string{
+	return recipe.PackManifest(canonical, nil, map[string]string{
 		"localmodelworks.repository.commit": source.CommitSHA,
 		"localmodelworks.repository.tree":   source.TreeSHA,
-		"localmodelworks.compiler":          template + "@1",
+		"localmodelworks.compiler":          "upstream-procedure@5",
 	})
 }
 
 func nextManagedVersion(templateVersion string, previous *recipe.RecipeDetail) (string, error) {
-	if previous == nil {
-		return templateVersion, nil
-	}
 	template, err := parseManagedVersion(templateVersion)
 	if err != nil {
 		return "", fmt.Errorf("parse managed recipe template version %q: %w", templateVersion, err)
+	}
+	// Compiled source adaptations have their own release floor: unchanged
+	// upstream templates must not keep imports on a superseded launch contract.
+	minimum := [3]int{2, 2, 0}
+	if compareManagedVersions(template, minimum) < 0 {
+		template, templateVersion = minimum, "2.2.0"
+	}
+	if previous == nil {
+		return templateVersion, nil
 	}
 	current, err := parseManagedVersion(previous.Version)
 	if err != nil {
@@ -393,67 +263,6 @@ func compareManagedVersions(a, b [3]int) int {
 		}
 	}
 	return 0
-}
-
-func validatePinnedManifest(manifest *recipe.Manifest) error {
-	for _, workload := range manifest.Workloads {
-		if workload.Image.Digest == "" || !strings.HasPrefix(workload.Image.Digest, "sha256:") || !strings.Contains(workload.Image.Reference, "@"+workload.Image.Digest) {
-			return &recipe.PackError{Code: "recipe.image_unpinned", Message: "managed workload image must be pinned by matching digest"}
-		}
-	}
-	for _, artifact := range manifest.Artifacts {
-		sources := make([]recipe.ArtSource, 0, 1+len(artifact.Variants))
-		if artifact.Source != nil {
-			sources = append(sources, *artifact.Source)
-		}
-		for _, variant := range artifact.Variants {
-			sources = append(sources, variant.Source)
-		}
-		for _, source := range sources {
-			if source.Type == "huggingface" && len(source.Revision) != 40 {
-				return &recipe.PackError{Code: "recipe.artifact_unpinned", Asset: artifact.Name, Message: "Hugging Face artifact revision must be an exact commit"}
-			}
-			if source.Digest != "" && !strings.HasPrefix(source.Digest, "sha256:") {
-				return &recipe.PackError{Code: "recipe.artifact_unpinned", Asset: artifact.Name, Message: "artifact digest must be sha256"}
-			}
-		}
-	}
-	return nil
-}
-
-func rejectUnexpectedPatchFiles(root string, required, optional map[string]struct{}) error {
-	seenRequired := 0
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
-			return fmt.Errorf("unsafe patch entry %s", path)
-		}
-		rel, err := filepath.Rel(filepath.Dir(filepath.Dir(root)), path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if _, ok := required[rel]; ok {
-			seenRequired++
-			return nil
-		}
-		if _, ok := optional[rel]; ok {
-			return nil
-		}
-		return &recipe.PackError{Code: "recipe.repository_layout_changed", Asset: rel, Message: "unexpected upstream patch file"}
-	})
-	if err != nil {
-		return err
-	}
-	if seenRequired != len(required) {
-		return &recipe.PackError{Code: "recipe.repository_layout_changed", Message: "required upstream patch file is missing"}
-	}
-	return nil
 }
 
 func readRegular(path string) ([]byte, error) {

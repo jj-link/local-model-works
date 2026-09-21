@@ -455,6 +455,25 @@ export function useStartRecipeRepositoryReplacement() {
   });
 }
 
+export function usePlanDeploymentConfiguration() {
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & api.DeploymentConfigurationPlanRequest) =>
+      api.planDeploymentConfiguration(id, body),
+  });
+}
+
+export function useApplyDeploymentConfiguration() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & api.DeploymentConfigurationRequest) =>
+      api.applyDeploymentConfiguration(id, body),
+    onSuccess: (accepted, request) => {
+      invalidates(qk.deployment(request.id), qk.deployments)(qc);
+      invalidates(qk.run(accepted.run_id), qk.runs({ module: "library" }))(qc);
+    },
+  });
+}
+
 export function useCheckRecipeRepositoryUpdates() {
   const qc = useQueryClient();
   return useMutation({

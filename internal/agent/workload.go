@@ -340,7 +340,7 @@ func (a *Agent) reconcile(sessCtx context.Context, req *agentv1.ReconcileRequest
 		if !isWorkloadStateContainer(&c) {
 			continue
 		}
-		if c.State == "running" {
+		if c.State == "running" || c.State == "starting" || c.State == "installing" || c.State == "observing" {
 			dep, run, rank := labelsOf(&c)
 			w.startTailer(sessCtx, run, dep, rank, c.ID)
 		}
@@ -426,6 +426,7 @@ func (w *workloads) tick(ctx context.Context) {
 	for _, g := range gone {
 		w.sendState(&agentv1.StateUpdate{
 			DeploymentId:      g.st.dep,
+			RunId:             g.st.run,
 			ContainerId:       g.id,
 			State:             "missing",
 			Rank:              g.st.rank,
@@ -442,7 +443,7 @@ func (w *workloads) reportState(c *runtime.ContainerInfo) {
 	w.mu.Lock()
 	last := w.last[c.ID]
 	changed := !last.reported || last.state != c.State ||
-		(c.State == "running" && now.Sub(last.reportedAt) >= stateRefreshPeriod)
+		((c.State == "running" || c.State == "starting" || c.State == "installing" || c.State == "observing") && now.Sub(last.reportedAt) >= stateRefreshPeriod)
 	if changed {
 		w.last[c.ID] = containerState{
 			state:      c.State,
@@ -459,6 +460,7 @@ func (w *workloads) reportState(c *runtime.ContainerInfo) {
 	}
 	update := &agentv1.StateUpdate{
 		DeploymentId: dep,
+		RunId:        run,
 		ContainerId:  c.ID,
 		State:        c.State,
 		Rank:         rank,

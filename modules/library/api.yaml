@@ -284,6 +284,49 @@ paths:
       responses:
         '200': {description: Observed exact resource availability and separate running versions, content: {application/json: {schema: {$ref: '#/components/schemas/RecipeAvailability'}}}}
 
+  /recipe-repositories/{id}/updates/plan:
+    post:
+      tags: [recipes]
+      operationId: planRecipeRepositoryUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Latest saved recipe and exact installed devices; no deployment replacements
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecipeRepositoryUpdatePlan'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+
+  /recipe-repositories/{id}/updates:
+    post:
+      tags: [recipes]
+      operationId: startRecipeRepositoryUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecipeRepositoryUpdateRequest'}
+      responses:
+        '202':
+          description: Durable package-only update accepted for the confirmed installed devices
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecipeUpdateAccepted'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+
   /recipe-repositories/{id}/replacements/plan:
     post:
       tags: [recipes]
@@ -756,6 +799,20 @@ paths:
                   stderr: {type: string}
                   truncated: {type: boolean}
 
+  /recipe-assistant/providers:
+    get:
+      tags: [recipes]
+      operationId: listRecipeAssistantProviders
+      description: Lists healthy enrolled local deployments, connected Codex account models, and configured remote API endpoints without requiring saved local or Codex profiles. No prompts are sent. The version is the library settings version used by generation consent; preview additionally binds the resolved destination and model.
+      responses:
+        '200':
+          description: Available providers without credentials or secret references
+          headers: {Cache-Control: {schema: {type: string}}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecipeAssistantProviderCatalog'}
+        '502': {description: Provider discovery failed}
+
   /recipe-assistant/providers/{id}/test:
     parameters: [{$ref: '#/components/parameters/ID'}]
     post:
@@ -819,6 +876,24 @@ components:
       required: true
       schema: {type: string}
   schemas:
+    RecipeAssistantProviderCatalog:
+      type: object
+      required: [version, providers]
+      properties:
+        version: {type: string}
+        providers:
+          type: array
+          items: {$ref: '#/components/schemas/RecipeAssistantProvider'}
+    RecipeAssistantProvider:
+      type: object
+      required: [id, label, kind]
+      properties:
+        id: {type: string, description: 'local:<deployment ID>, codex:<model ID>, or a configured remote provider ID'}
+        label: {type: string}
+        kind: {type: string, enum: [local, codex, openai_compatible]}
+        deployment_id: {type: string}
+        base_url: {type: string, description: Server-resolved destination; never a client endpoint override}
+        model: {type: string}
     RecipeDraftSource:
       type: object
       additionalProperties: false
@@ -898,6 +973,8 @@ components:
         diagnostics: {type: array, items: {$ref: '#/components/schemas/RecipeDraftDiagnostic'}}
         operation: {$ref: '#/components/schemas/RecipeDraftOperation'}
         proposal: {$ref: '#/components/schemas/RecipeDraftSuggestion'}
+        review: {$ref: '#/components/schemas/RecipeDraftProcedure'}
+        related_draft_ids: {type: array, items: {type: string}}
         context_selection: {type: array, items: {$ref: '#/components/schemas/RecipeDraftContextFile'}}
         questions: {type: array, items: {$ref: '#/components/schemas/RecipeDraftQuestion'}}
         acknowledged_warnings: {type: array, items: {type: string}}
@@ -1043,6 +1120,7 @@ components:
           type: string
         source_path:
           type: string
+        procedure: {type: string}
         tracking_ref:
           type: string
         current_recipe:
@@ -1097,6 +1175,34 @@ components:
       allOf:
         - $ref: '#/components/schemas/RecipeRepository'
 
+    RecipeReplacementLaunchSettings:
+      type: object
+      additionalProperties: false
+      description: Explicitly replace inherited launch inputs with these values and the target's declared defaults. Omitted deployment entries preserve their current settings.
+      properties:
+        parameters: {type: object, additionalProperties: true}
+        variants: {type: object, additionalProperties: {type: string}}
+        workload_index: {type: integer, minimum: 0}
+
+    RecipeRepositoryUpdatePlan:
+      allOf:
+        - $ref: '#/components/schemas/RecipeUpdatePlan'
+        - type: object
+          required: [repository_id, target_digest, target_version, up_to_date]
+          properties:
+            repository_id: {type: string}
+            target_digest: {type: string}
+            target_version: {type: string}
+            up_to_date: {type: boolean}
+
+    RecipeRepositoryUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [target_digest, plan_digest]
+      properties:
+        target_digest: {type: string, minLength: 1}
+        plan_digest: {type: string, minLength: 1}
+
     RecipeRepositoryReplacementPlanRequest:
       type: object
       additionalProperties: false
@@ -1104,6 +1210,10 @@ components:
       properties:
         target_digest: {type: string, minLength: 1}
         deployment_ids: {type: array, minItems: 1, uniqueItems: true, items: {type: string, minLength: 1}}
+        deployment_settings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RecipeReplacementLaunchSettings'
 
     RecipeRepositoryReplacementRequest:
       type: object
@@ -1113,6 +1223,10 @@ components:
         target_digest: {type: string, minLength: 1}
         deployment_ids: {type: array, minItems: 1, uniqueItems: true, items: {type: string, minLength: 1}}
         plan_digest: {type: string, minLength: 1}
+        deployment_settings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RecipeReplacementLaunchSettings'
 
     RecipeUpdateDevice:
       type: object
@@ -1174,6 +1288,10 @@ components:
       properties:
         repository_id: {type: string}
         target_digest: {type: string}
+        target_version: {type: string}
+        up_to_date:
+          type: boolean
+          description: Every installed device has completed package acquisition and any required source preparation for the frozen saved settings.
         deployment_ids: {type: array, items: {type: string}}
         unchanged_deployment_ids: {type: array, items: {type: string}}
         deployments:
@@ -1184,6 +1302,9 @@ components:
             properties:
               source_deployment_id: {type: string}
               source_digest: {type: string}
+              source_was_stopped:
+                type: boolean
+                description: Rollback preserves the source deployment's stopped state instead of starting it.
               placement: {type: string}
               workload_index: {type: integer}
               fabric: {type: string}
@@ -1707,6 +1828,49 @@ components:
         summary: {type: string}
         diagnostics: {type: array, items: {$ref: '#/components/schemas/RecipeDraftDiagnostic'}}
         preview_sha256: {type: string}
+        procedures: {type: array, items: {$ref: '#/components/schemas/RecipeDraftProcedure'}}
+        adaptations: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAdaptation'}}
+    RecipeDraftAdaptation:
+      type: object
+      required: [path, description, reason]
+      properties:
+        path: {type: string}
+        description: {type: string}
+        reason: {type: string}
+    RecipeDraftProcedure:
+      type: object
+      required: [id, name, description, manifest, files, selected_source_assets, questions, evidence, diagnostics]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        manifest: {type: object, additionalProperties: true}
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, content]
+            properties:
+              path: {type: string}
+              content: {type: string}
+              source_path: {type: string}
+        selected_source_assets: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAssetSelection'}}
+        questions: {type: array, items: {$ref: '#/components/schemas/RecipeDraftQuestion'}}
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [path, sha256]
+            properties:
+              path: {type: string}
+              sha256: {type: string}
+              source_path: {type: string}
+              source_commit: {type: string}
+              start_line: {type: integer}
+              end_line: {type: integer}
+        summary: {type: string}
+        adaptations: {type: array, items: {$ref: '#/components/schemas/RecipeDraftAdaptation'}}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/RecipeDraftDiagnostic'}}
     RecipeResolvedReference:
       type: object
       required: [path, input_identity, resolved_value, origin, verified_at]

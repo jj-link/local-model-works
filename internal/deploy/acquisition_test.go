@@ -50,7 +50,10 @@ func (f *fakeAcquisition) Plan(ctx context.Context, req downloads.PlanRequest) (
 		return nil, err
 	}
 	workload := manifest.Workloads[*req.WorkloadIndex]
-	images := []recipe.Image{workload.Image}
+	var images []recipe.Image
+	if workload.Upstream == nil {
+		images = append(images, workload.Image)
+	}
 	if manifest.Prepare != nil {
 		images = append(images, manifest.Prepare.Image)
 	}
@@ -136,6 +139,27 @@ func (h *harness) createReviewed(ctx context.Context, req CreateRequest) (*Deplo
 		req.PlanDigest = plan.Digest
 	}
 	return h.svc.Create(ctx, req)
+}
+
+func TestAcquisitionPreservesRunnableIndexReference(t *testing.T) {
+	index := "sha256:" + strings.Repeat("a", 64)
+	child := "sha256:" + strings.Repeat("b", 64)
+	repository := "registry.example/team/image"
+	spec := &runtime.ContainerSpec{Image: repository, ImageDigest: index}
+	placement := placementSet{AcquisitionResources: []downloads.Resource{{
+		NodeID: "node", Required: true,
+		ResourceSpec: downloads.ResourceSpec{
+			Kind: downloads.ResourceImage, Source: downloads.SourceSpec{Reference: repository},
+			IndexDigest: index, ManifestDigest: child, Platform: "linux/amd64",
+		},
+	}}}
+	if err := applyAcquisitionSpec(spec, placement, "node"); err != nil {
+		t.Fatal(err)
+	}
+	// A cached child descriptor need not have its own Docker repository reference.
+	if got, want := runtime.ImageRef(spec), repository+"@"+index; got != want {
+		t.Fatalf("launch switched away from the acquired image reference: got %s, want %s", got, want)
+	}
 }
 
 func TestCreateRequiresReviewAndExistingResourcesBeforeCommit(t *testing.T) {

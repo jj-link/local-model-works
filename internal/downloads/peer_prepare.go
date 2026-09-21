@@ -50,6 +50,11 @@ func (s *Service) PreparePeer(ctx context.Context, request PeerRequest) (*Prepar
 	return s.preparePeer(ctx, resource, request.PeerAddress, request.RunID, request.TransferID, nil)
 }
 
+func validPeerAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	return err == nil && host != "" && port != "" && host != "0.0.0.0" && host != "::"
+}
+
 func (s *Service) preparePeer(ctx context.Context, resource Resource, address, runID, transferID string, credentials []CredentialSelection) (*PreparedPeer, error) {
 	if resource.NodeID == resource.SourceNode || resource.NodeID == "" || resource.SourceNode == "" || transferID == "" || runID == "" {
 		return nil, failure("download.peer_invalid", "Distinct enrolled source/destination and durable attempt IDs are required", 422)
@@ -79,8 +84,7 @@ func (s *Service) preparePeer(ctx context.Context, resource Resource, address, r
 	if address == "" {
 		address = sourceInventory.PeerListen
 	}
-	host, port, err := net.SplitHostPort(address)
-	if err != nil || host == "" || port == "" || host == "0.0.0.0" || host == "::" {
+	if !validPeerAddress(address) {
 		return nil, failure("download.peer_unavailable", "Peer did not report a routable authenticated transfer address", 422)
 	}
 	sourceSpec := resource.ResourceSpec

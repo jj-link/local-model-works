@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -154,6 +153,9 @@ type artifactProgressReporter func(artifactDownloadProgress)
 func (a *Agent) handleArtifact(ctx context.Context, command *agentv1.ArtifactCommand) {
 	next := &agentv1.DownloadCommand{CommandId: command.GetCommandId(), ItemId: "legacy-artifact:" + command.GetCommandId()}
 	switch command.GetOp() {
+	case agentv1.ArtifactOp_ARTIFACT_OP_UPDATE_RECIPE:
+		a.handleRecipeUpdate(ctx, command)
+		return
 	case agentv1.ArtifactOp_ARTIFACT_OP_CANCEL:
 		next.Op = agentv1.DownloadOp_DOWNLOAD_OP_CANCEL
 		next.TargetCommandId = command.GetTargetCommandId()
@@ -689,20 +691,6 @@ func resumeHTTPFile(ctx context.Context, client *http.Client, sourceURL, token, 
 	return nil
 }
 
-func digestFile(ctx context.Context, path string) (string, int64, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", 0, err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	size, err := io.Copy(hash, contextReader{ctx: ctx, reader: file})
-	if err != nil {
-		return "", 0, err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), size, nil
-}
-
 func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 	digest := strings.TrimPrefix(identity, "recipe://")
 	manifest, config, layer, err := a.readRecipeTransport(ctx, digest, true)
@@ -717,6 +705,13 @@ func (a *Agent) fetchRecipePackage(ctx context.Context, identity string) error {
 	if _, err := os.Stat(final); err == nil {
 		// Existing mounted helpers are immutable, including legacy asset-only trees.
 		if err := verifyRecipeBytes(ctx, final, digest, manifest, config, layer); err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(final, "oci-layout")); err == nil {
+			// A verified layout need not use the transport writer's whitespace
+			// or optional index fields. Preserve its existing metadata verbatim.
+			return nil
+		} else if !os.IsNotExist(err) {
 			return err
 		}
 		// Complete missing package metadata only after matching every existing

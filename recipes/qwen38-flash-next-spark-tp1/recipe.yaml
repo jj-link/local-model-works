@@ -1,0 +1,56 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: qwen38-flash-next-spark-tp1
+  version: 2.2.0
+  model: qwen3.8-flash-next
+  engine: vllm
+  description: >-
+    Runs the original pinned download.sh, start.sh and stop.sh on one
+    otherwise-idle GB10 DGX Spark. The authored .env.sample supplies the
+    native-context MTP-3 profile. Upstream prepares its own image-derived
+    overlays and packed PLE tables, applies its memory and host-service
+    guards, launches Docker with host network/IPC and authored capabilities,
+    and runs its original host watchdog. Source-relative generated files
+    and home-directory model/PLE caches are preserved; allow about 130 GiB
+    for model and packed PLE data, plus images and other caches. Requires
+    Bash, Python3, Docker/NVIDIA GPU access, curl and the authored Linux
+    utilities. No local serving launcher, memory cap or watchdog replaces
+    upstream. Source pinning does not pin upstream image/model downloads.
+  license: AGPL-3.0-or-later AND Apache-2.0
+  source:
+    url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark
+    revision: "78b0675e4469a19befaa9c84a41662b671d4185e"
+    path: .
+compatibility:
+  nodeCount: 1
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+    minMemoryBytes: 128849018880
+artifacts: []
+workloads:
+  - upstream:
+      install:
+        - ["./download.sh"]
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [vllm-fn-tp1]
+      auxiliaryContainers: [vllm-fn-tp1-plebuild]
+      envFile: .env
+      envTemplate: .env.sample
+      envFormat: shell
+      logFile: logs/memwatch-vllm-fn-tp1.log
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      timeoutSeconds: 5

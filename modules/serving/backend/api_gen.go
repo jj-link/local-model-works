@@ -233,6 +233,90 @@ func (e RecipeResourceVerificationState) Valid() bool {
 	}
 }
 
+// Defines values for RecipeUpdateRunningDeploymentPhase.
+const (
+	RecipeUpdateRunningDeploymentPhaseFetching         RecipeUpdateRunningDeploymentPhase = "fetching"
+	RecipeUpdateRunningDeploymentPhaseInstallingRecipe RecipeUpdateRunningDeploymentPhase = "installing_recipe"
+	RecipeUpdateRunningDeploymentPhasePreparing        RecipeUpdateRunningDeploymentPhase = "preparing"
+	RecipeUpdateRunningDeploymentPhasePulling          RecipeUpdateRunningDeploymentPhase = "pulling"
+	RecipeUpdateRunningDeploymentPhaseReady            RecipeUpdateRunningDeploymentPhase = "ready"
+	RecipeUpdateRunningDeploymentPhaseRestored         RecipeUpdateRunningDeploymentPhase = "restored"
+	RecipeUpdateRunningDeploymentPhaseRestoringOld     RecipeUpdateRunningDeploymentPhase = "restoring_old"
+	RecipeUpdateRunningDeploymentPhaseRollbackFailed   RecipeUpdateRunningDeploymentPhase = "rollback_failed"
+	RecipeUpdateRunningDeploymentPhaseRollingBack      RecipeUpdateRunningDeploymentPhase = "rolling_back"
+	RecipeUpdateRunningDeploymentPhaseSkipped          RecipeUpdateRunningDeploymentPhase = "skipped"
+	RecipeUpdateRunningDeploymentPhaseStarting         RecipeUpdateRunningDeploymentPhase = "starting"
+	RecipeUpdateRunningDeploymentPhaseStoppingOld      RecipeUpdateRunningDeploymentPhase = "stopping_old"
+	RecipeUpdateRunningDeploymentPhaseValidating       RecipeUpdateRunningDeploymentPhase = "validating"
+	RecipeUpdateRunningDeploymentPhaseVerifying        RecipeUpdateRunningDeploymentPhase = "verifying"
+	RecipeUpdateRunningDeploymentPhaseWaitingOffline   RecipeUpdateRunningDeploymentPhase = "waiting_offline"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateRunningDeploymentPhase enum.
+func (e RecipeUpdateRunningDeploymentPhase) Valid() bool {
+	switch e {
+	case RecipeUpdateRunningDeploymentPhaseFetching:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseInstallingRecipe:
+		return true
+	case RecipeUpdateRunningDeploymentPhasePreparing:
+		return true
+	case RecipeUpdateRunningDeploymentPhasePulling:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseReady:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRestored:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRestoringOld:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRollbackFailed:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseRollingBack:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseSkipped:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseStarting:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseStoppingOld:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseValidating:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseVerifying:
+		return true
+	case RecipeUpdateRunningDeploymentPhaseWaitingOffline:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecipeUpdateRunningDeploymentStatus.
+const (
+	RecipeUpdateRunningDeploymentStatusFailed    RecipeUpdateRunningDeploymentStatus = "failed"
+	RecipeUpdateRunningDeploymentStatusPending   RecipeUpdateRunningDeploymentStatus = "pending"
+	RecipeUpdateRunningDeploymentStatusRunning   RecipeUpdateRunningDeploymentStatus = "running"
+	RecipeUpdateRunningDeploymentStatusSucceeded RecipeUpdateRunningDeploymentStatus = "succeeded"
+	RecipeUpdateRunningDeploymentStatusWaiting   RecipeUpdateRunningDeploymentStatus = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the RecipeUpdateRunningDeploymentStatus enum.
+func (e RecipeUpdateRunningDeploymentStatus) Valid() bool {
+	switch e {
+	case RecipeUpdateRunningDeploymentStatusFailed:
+		return true
+	case RecipeUpdateRunningDeploymentStatusPending:
+		return true
+	case RecipeUpdateRunningDeploymentStatusRunning:
+		return true
+	case RecipeUpdateRunningDeploymentStatusSucceeded:
+		return true
+	case RecipeUpdateRunningDeploymentStatusWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TransferPreviewAction.
 const (
 	TransferPreviewActionDownloadOrigin TransferPreviewAction = "download-origin"
@@ -248,6 +332,75 @@ func (e TransferPreviewAction) Valid() bool {
 	case TransferPreviewActionPeerCopy:
 		return true
 	case TransferPreviewActionReconcileLocal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpstreamExecutionPreviewExecutionConfigurationEditsFormat.
+const (
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgv               UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvHeredoc        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvQuotedHeredoc  UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv-quoted-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlag               UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "flag"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlagCompose        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "flag-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatJsonCompose        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "json-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShell              UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellCompose       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellDoubleQuoted  UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-double-quoted"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellHeredoc       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellQuotedHeredoc UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-quoted-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellReparse       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-reparse"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellWord          UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-word"
+)
+
+// Valid indicates whether the value is a known member of the UpstreamExecutionPreviewExecutionConfigurationEditsFormat enum.
+func (e UpstreamExecutionPreviewExecutionConfigurationEditsFormat) Valid() bool {
+	switch e {
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgv:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvQuotedHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlag:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlagCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatJsonCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShell:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellDoubleQuoted:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellQuotedHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellReparse:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellWord:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpstreamExecutionPreviewExecutionEnvFormat.
+const (
+	UpstreamExecutionPreviewExecutionEnvFormatLiteral UpstreamExecutionPreviewExecutionEnvFormat = "literal"
+	UpstreamExecutionPreviewExecutionEnvFormatShell   UpstreamExecutionPreviewExecutionEnvFormat = "shell"
+)
+
+// Valid indicates whether the value is a known member of the UpstreamExecutionPreviewExecutionEnvFormat enum.
+func (e UpstreamExecutionPreviewExecutionEnvFormat) Valid() bool {
+	switch e {
+	case UpstreamExecutionPreviewExecutionEnvFormatLiteral:
+		return true
+	case UpstreamExecutionPreviewExecutionEnvFormatShell:
 		return true
 	default:
 		return false
@@ -303,6 +456,12 @@ type Deployment struct {
 	RecipeVersion *string             `json:"recipe_version,omitempty"`
 	RunId         *openapi_types.UUID `json:"run_id,omitempty"`
 	UpdatedAt     *time.Time          `json:"updated_at,omitempty"`
+
+	// Variants Exact artifact variants selected for this deployment.
+	Variants *map[string]string `json:"variants,omitempty"`
+
+	// WorkloadIndex Exact runtime selected for this deployment, when recorded.
+	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
 
 // DeploymentDesiredState defines model for Deployment.DesiredState.
@@ -310,6 +469,23 @@ type DeploymentDesiredState string
 
 // DeploymentObservedState defines model for Deployment.ObservedState.
 type DeploymentObservedState string
+
+// DeploymentConfigurationPlanRequest Explicit launch inputs for the deployment's current immutable recipe. Omitted values resolve declared defaults. Does not permit version, placement or fabric changes.
+type DeploymentConfigurationPlanRequest struct {
+	Parameters    *map[string]interface{} `json:"parameters,omitempty"`
+	Variants      *map[string]string      `json:"variants,omitempty"`
+	WorkloadIndex *int                    `json:"workload_index,omitempty"`
+}
+
+// DeploymentConfigurationRequest defines model for DeploymentConfigurationRequest.
+type DeploymentConfigurationRequest struct {
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// PlanDigest Digest of the reviewed effective plan and live source deployment contract.
+	PlanDigest    string             `json:"plan_digest"`
+	Variants      *map[string]string `json:"variants,omitempty"`
+	WorkloadIndex *int               `json:"workload_index,omitempty"`
+}
 
 // DeploymentCreateRequest defines model for DeploymentCreateRequest.
 type DeploymentCreateRequest struct {
@@ -339,7 +515,9 @@ type DeploymentCreateRequestAcquisitionPolicy string
 
 // DeploymentPlan defines model for DeploymentPlan.
 type DeploymentPlan struct {
-	Acquisition       *RecipeDownloadPlan             `json:"acquisition,omitempty"`
+	Acquisition *RecipeDownloadPlan `json:"acquisition,omitempty"`
+
+	// AcquisitionPolicy Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
 	AcquisitionPolicy DeploymentPlanAcquisitionPolicy `json:"acquisition_policy"`
 	Conflicts         *[]struct {
 		DeploymentId *openapi_types.UUID `json:"deployment_id,omitempty"`
@@ -379,13 +557,14 @@ type DeploymentPlan struct {
 	} `json:"ports,omitempty"`
 
 	// Ready false when conflicts or unmet compatibility block creation
-	Ready         bool               `json:"ready"`
-	RecipeDigest  string             `json:"recipe_digest"`
-	RecipeName    *string            `json:"recipe_name,omitempty"`
-	RecipeVersion *string            `json:"recipe_version,omitempty"`
-	Risks         *[]string          `json:"risks,omitempty"`
-	Storage       *[]StoragePreview  `json:"storage,omitempty"`
-	Transfers     *[]TransferPreview `json:"transfers,omitempty"`
+	Ready         bool                        `json:"ready"`
+	RecipeDigest  string                      `json:"recipe_digest"`
+	RecipeName    *string                     `json:"recipe_name,omitempty"`
+	RecipeVersion *string                     `json:"recipe_version,omitempty"`
+	Risks         *[]string                   `json:"risks,omitempty"`
+	Storage       *[]StoragePreview           `json:"storage,omitempty"`
+	Transfers     *[]TransferPreview          `json:"transfers,omitempty"`
+	Upstream      *[]UpstreamExecutionPreview `json:"upstream,omitempty"`
 
 	// Variants Resolved per-artifact model variants
 	Variants *map[string]string `json:"variants,omitempty"`
@@ -394,7 +573,7 @@ type DeploymentPlan struct {
 	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
 
-// DeploymentPlanAcquisitionPolicy defines model for DeploymentPlan.AcquisitionPolicy.
+// DeploymentPlanAcquisitionPolicy Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
 type DeploymentPlanAcquisitionPolicy string
 
 // DeploymentPlanRequest defines model for DeploymentPlanRequest.
@@ -571,6 +750,89 @@ type RecipeResourceVerification struct {
 // RecipeResourceVerificationState defines model for RecipeResourceVerification.State.
 type RecipeResourceVerificationState string
 
+// RecipeUpdateAccepted defines model for RecipeUpdateAccepted.
+type RecipeUpdateAccepted struct {
+	RunId openapi_types.UUID `json:"run_id"`
+}
+
+// RecipeUpdateDevice defines model for RecipeUpdateDevice.
+type RecipeUpdateDevice struct {
+	InstalledDigests []string `json:"installed_digests"`
+	NodeId           string   `json:"node_id"`
+	NodeName         string   `json:"node_name"`
+	NodeStatus       string   `json:"node_status"`
+}
+
+// RecipeUpdatePlan defines model for RecipeUpdatePlan.
+type RecipeUpdatePlan struct {
+	AddedPermissions     []string  `json:"added_permissions"`
+	CandidatePermissions []string  `json:"candidate_permissions"`
+	CurrentPermissions   []string  `json:"current_permissions"`
+	DeploymentIds        *[]string `json:"deployment_ids,omitempty"`
+	Deployments          *[]struct {
+		AddedPermissions   []string                `json:"added_permissions"`
+		CurrentPermissions []string                `json:"current_permissions"`
+		DeploymentPlan     DeploymentPlan          `json:"deployment_plan"`
+		Fabric             *string                 `json:"fabric,omitempty"`
+		Parameters         *map[string]interface{} `json:"parameters,omitempty"`
+		Placement          string                  `json:"placement"`
+		RemovedPermissions []string                `json:"removed_permissions"`
+		SourceDeploymentId string                  `json:"source_deployment_id"`
+		SourceDigest       string                  `json:"source_digest"`
+
+		// SourceWasStopped Rollback preserves the source deployment's stopped state instead of starting it.
+		SourceWasStopped *bool              `json:"source_was_stopped,omitempty"`
+		Variants         *map[string]string `json:"variants,omitempty"`
+		WorkloadIndex    int                `json:"workload_index"`
+	} `json:"deployments,omitempty"`
+	Diagnostics            []Diagnostic                    `json:"diagnostics"`
+	InstalledDevices       []RecipeUpdateDevice            `json:"installed_devices"`
+	PlanDigest             string                          `json:"plan_digest"`
+	Ready                  bool                            `json:"ready"`
+	RemovedPermissions     []string                        `json:"removed_permissions"`
+	RepositoryId           *string                         `json:"repository_id,omitempty"`
+	RunningDeployments     []RecipeUpdateRunningDeployment `json:"running_deployments"`
+	TargetDigest           *string                         `json:"target_digest,omitempty"`
+	TargetVersion          *string                         `json:"target_version,omitempty"`
+	UnchangedDeploymentIds *[]string                       `json:"unchanged_deployment_ids,omitempty"`
+
+	// UpToDate Every installed device has completed package acquisition and any required source preparation for the frozen saved settings.
+	UpToDate *bool `json:"up_to_date,omitempty"`
+}
+
+// RecipeUpdateRunningDeployment defines model for RecipeUpdateRunningDeployment.
+type RecipeUpdateRunningDeployment struct {
+	CurrentStep             int                                 `json:"current_step"`
+	ErrorCode               *string                             `json:"error_code,omitempty"`
+	ErrorMessage            *string                             `json:"error_message,omitempty"`
+	NodeId                  string                              `json:"node_id"`
+	NodeName                string                              `json:"node_name"`
+	NodeStatus              string                              `json:"node_status"`
+	Phase                   RecipeUpdateRunningDeploymentPhase  `json:"phase"`
+	Rank                    int32                               `json:"rank"`
+	ReplacementDeploymentId *string                             `json:"replacement_deployment_id,omitempty"`
+	SourceDeploymentId      string                              `json:"source_deployment_id"`
+	Status                  RecipeUpdateRunningDeploymentStatus `json:"status"`
+	TotalSteps              int                                 `json:"total_steps"`
+}
+
+// RecipeUpdateRunningDeploymentPhase defines model for RecipeUpdateRunningDeployment.Phase.
+type RecipeUpdateRunningDeploymentPhase string
+
+// RecipeUpdateRunningDeploymentStatus defines model for RecipeUpdateRunningDeployment.Status.
+type RecipeUpdateRunningDeploymentStatus string
+
+// ResolvedSourceConfiguration defines model for ResolvedSourceConfiguration.
+type ResolvedSourceConfiguration struct {
+	Edits []struct {
+		End         int    `json:"end"`
+		Replacement string `json:"replacement"`
+		Start       int    `json:"start"`
+	} `json:"edits"`
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+}
+
 // ServingPayload defines model for ServingPayload.
 type ServingPayload struct {
 	Available           *bool    `json:"available,omitempty"`
@@ -633,6 +895,58 @@ type TransferPreview struct {
 // TransferPreviewAction defines model for TransferPreview.Action.
 type TransferPreviewAction string
 
+// UpstreamExecutionPreview Pinned upstream lifecycle, environment and explicit runtime-configuration adaptations approved for this node.
+type UpstreamExecutionPreview struct {
+	Configuration *[]ResolvedSourceConfiguration `json:"configuration,omitempty"`
+	Environment   *map[string]string             `json:"environment,omitempty"`
+	Execution     struct {
+		AuxiliaryContainers *[]string `json:"auxiliaryContainers,omitempty"`
+		Configuration       *[]struct {
+			Edits []struct {
+				Command   *string                                                   `json:"command,omitempty"`
+				End       int                                                       `json:"end"`
+				Flag      *string                                                   `json:"flag,omitempty"`
+				Format    UpstreamExecutionPreviewExecutionConfigurationEditsFormat `json:"format"`
+				Indirect  *bool                                                     `json:"indirect,omitempty"`
+				Parameter *string                                                   `json:"parameter,omitempty"`
+				Prefix    *string                                                   `json:"prefix,omitempty"`
+				Start     int                                                       `json:"start"`
+				Suffix    *string                                                   `json:"suffix,omitempty"`
+				Template  *string                                                   `json:"template,omitempty"`
+				Variable  *string                                                   `json:"variable,omitempty"`
+			} `json:"edits"`
+			Path   string `json:"path"`
+			Sha256 string `json:"sha256"`
+		} `json:"configuration,omitempty"`
+		Containers []string `json:"containers"`
+
+		// CoordinatorRank Only the head executes start/stop; other ranks finish their per-node install and independently observe its service.
+		CoordinatorRank *int                                        `json:"coordinatorRank,omitempty"`
+		EnvFile         *string                                     `json:"envFile,omitempty"`
+		EnvFormat       *UpstreamExecutionPreviewExecutionEnvFormat `json:"envFormat,omitempty"`
+		EnvTemplate     *string                                     `json:"envTemplate,omitempty"`
+		Install         *[][]string                                 `json:"install,omitempty"`
+		LogFile         *string                                     `json:"logFile,omitempty"`
+		Start           []string                                    `json:"start"`
+		Stop            []string                                    `json:"stop"`
+	} `json:"execution"`
+	NodeId   openapi_types.UUID `json:"node_id"`
+	NodeName *string            `json:"node_name,omitempty"`
+	Rank     int                `json:"rank"`
+	Source   struct {
+		Path      *string `json:"path,omitempty"`
+		Procedure *string `json:"procedure,omitempty"`
+		Revision  string  `json:"revision"`
+		Url       string  `json:"url"`
+	} `json:"source"`
+}
+
+// UpstreamExecutionPreviewExecutionConfigurationEditsFormat defines model for UpstreamExecutionPreview.Execution.Configuration.Edits.Format.
+type UpstreamExecutionPreviewExecutionConfigurationEditsFormat string
+
+// UpstreamExecutionPreviewExecutionEnvFormat defines model for UpstreamExecutionPreview.Execution.EnvFormat.
+type UpstreamExecutionPreviewExecutionEnvFormat string
+
 // ID defines model for ID.
 type ID = string
 
@@ -673,6 +987,12 @@ type CreateDeploymentJSONRequestBody = DeploymentCreateRequest
 // PlanDeploymentJSONRequestBody defines body for PlanDeployment for application/json ContentType.
 type PlanDeploymentJSONRequestBody = DeploymentPlanRequest
 
+// ApplyDeploymentConfigurationJSONRequestBody defines body for ApplyDeploymentConfiguration for application/json ContentType.
+type ApplyDeploymentConfigurationJSONRequestBody = DeploymentConfigurationRequest
+
+// PlanDeploymentConfigurationJSONRequestBody defines body for PlanDeploymentConfiguration for application/json ContentType.
+type PlanDeploymentConfigurationJSONRequestBody = DeploymentConfigurationPlanRequest
+
 // UpdateLaunchProfileJSONRequestBody defines body for UpdateLaunchProfile for application/json ContentType.
 type UpdateLaunchProfileJSONRequestBody = LaunchProfileUpsert
 
@@ -699,6 +1019,12 @@ type ServerInterface interface {
 
 	// (GET /deployments/{id})
 	GetDeployment(w http.ResponseWriter, r *http.Request, id ID)
+	// ApplyDeploymentConfiguration Apply reviewed configuration using source-state-aware replacement and rollback
+	// (POST /deployments/{id}/configuration)
+	ApplyDeploymentConfiguration(w http.ResponseWriter, r *http.Request, id ID)
+	// PlanDeploymentConfiguration Review same-recipe configuration without requiring repository ownership
+	// (POST /deployments/{id}/configuration/plan)
+	PlanDeploymentConfiguration(w http.ResponseWriter, r *http.Request, id ID)
 	// DeploymentLogs Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
 	// (GET /deployments/{id}/logs)
 	DeploymentLogs(w http.ResponseWriter, r *http.Request, id ID, params DeploymentLogsParams)
@@ -763,6 +1089,18 @@ func (_ Unimplemented) DeleteDeployment(w http.ResponseWriter, r *http.Request, 
 
 // (GET /deployments/{id})
 func (_ Unimplemented) GetDeployment(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApplyDeploymentConfiguration Apply reviewed configuration using source-state-aware replacement and rollback
+// (POST /deployments/{id}/configuration)
+func (_ Unimplemented) ApplyDeploymentConfiguration(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PlanDeploymentConfiguration Review same-recipe configuration without requiring repository ownership
+// (POST /deployments/{id}/configuration/plan)
+func (_ Unimplemented) PlanDeploymentConfiguration(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -928,6 +1266,58 @@ func (siw *ServerInterfaceWrapper) GetDeployment(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDeployment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyDeploymentConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) ApplyDeploymentConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyDeploymentConfiguration(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanDeploymentConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) PlanDeploymentConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanDeploymentConfiguration(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1366,6 +1756,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/deployments/{id}", wrapper.GetDeployment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/deployments/{id}/configuration", wrapper.ApplyDeploymentConfiguration)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/deployments/{id}/configuration/plan", wrapper.PlanDeploymentConfiguration)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/deployments/{id}/logs", wrapper.DeploymentLogs)

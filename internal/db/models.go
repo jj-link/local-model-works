@@ -289,6 +289,7 @@ type RecipeRepository struct {
 	CreatedAt          string         `json:"created_at"`
 	UpdatedAt          string         `json:"updated_at"`
 	HeadCheckError     string         `json:"head_check_error"`
+	Procedure          string         `json:"procedure"`
 }
 
 type RecipeRepositoryVersion struct {

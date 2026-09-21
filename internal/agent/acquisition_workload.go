@@ -9,6 +9,17 @@ import (
 )
 
 func (a *Agent) ensureWorkloadImage(ctx context.Context, spec *runtime.ContainerSpec) error {
+	if spec.Upstream != nil {
+		if spec.AcquisitionPolicy != "" && spec.AcquisitionPolicy != "require-existing" && spec.AcquisitionPolicy != "download-missing" {
+			return fmt.Errorf("download.acquisition_policy_invalid")
+		}
+		for _, resource := range spec.AcquisitionResources {
+			if resource.Kind == downloads.ResourceRecipe && resource.Source.Digest == spec.Labels[runtime.LabelRecipe] {
+				return resource.Validate()
+			}
+		}
+		return fmt.Errorf("download.recheck_required: reviewed recipe package resource missing")
+	}
 	if spec.AcquisitionPolicy == "require-existing" {
 		_, err := a.rt.InspectImage(ctx, runtime.ImageRef(spec), spec.ImagePlatform)
 		if err != nil {
@@ -22,6 +33,11 @@ func (a *Agent) ensureWorkloadImage(ctx context.Context, spec *runtime.Container
 	return a.rt.Pull(ctx, &runtime.PullSpec{Reference: runtime.ImageRef(spec), Platform: spec.ImagePlatform})
 }
 func (a *Agent) checkExistingResources(ctx context.Context, spec *runtime.ContainerSpec) error {
+	if spec.Upstream != nil {
+		if err := a.ensureWorkloadImage(ctx, spec); err != nil {
+			return err
+		}
+	}
 	if spec.AcquisitionPolicy != "require-existing" {
 		return nil
 	}
@@ -29,6 +45,9 @@ func (a *Agent) checkExistingResources(ctx context.Context, spec *runtime.Contai
 		return fmt.Errorf("download.recheck_required: exact resource inventory missing")
 	}
 	for _, resource := range spec.AcquisitionResources {
+		if spec.Upstream != nil && resource.Kind == downloads.ResourceImage {
+			continue
+		}
 		if err := resource.Validate(); err != nil {
 			return err
 		}

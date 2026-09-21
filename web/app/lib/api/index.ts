@@ -22,7 +22,11 @@ export type RecipeRepository = Schemas["RecipeRepository"];
 export type RecipeRepositoryDetail = Schemas["RecipeRepositoryDetail"];
 export type RecipeRepositoryReplacementPlanRequest = Schemas["RecipeRepositoryReplacementPlanRequest"];
 export type RecipeRepositoryReplacementRequest = Schemas["RecipeRepositoryReplacementRequest"];
+export type RecipeRepositoryUpdateRequest = Schemas["RecipeRepositoryUpdateRequest"];
+export type RecipeRepositoryUpdatePlan = Schemas["RecipeRepositoryUpdatePlan"];
 export type RecipeUpdatePlan = Schemas["RecipeUpdatePlan"];
+export type DeploymentConfigurationPlanRequest = Schemas["DeploymentConfigurationPlanRequest"];
+export type DeploymentConfigurationRequest = Schemas["DeploymentConfigurationRequest"];
 export type RecipeUpdateDevice = Schemas["RecipeUpdateDevice"];
 export type RecipeUpdateRunningDeployment = Schemas["RecipeUpdateRunningDeployment"];
 export type RecipeUpdateAccepted = Schemas["RecipeUpdateAccepted"];
@@ -168,6 +172,12 @@ export const listRecipeRepositories = ({ signal }: Sig = {}) =>
 export const getRecipeRepository = (id: string, { signal }: Sig = {}) =>
   http.get<RecipeRepositoryDetail>(`/recipe-repositories/${encodeURIComponent(id)}`, { signal });
 
+export const planRecipeRepositoryUpdate = (id: string, { signal }: Sig = {}) =>
+  http.post<RecipeRepositoryUpdatePlan>(`/recipe-repositories/${encodeURIComponent(id)}/updates/plan`, undefined, { signal });
+
+export const startRecipeRepositoryUpdate = (id: string, body: RecipeRepositoryUpdateRequest) =>
+  http.post<RecipeUpdateAccepted>(`/recipe-repositories/${encodeURIComponent(id)}/updates`, body);
+
 export const planRecipeRepositoryReplacement = (
   id: string,
   body: RecipeRepositoryReplacementPlanRequest,
@@ -177,6 +187,12 @@ export const startRecipeRepositoryReplacement = (
   id: string,
   body: RecipeRepositoryReplacementRequest,
 ) => http.post<RecipeUpdateAccepted>(`/recipe-repositories/${encodeURIComponent(id)}/replacements`, body);
+
+export const planDeploymentConfiguration = (id: string, body: DeploymentConfigurationPlanRequest) =>
+  http.post<RecipeUpdatePlan>(`/deployments/${encodeURIComponent(id)}/configuration/plan`, body);
+
+export const applyDeploymentConfiguration = (id: string, body: DeploymentConfigurationRequest) =>
+  http.post<RecipeUpdateAccepted>(`/deployments/${encodeURIComponent(id)}/configuration`, body);
 
 export const checkRecipeRepositoryUpdates = (id: string) =>
   http.post<RecipeUpdateStatus>(`/recipe-repositories/${encodeURIComponent(id)}/check-updates`);
@@ -250,6 +266,9 @@ export const resumeRecipeDownload = (digest: string, runID: string, body: Recipe
   http.post<{ run_id: string }>(`/recipes/${encodeURIComponent(digest)}/downloads/${encodeURIComponent(runID)}/resume`, body);
 export const getRecipeAvailability = (digest: string, body: RecipeAvailabilityRequest, { signal }: Sig = {}) =>
   http.post<RecipeAvailability>(`/recipes/${encodeURIComponent(digest)}/availability`, body, { signal });
+export type RecipeAssistantProvider = Schemas["RecipeAssistantProvider"];
+export const listRecipeAssistantProviders = ({ signal }: Sig = {}) =>
+  http.get<Schemas["RecipeAssistantProviderCatalog"]>("/recipe-assistant/providers", { signal });
 export const testRecipeAssistantProvider = (id: string) =>
   http.post<{ ok: boolean; model: string; message: string }>(`/recipe-assistant/providers/${encodeURIComponent(id)}/test`);
 export const getRecipeAssistantCodexStatus = ({ signal }: Sig = {}) =>

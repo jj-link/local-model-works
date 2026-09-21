@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
+	"github.com/jj-link/local-model-works/internal/sourceconfig"
 	"github.com/jj-link/local-model-works/schemas"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -69,15 +72,18 @@ func (v *Validator) Validate(doc []byte) ([]Diagnostic, error) {
 		if !errors.As(validationErr, &structured) {
 			return []Diagnostic{errDiag("recipe.schema", validationErr.Error(), "")}, nil
 		}
-		output := structured.BasicOutput()
-		for _, unit := range output.Errors {
-			if unit.Error == nil {
-				continue
+		var collect func(*jsonschema.OutputUnit)
+		collect = func(unit *jsonschema.OutputUnit) {
+			for index := range unit.Errors {
+				collect(&unit.Errors[index])
 			}
-			diags = append(diags, errDiag("recipe.schema", unit.Error.String(), unit.InstanceLocation))
+			if len(unit.Errors) == 0 && unit.Error != nil {
+				diags = append(diags, errDiag("recipe.schema", unit.Error.String(), unit.InstanceLocation))
+			}
 		}
-		if len(diags) == 0 && output.Error != nil {
-			diags = append(diags, errDiag("recipe.schema", output.Error.String(), output.InstanceLocation))
+		collect(structured.DetailedOutput())
+		if len(diags) == 0 {
+			diags = append(diags, errDiag("recipe.schema", validationErr.Error(), ""))
 		}
 		return diags, nil
 	}
@@ -202,6 +208,24 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 			add("recipe.param-duplicate", "duplicate parameter name", px+".name")
 		}
 		paramNames[p.Name] = true
+		if p.Format != "" && (p.Format != "argv" || p.Type != "string") {
+			add("recipe.param-format", "argv format requires a string parameter", px+".format")
+		}
+		if len(p.ForbiddenArgs) != 0 && p.Format != "argv" {
+			add("recipe.param-forbidden-args", "forbiddenArgs requires argv format", px+".forbiddenArgs")
+		}
+		if err := sourceconfig.CheckForbiddenArgs(nil, p.ForbiddenArgs, false); err != nil {
+			add("recipe.param-forbidden-args", err.Error(), px+".forbiddenArgs")
+		}
+		if p.ArgvPolicy != "" && (p.ArgvPolicy != "docker" || p.Format != "argv") {
+			add("recipe.param-argv-policy", "docker argvPolicy requires argv format", px+".argvPolicy")
+		}
+		if len(p.ForbiddenEnv) != 0 && p.ArgvPolicy != "docker" {
+			add("recipe.param-forbidden-env", "forbiddenEnv requires docker argvPolicy", px+".forbiddenEnv")
+		}
+		if err := sourceconfig.CheckDockerArgs(nil, p.ForbiddenEnv); err != nil {
+			add("recipe.param-forbidden-env", err.Error(), px+".forbiddenEnv")
+		}
 		if p.Default != nil {
 			if d := checkParamValue(p, p.Default); d != "" {
 				add("recipe.param-default", d, px+".default")
@@ -209,17 +233,17 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 		}
 	}
 	// Templates: every ${...} used must be declared and resolvable.
-	checkTempl := func(vals []string, path string, env map[string]string) {
+	checkTempl := func(vals []string, path string, env map[string]string, workload *Workload) {
 		for _, s := range vals {
 			for _, tv := range TemplateVars(s) {
-				if err := checkTemplateVar(tv, m); err != nil {
+				if err := checkTemplateVar(tv, m, workload); err != nil {
 					add("recipe.template", fmt.Sprintf("%s in %s", err.Error(), tv), path)
 				}
 			}
 		}
 		for k, v := range env {
 			for _, tv := range TemplateVars(v) {
-				if err := checkTemplateVar(tv, m); err != nil {
+				if err := checkTemplateVar(tv, m, workload); err != nil {
 					add("recipe.template", fmt.Sprintf("%s in %s", err.Error(), tv), path+".env."+k)
 				}
 			}
@@ -227,13 +251,83 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 	}
 	for i := range m.Workloads {
 		w := m.Workloads[i]
-		checkTempl(w.Args, fmt.Sprintf("workloads[%d].args", i), w.Env)
+		p := fmt.Sprintf("workloads[%d]", i)
+		if w.Upstream == nil {
+			checkTempl(w.Args, p+".args", w.Env, &w)
+			continue
+		}
+		checkTempl(nil, p, w.Env, &w)
+		if err := sourceconfig.Validate(w.Upstream.Configuration); err != nil {
+			add("recipe.upstream-configuration", err.Error(), p+".upstream.configuration")
+		}
+		for _, file := range w.Upstream.Configuration {
+			for _, edit := range file.Edits {
+				if edit.Template != "" {
+					checkTempl([]string{edit.Template}, p+".upstream.configuration", nil, &w)
+					continue
+				}
+				if edit.Variable != "" || edit.Command != "" {
+					continue
+				}
+				parameter := m.ParameterByName(edit.Parameter)
+				if parameter == nil {
+					add("recipe.upstream-configuration", fmt.Sprintf("unknown parameter %q", edit.Parameter), p+".upstream.configuration")
+				} else {
+					flag := edit.Format == "flag" || edit.Format == "flag-compose"
+					argv := sourceconfig.IsArgvFormat(edit.Format)
+					if (flag && parameter.Type != "bool") ||
+						(argv && (parameter.Type != "string" || parameter.Format != "argv")) ||
+						(!flag && !argv && parameter.Format == "argv") ||
+						(edit.Format == "json-compose" && parameter.Type != "string" && parameter.Type != "enum") {
+						add("recipe.upstream-configuration", fmt.Sprintf("incompatible format for parameter %q", edit.Parameter), p+".upstream.configuration")
+					}
+				}
+			}
+		}
+		checkTempl(w.Upstream.Start, p+".upstream.start", nil, &w)
+		checkTempl(w.Upstream.Stop, p+".upstream.stop", nil, &w)
+		checkTempl(w.Upstream.Containers, p+".upstream.containers", nil, &w)
+		checkTempl(w.Upstream.AuxiliaryContainers, p+".upstream.auxiliaryContainers", nil, &w)
+		for rank, names := range w.Upstream.ContainersByRank {
+			checkTempl(names, fmt.Sprintf("%s.upstream.containersByRank.%d", p, rank), nil, &w)
+			if !upstreamRankSelected(m, &w, rank) {
+				add("recipe.upstream-rank", "container override rank must be selected by this workload", fmt.Sprintf("%s.upstream.containersByRank.%d", p, rank))
+			}
+		}
+		for _, rank := range w.Ranks {
+			if rank < 0 || rank >= m.Compatibility.NodeCount {
+				add("recipe.upstream-rank", "workload rank exceeds the declared node count", p+".ranks")
+			}
+		}
+		if rank := w.Upstream.CoordinatorRank; rank != nil && (*rank != 0 || !upstreamRankSelected(m, &w, *rank)) {
+			add("recipe.upstream-rank", "the authored coordinator must use the selected API head at rank zero", p+".upstream.coordinatorRank")
+		}
+		for j, argv := range w.Upstream.Install {
+			checkTempl(argv, fmt.Sprintf("%s.upstream.install[%d]", p, j), nil, &w)
+		}
+		for rank, commands := range w.Upstream.InstallByRank {
+			if !upstreamRankSelected(m, &w, rank) {
+				add("recipe.upstream-rank", "install override rank must be selected by this workload", fmt.Sprintf("%s.upstream.installByRank.%d", p, rank))
+			}
+			for j, argv := range commands {
+				checkTempl(argv, fmt.Sprintf("%s.upstream.installByRank.%d[%d]", p, rank, j), nil, &w)
+			}
+		}
+		source := m.Metadata.Source
+		if source == nil || !sha40.MatchString(source.Revision) {
+			add("recipe.upstream-source", "upstream execution requires a source pinned to a full commit SHA", "metadata.source")
+		} else {
+			u, err := url.Parse(source.URL)
+			if err != nil || (u.Scheme != "https" && u.Scheme != "ssh") || u.Host == "" || strings.IndexFunc(source.URL, unicode.IsControl) >= 0 {
+				add("recipe.upstream-source", "upstream source must be an HTTPS or SSH repository URL without control characters", "metadata.source.url")
+			}
+		}
 	}
 	if m.Prepare != nil {
-		checkTempl(m.Prepare.Args, "prepare.args", m.Prepare.Env)
+		checkTempl(m.Prepare.Args, "prepare.args", m.Prepare.Env, nil)
 	}
 	if m.Verify != nil {
-		checkTempl(m.Verify.Args, "verify.args", m.Verify.Env)
+		checkTempl(m.Verify.Args, "verify.args", m.Verify.Env, nil)
 	}
 
 	// Workloads: duplicate container ports, declared permission coverage.
@@ -331,6 +425,20 @@ func sensitiveMount(mount string) bool {
 }
 
 func checkParamValue(p Parameter, val any) string {
+	if p.Format == "argv" {
+		args, err := sourceconfig.Argv(val)
+		if err != nil {
+			return fmt.Sprintf("parameter %q: %s", p.Name, err)
+		}
+		if err := sourceconfig.CheckForbiddenArgs(args, p.ForbiddenArgs, p.ArgvPolicy != "docker"); err != nil {
+			return fmt.Sprintf("parameter %q: %s", p.Name, err)
+		}
+		if p.ArgvPolicy == "docker" {
+			if err := sourceconfig.CheckDockerArgs(args, p.ForbiddenEnv); err != nil {
+				return fmt.Sprintf("parameter %q: %s", p.Name, err)
+			}
+		}
+	}
 	switch p.Type {
 	case "int":
 		n, ok := asNumber(val)
@@ -398,13 +506,22 @@ func asNumber(v any) (float64, bool) {
 	return 0, false
 }
 
-func checkTemplateVar(tv string, m *Manifest) error {
+func checkTemplateVar(tv string, m *Manifest, workload *Workload) error {
 	switch tv {
-	case TemplNodeID, TemplNodeRank, TemplNodeAddress:
+	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplNodeAccelerators:
 		return nil
 	case TemplFabricAddr, TemplFabricNodeAddr, TemplFabricInterface, TemplFabricRDMADevice, TemplFabricGIDIndex:
 		if !m.HasFabricRequirement() {
 			return fmt.Errorf("fabric template used by a recipe without a fabric requirement")
+		}
+		return nil
+	}
+	if rank, field, ok := clusterTemplate(tv); ok {
+		if rank >= m.Compatibility.NodeCount || (workload != nil && workload.Upstream != nil && !upstreamRankSelected(m, workload, rank)) {
+			return fmt.Errorf("cluster template references undeclared rank %d", rank)
+		}
+		if strings.HasPrefix(field, "fabric.") && !m.HasFabricRequirement() {
+			return fmt.Errorf("cluster fabric template used by a recipe without a fabric requirement")
 		}
 		return nil
 	}
@@ -426,4 +543,19 @@ func checkTemplateVar(tv string, m *Manifest) error {
 		return nil
 	}
 	return fmt.Errorf("undeclared template variable %s", tv)
+}
+
+func upstreamRankSelected(m *Manifest, w *Workload, rank int) bool {
+	if rank < 0 || rank >= m.Compatibility.NodeCount {
+		return false
+	}
+	if len(w.Ranks) == 0 {
+		return rank == 0
+	}
+	for _, selected := range w.Ranks {
+		if selected == rank {
+			return true
+		}
+	}
+	return false
 }

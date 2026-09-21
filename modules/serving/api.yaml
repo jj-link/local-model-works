@@ -206,6 +206,68 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /deployments/{id}/configuration/plan:
+    post:
+      tags: [deployments]
+      operationId: planDeploymentConfiguration
+      summary: Review same-recipe configuration without requiring repository ownership
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentConfigurationPlanRequest'
+      responses:
+        '200':
+          description: Effective replacement plan preserving deployment devices and fabric; repository_id is empty for deployment-scoped configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdatePlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /deployments/{id}/configuration:
+    post:
+      tags: [deployments]
+      operationId: applyDeploymentConfiguration
+      summary: Apply reviewed configuration using source-state-aware replacement and rollback
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeploymentConfigurationRequest'
+      responses:
+        '202':
+          description: Durable configuration replacement accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeUpdateAccepted'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /deployments/{id}/verify:
     post:
       tags: [deployments]
@@ -380,6 +442,39 @@ components:
           type: object
           additionalProperties: true
 
+    DeploymentConfigurationPlanRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit launch inputs for the deployment's current immutable recipe. Omitted values resolve declared defaults. Does not permit version, placement or fabric changes.
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+        variants:
+          type: object
+          additionalProperties: {type: string}
+        workload_index:
+          type: integer
+          minimum: 0
+    DeploymentConfigurationRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_digest]
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+        variants:
+          type: object
+          additionalProperties: {type: string}
+        workload_index:
+          type: integer
+          minimum: 0
+        plan_digest:
+          type: string
+          minLength: 1
+          description: Digest of the reviewed effective plan and live source deployment contract.
+
     DeploymentPlanRequest:
       type: object
       required: [recipe_digest]
@@ -486,6 +581,92 @@ components:
         drop_page_cache: { type: boolean }
         helper_image: { type: string }
 
+    UpstreamExecutionPreview:
+      type: object
+      required: [node_id, rank, source, execution]
+      description: Pinned upstream lifecycle, environment and explicit runtime-configuration adaptations approved for this node.
+      properties:
+        node_id: {type: string, format: uuid}
+        node_name: {type: string}
+        rank: {type: integer}
+        configuration:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResolvedSourceConfiguration'
+        source:
+          type: object
+          required: [url, revision]
+          properties:
+            url: {type: string}
+            revision: {type: string}
+            path: {type: string}
+            procedure: {type: string}
+        execution:
+          type: object
+          required: [start, stop, containers]
+          properties:
+            install:
+              type: array
+              items:
+                type: array
+                items: {type: string}
+            start: {type: array, items: {type: string}}
+            stop: {type: array, items: {type: string}}
+            containers: {type: array, items: {type: string}}
+            auxiliaryContainers: {type: array, items: {type: string}}
+            coordinatorRank:
+              type: integer
+              description: Only the head executes start/stop; other ranks finish their per-node install and independently observe its service.
+            envFile: {type: string}
+            envTemplate: {type: string}
+            envFormat: {type: string, enum: [shell, literal]}
+            logFile: {type: string}
+            configuration:
+              type: array
+              items:
+                type: object
+                required: [path, sha256, edits]
+                properties:
+                  path: {type: string}
+                  sha256: {type: string}
+                  edits:
+                    type: array
+                    items:
+                      type: object
+                      description: Exactly one of parameter, template, variable or command supplies the source binding. Variable preserves an upstream-computed shell value; command preserves the output of one original zero-argument command with a shell identifier name. Both use shell-word serialization; prefix, suffix and indirection apply only to variables.
+                      required: [start, end, format]
+                      properties:
+                        start: {type: integer}
+                        end: {type: integer}
+                        parameter: {type: string}
+                        template: {type: string}
+                        variable: {type: string}
+                        command: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]*$', maxLength: 256}
+                        indirect: {type: boolean}
+                        prefix: {type: string}
+                        suffix: {type: string}
+                        format: {type: string, enum: [shell, shell-word, shell-reparse, shell-heredoc, shell-quoted-heredoc, shell-double-quoted, shell-compose, json-compose, flag, flag-compose, argv, argv-heredoc, argv-quoted-heredoc]}
+                        flag: {type: string}
+        environment:
+          type: object
+          additionalProperties: {type: string}
+
+    ResolvedSourceConfiguration:
+      type: object
+      required: [path, sha256, edits]
+      properties:
+        path: {type: string}
+        sha256: {type: string}
+        edits:
+          type: array
+          items:
+            type: object
+            required: [start, end, replacement]
+            properties:
+              start: {type: integer}
+              end: {type: integer}
+              replacement: {type: string}
+
     DeploymentPlan:
       type: object
       required: [recipe_digest, placements, ready, acquisition_policy, plan_digest]
@@ -496,6 +677,7 @@ components:
         acquisition_policy:
           type: string
           enum: [require-existing, download-missing]
+          description: Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
         acquisition:
           $ref: '#/components/schemas/RecipeDownloadPlan'
         missing_resources:
@@ -558,6 +740,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HostPreparationPreview'
+        upstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpstreamExecutionPreview'
         ports:
           type: array
           items:
@@ -670,6 +856,14 @@ components:
           additionalProperties: true
           nullable: true
           description: Launch settings resolved at create time
+        variants:
+          type: object
+          additionalProperties: {type: string}
+          description: Exact artifact variants selected for this deployment.
+        workload_index:
+          type: integer
+          minimum: 0
+          description: Exact runtime selected for this deployment, when recorded.
         placements:
           type: array
           items:

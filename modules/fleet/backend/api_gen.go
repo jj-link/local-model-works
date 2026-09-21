@@ -227,9 +227,12 @@ type FabricBinding struct {
 // Inventory defines model for Inventory.
 type Inventory struct {
 	Accelerators *[]Accelerator `json:"accelerators,omitempty"`
-	Arch         string         `json:"arch"`
-	CacheRoots   *[]CacheRoot   `json:"cache_roots,omitempty"`
-	Docker       struct {
+
+	// AdvertiseAddress Explicit serving IP configured by the node administrator; empty uses inventory address selection.
+	AdvertiseAddress *string      `json:"advertise_address,omitempty"`
+	Arch             string       `json:"arch"`
+	CacheRoots       *[]CacheRoot `json:"cache_roots,omitempty"`
+	Docker           struct {
 		ApiVersion *string `json:"api_version,omitempty"`
 		Ok         bool    `json:"ok"`
 		Version    string  `json:"version"`

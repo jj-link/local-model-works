@@ -31,3 +31,24 @@ func TestLoadServerRequiresExplicitPublicURLs(t *testing.T) {
 		t.Fatalf("server public URLs not loaded: %+v", cfg)
 	}
 }
+
+func TestAgentHostAuthorityRequiresExplicitTrue(t *testing.T) {
+	for _, value := range []string{"", "false", "true", "yes"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(EnvAgentUpstreamExecution, value)
+			cfg, err := LoadAgent()
+			if value == "yes" {
+				if err == nil {
+					t.Fatal("ambiguous host authority setting accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.UpstreamExecution != (value == "true") {
+				t.Fatalf("host authority for %q = %t", value, cfg.UpstreamExecution)
+			}
+		})
+	}
+}

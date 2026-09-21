@@ -177,6 +177,9 @@ func TestOfflineCancellationRetainsWriterUntilEnrolledAcknowledgement(t *testing
 	if err = s.Cancel(ctx, runID); err != nil {
 		t.Fatal(err)
 	}
+	if err = s.Cancel(ctx, runID); err != nil {
+		t.Fatalf("repeated cancellation must continue waiting for quiescence: %v", err)
+	}
 	run, _ := s.runs.Get(ctx, runID)
 	if run.State != "cancelling" {
 		t.Fatalf("offline cancel prematurely terminal: %s", run.State)
@@ -198,6 +201,36 @@ func TestOfflineCancellationRetainsWriterUntilEnrolledAcknowledgement(t *testing
 	}
 	if err = s.Lock(ctx, r.NodeID, r.Destination, r.Identity, "", OwnerTransfer, "competing", "", ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPeerCancellationBeforeTransferBindingReleasesWriter(t *testing.T) {
+	s, n := downloadHarness(t)
+	ctx := context.Background()
+	r := testResource()
+	r.Action = ActionPeerCopy
+	runID, row := seedDownloadItem(t, s, r)
+	if err := s.Lock(ctx, r.NodeID, r.Destination, r.Identity, "", OwnerDownload, row.ID, runID, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.transition(ctx, row, ItemChecking, nil)
+	row, _ = s.q.GetDownloadItem(ctx, row.ID)
+	// Older attempts allocated an origin command before preparing a peer copy.
+	if _, err := s.q.BindDownloadItemCommand(ctx, db.BindDownloadItemCommandParams{ID: row.ID, NodeID: row.NodeID, ExpectedState: row.State, CommandID: ns(newID())}); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = s.q.GetDownloadItem(ctx, row.ID)
+	_, _ = s.transition(ctx, row, ItemTransferring, nil)
+	n.online = false
+	if err := s.Cancel(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := s.runs.Get(ctx, runID)
+	if run.State != "cancelled" {
+		t.Fatalf("undispatched peer copy remained active: %s", run.State)
+	}
+	if err := s.Lock(ctx, r.NodeID, r.Destination, r.Identity, "", OwnerTransfer, "next-owner", "", ""); err != nil {
+		t.Fatal("undispatched peer copy retained writer ownership:", err)
 	}
 }
 
@@ -350,6 +383,17 @@ func TestPlanPrefersVerifiedReuseThenPartialOriginThenDeterministicPeerWithoutGP
 	}
 	if got := find(reused); got.Action != ActionReuse || got.SourceNode != "" {
 		t.Fatalf("exact local bytes did not win over peer/origin: %+v", got)
+	}
+	state = ResourceMissing
+	if err := s.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{ID: "node-b", Inventory: ns(strings.ReplaceAll(inventory, "node-b.test:9444", "[::]:9444"))}); err != nil {
+		t.Fatal(err)
+	}
+	origin, err := s.Plan(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := find(origin); !origin.Ready || got.Action != ActionDownloadOrigin || got.SourceNode != "" {
+		t.Fatalf("unusable peer address blocked a retrievable origin: %+v", origin)
 	}
 	for _, command := range n.commands {
 		if command.Op != agentv1.DownloadOp_DOWNLOAD_OP_INSPECT {

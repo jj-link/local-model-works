@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/recipe"
+	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 )
 
 func resourceHost(spec ResourceSpec) string {
@@ -254,15 +255,18 @@ func registryDocument(ctx context.Context, reference, digest string, material *C
 		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(addresses[0].IP.String(), port))
 	}}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
+	client := &http.Client{Transport: transport, CheckRedirect: func(request *http.Request, via []*http.Request) error {
+		if len(via) > 10 || request.URL.Scheme != "https" || request.URL.User != nil {
+			return fmt.Errorf("download.redirect_unsafe")
+		}
+		request.Header.Del("Authorization")
+		return nil
+	}}
+	response, err := (&registryauth.Client{Client: client}).Do(request)
 	if err != nil {
 		return nil, failure("download.image_metadata_unavailable", "Registry metadata request failed", 422)
 	}
 	defer response.Body.Close()
-	if response.StatusCode == 401 && response.Header.Get("WWW-Authenticate") != "" {
-		return nil, failure("download.registry_challenge_unsupported", "Registry token challenge is unsupported; select an approved direct registry credential", 422)
-	}
 	if response.StatusCode != http.StatusOK {
 		return nil, failure("download.image_metadata_unavailable", fmt.Sprintf("Registry metadata returned HTTP %d", response.StatusCode), 422)
 	}

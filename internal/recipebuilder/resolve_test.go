@@ -44,13 +44,50 @@ func TestReferenceResolverRejectsHostMismatchAndAuthChallenge(t *testing.T) {
 	if _, err := resolver.ResolveImage(context.Background(), "registry.example/team/model:v1", "other.example", "id"); errorCode(err) != "recipe.reference_host_mismatch" || secretCalls != 0 {
 		t.Fatalf("mismatch err=%v secretCalls=%d", err, secretCalls)
 	}
-	resolver.Client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	resolver.Client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host != "registry.example" {
+			t.Fatal("selected registry credential was forwarded to a challenge host")
+		}
 		header := make(http.Header)
 		header.Set("WWW-Authenticate", `Bearer realm="https://auth.other/token"`)
 		return &http.Response{StatusCode: http.StatusUnauthorized, Header: header, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
-	if _, err := resolver.ResolveImage(context.Background(), "registry.example/team/model:v1", "registry.example", "id"); errorCode(err) != "recipe.reference_auth_challenge_unsupported" || secretCalls != 1 {
+	if _, err := resolver.ResolveImage(context.Background(), "registry.example/team/model:v1", "registry.example", "id"); errorCode(err) != "recipe.reference_auth" || secretCalls != 1 {
 		t.Fatalf("challenge err=%v secretCalls=%d", err, secretCalls)
+	}
+}
+
+func TestReferenceResolverCompletesAnonymousRegistryChallenge(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("b", 64)
+	resolver := &ReferenceResolver{
+		validateHost: func(context.Context, string) error { return nil },
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			header := make(http.Header)
+			body, status := "", http.StatusOK
+			switch request.URL.Host {
+			case "auth.example":
+				if request.Header.Get("Authorization") != "" || request.URL.Query().Get("scope") != "repository:team/model:pull" {
+					t.Fatal("anonymous token request forwarded credentials or changed repository scope")
+				}
+				body = `{"token":"anonymous-pull-token"}`
+			case "registry.example":
+				if request.Header.Get("Authorization") == "" {
+					status = http.StatusUnauthorized
+					header.Set("WWW-Authenticate", `Bearer realm="https://auth.example/token",service="registry.example",scope="repository:team/model:pull"`)
+				} else if request.Header.Get("Authorization") == "Bearer anonymous-pull-token" {
+					header.Set("Docker-Content-Digest", digest)
+				} else {
+					t.Fatal("unexpected registry authorization")
+				}
+			default:
+				t.Fatalf("unexpected token destination %s", request.URL)
+			}
+			return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})},
+	}
+	got, err := resolver.ResolveImage(context.Background(), "registry.example/team/model:v1", "registry.example", "")
+	if err != nil || got != digest {
+		t.Fatalf("public image could not be pinned anonymously: %q %v", got, err)
 	}
 }
 

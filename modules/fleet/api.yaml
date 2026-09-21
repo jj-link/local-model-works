@@ -344,6 +344,9 @@ components:
             $ref: '#/components/schemas/CacheRoot'
         peer_listen:
           type: string
+        advertise_address:
+          type: string
+          description: Explicit serving IP configured by the node administrator; empty uses inventory address selection.
 
     CacheRoot:
       type: object

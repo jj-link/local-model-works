@@ -48,7 +48,7 @@ export function SourceForm({ onCreated }: { onCreated: (id: string) => void }) {
 
   return (
     <section className="space-y-4">
-      <header><h2 className="font-display text-2xl font-semibold">Add from GitHub</h2><p className="mt-2 text-sm text-muted">Inspect a pinned repository, review its configuration, then add it to the catalog. This does not download models or start containers.</p></header>
+      <header><h2 className="font-display text-2xl font-semibold">Add from GitHub</h2><p className="mt-2 text-sm text-muted">Start with a repository URL. Investigate its documented launch procedures, review hardware requirements and any adaptations, then save each procedure as a recipe. Models are fixed by upstream or configured later through documented deployment parameters.</p></header>
       <section className="grid gap-px border border-hairline bg-hairline lg:grid-cols-[1.2fr_.8fr]">
         <div className="bg-panel p-4">
           <div className="mb-4 flex items-center gap-2">
@@ -84,12 +84,12 @@ export function SourceForm({ onCreated }: { onCreated: (id: string) => void }) {
           </Button>
         </div>
         <aside className="bg-raised p-4 text-xs text-muted">
-          <p className="lmw-label mb-3">Inspection boundary</p>
-          <ul className="space-y-2 font-mono">
-            <li>01 / resolves one full commit and tree</li>
-            <li>02 / hashes bounded regular files</li>
-            <li>03 / flags symlinks, binaries, Docker lifecycle</li>
-            <li>04 / deletes the executable checkout</li>
+          <p className="lmw-label mb-3">Import boundary</p>
+          <ul className="space-y-2">
+            <li>Pin the repository before investigation.</li>
+            <li>Approve the repository content scope and AI destination before investigation.</li>
+            <li>Preserve upstream launch commands, Dockerfiles and scripts.</li>
+            <li>No upstream code execution, model downloads or deployments.</li>
           </ul>
         </aside>
       </section>

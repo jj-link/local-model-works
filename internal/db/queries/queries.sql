@@ -192,14 +192,14 @@ ORDER BY r.installed_at DESC, r.digest DESC;
 -- name: ListRecipeRepositories :many
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at, head_check_error
+       created_at, updated_at, head_check_error, procedure
 FROM recipe_repositories
 ORDER BY updated_at DESC, id;
 
 -- name: GetRecipeRepository :one
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at, head_check_error
+       created_at, updated_at, head_check_error, procedure
 FROM recipe_repositories
 WHERE id = ?;
 
@@ -248,9 +248,9 @@ DELETE FROM launch_profiles WHERE recipe_digest = ? AND name = ?;
 
 -- name: UpsertRecipeRepository :exec
 INSERT INTO recipe_repositories (
-    id, source_url, source_path, tracking_ref, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(source_url, source_path) DO UPDATE SET
+    id, source_url, source_path, tracking_ref, created_at, updated_at, procedure
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(source_url, source_path, procedure) DO UPDATE SET
     updated_at = excluded.updated_at;
 
 -- name: AttachRecipeRepositoryVersion :exec

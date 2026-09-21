@@ -384,6 +384,8 @@ type repositoryUpdatePlanView struct {
 	Ready                  bool                                `json:"ready"`
 	RepositoryID           string                              `json:"repository_id"`
 	TargetDigest           string                              `json:"target_digest"`
+	TargetVersion          string                              `json:"target_version,omitempty"`
+	UpToDate               bool                                `json:"up_to_date"`
 	DeploymentIDs          []string                            `json:"deployment_ids"`
 	UnchangedDeploymentIDs []string                            `json:"unchanged_deployment_ids"`
 	Deployments            []deploy.RepositoryUpdateDeployment `json:"deployments"`
@@ -416,6 +418,7 @@ func repositoryUpdatePlanResponse(plan *deploy.RepositoryUpdatePlan) repositoryU
 	return repositoryUpdatePlanView{
 		PlanDigest: plan.Digest, Ready: plan.Ready,
 		RepositoryID: plan.RepositoryID, TargetDigest: plan.TargetDigest,
+		TargetVersion: plan.TargetVersion, UpToDate: plan.UpToDate,
 		DeploymentIDs: plan.DeploymentIDs, UnchangedDeploymentIDs: plan.UnchangedDeploymentIDs,
 		Deployments:        plan.Deployments,
 		CurrentPermissions: currentPermissions, CandidatePermissions: candidatePermissions,
@@ -443,6 +446,48 @@ func (m *Module) getRecipeRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	m.env.Recipes.RefreshUpdatesAsync(m.env.Ctx, recipe.PageUpdateCheckMaxAge)
 	httpx.WriteJSON(w, http.StatusOK, repository)
+}
+
+func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+	repositoryID := chi.URLParam(r, "id")
+	target, err := m.env.Recipes.PrepareRepositoryUpdate(r.Context(), repositoryID)
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	plan, err := m.env.Deploy.PlanRepositoryInstallationUpdate(r.Context(), repositoryID, target.Digest)
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, repositoryUpdatePlanResponse(plan))
+}
+
+func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		TargetDigest string `json:"target_digest"`
+		PlanDigest   string `json:"plan_digest"`
+	}
+	if err := httpx.DecodeBody(r, &request); err != nil || request.TargetDigest == "" || request.PlanDigest == "" {
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", "target_digest and plan_digest are required")
+		return
+	}
+	repositoryID := chi.URLParam(r, "id")
+	target, err := m.env.Recipes.PrepareRepositoryUpdate(r.Context(), repositoryID)
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	if target.Digest != request.TargetDigest {
+		writeRecipeUpdateError(w, &recipe.PackError{Code: "recipe.update_stale", Message: "the latest saved recipe changed after confirmation"})
+		return
+	}
+	runID, err := m.env.Deploy.CreateRepositoryInstallationUpdate(r.Context(), repositoryID, request.TargetDigest, request.PlanDigest)
+	if err != nil {
+		writeRecipeUpdateError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"run_id": runID})
 }
 
 func (m *Module) planRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {
@@ -490,6 +535,8 @@ func writeRecipeUpdateError(w http.ResponseWriter, err error) {
 	case errors.As(err, &packError) && packError.Code == "recipe.repository_exists":
 		httpx.WriteErr(w, http.StatusConflict, packError.Code, packError.Message)
 	case errors.As(err, &packError) && packError.Code == recipe.RepositoryUnsupportedCode:
+		httpx.WriteErr(w, http.StatusUnprocessableEntity, packError.Code, packError.Message)
+	case errors.As(err, &packError):
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, packError.Code, packError.Message)
 	case errors.Is(err, deploy.ErrPlanStale), errors.Is(err, deploy.ErrNotReady), errors.Is(err, deploy.ErrConflict):
 		httpx.WriteErr(w, http.StatusConflict, "recipe.update_conflict", err.Error())

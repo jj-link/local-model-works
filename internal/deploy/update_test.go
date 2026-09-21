@@ -16,6 +16,69 @@ import (
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
+func TestRepositoryReplacementReviewsNewUpstreamInputsBeforeStoppingSource(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	setUpstreamNodeInventory(t, h, "node-a", "192.0.2.1", true)
+	oldDigest := "sha256:" + strings.Repeat("1", 64)
+	newDigest := "sha256:" + strings.Repeat("2", 64)
+	repositoryID := "https://fixtures.local/recipe\n."
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("a", 40), true)
+	source := h.createDeployment(t, oldDigest)
+	driveDeploymentHealthy(t, h, source.ID, "node-a")
+	original := deploymentRow(t, h, source.ID)
+	h.seedRecipeUnplaced(t, newDigest, `{
+	  "apiVersion":"localmodelworks/v1alpha1","kind":"Recipe",
+	  "metadata":{"name":"source-owned-target","version":"2.0.0","source":{"url":"https://fixtures.local/recipe","revision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","path":"."}},
+	  "compatibility":{"nodeCount":1},"artifacts":[],
+	  "parameters":[{"name":"model_id","type":"string","minLength":1}],
+	  "workloads":[{"ranks":[0],"upstream":{"start":["./start.sh"],"stop":["./stop.sh"],"containers":["original-service"]},"env":{"MODEL_ID":"${setting.model_id}"},"permissions":["host.upstream-exec"]}]
+	}`)
+	seedRepositoryVersion(t, h, repositoryID, newDigest, strings.Repeat("b", 40), true)
+	request := RepositoryReplacementRequest{TargetDigest: newDigest, DeploymentIDs: []string{source.ID}}
+	if plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request); err == nil && plan.Ready {
+		t.Fatal("new required upstream input was invented during replacement")
+	}
+	request.DeploymentSettings = map[string]RepositoryReplacementSettings{
+		source.ID: {Parameters: map[string]any{"model_id": "original/model"}},
+	}
+	plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Ready {
+		t.Fatalf("explicit target configuration remains blocked: %+v", plan.Diagnostics)
+	}
+	tampered := RepositoryReplacementRequest{
+		TargetDigest: newDigest, DeploymentIDs: []string{source.ID},
+		DeploymentSettings: map[string]RepositoryReplacementSettings{
+			source.ID: {Parameters: map[string]any{"model_id": "different/model"}},
+		},
+	}
+	if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, tampered, plan.Digest); !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("changed upstream inputs reused prior consent: %v", err)
+	}
+	if row := deploymentRow(t, h, source.ID); row.DesiredState != "running" || row.Parameters != original.Parameters {
+		t.Fatal("rejected target configuration changed the source installation")
+	}
+	runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, plan.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackDeploymentStop(t, h, source.ID, newDigest)
+	replacementID := driveReplacementHealthy(t, h, newDigest)
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	replacement := deploymentRow(t, h, replacementID)
+	if parametersForValue(replacement.Parameters)["model_id"] != "original/model" {
+		t.Fatalf("replacement discarded approved upstream configuration: %s", replacement.Parameters)
+	}
+	if row := deploymentRow(t, h, source.ID); row.Parameters != original.Parameters {
+		t.Fatal("replacement overwrote the retained installation's configuration")
+	}
+}
+
 func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -107,7 +170,7 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	}
 }
 
-func TestRepositoryReplacementRequiresExplicitActiveSelection(t *testing.T) {
+func TestRepositoryReplacementRequiresExplicitRepositorySelection(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	digest := "sha256:" + strings.Repeat("8", 64)
@@ -420,6 +483,104 @@ func TestRepositoryReplacementAlreadyTargetDoesNotRestart(t *testing.T) {
 	}
 }
 
+func TestRepositoryConfigurationRestartsSameRecipeWithReviewedInputs(t *testing.T) {
+	for _, initialState := range []string{"running", "stopped"} {
+		t.Run(initialState, func(t *testing.T) {
+			h := newHarness(t)
+			ctx := context.Background()
+			h.seedNode(t, "node-a", nil, "")
+			digest := "sha256:" + strings.Repeat("4", 64)
+			manifest, err := recipe.Parse([]byte(noArtifactManifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.Parameters = []recipe.Parameter{
+				{Name: "context_length", Type: "int", Default: 4096},
+				{Name: "kv_cache_dtype", Type: "string", Default: "auto"},
+			}
+			manifest.Workloads[0].Args = append(manifest.Workloads[0].Args,
+				"--context-length", "${setting.context_length}", "--kv-cache-dtype", "${setting.kv_cache_dtype}")
+			document, err := json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.seedRecipe(t, digest, string(document))
+			repositoryID := "https://fixtures.local/configuration\n."
+			seedRepositoryVersion(t, h, repositoryID, digest, strings.Repeat("8", 40), true)
+			source := h.createDeployment(t, digest)
+			driveDeploymentHealthy(t, h, source.ID, "node-a")
+			if initialState == "stopped" {
+				if _, err := h.svc.Stop(ctx, source.ID); err != nil {
+					t.Fatal(err)
+				}
+				ackDeploymentStop(t, h, source.ID, digest)
+			}
+			original := deploymentRow(t, h, source.ID)
+			request := RepositoryReplacementRequest{
+				TargetDigest: digest, DeploymentIDs: []string{source.ID},
+				DeploymentSettings: map[string]RepositoryReplacementSettings{
+					source.ID: {Parameters: map[string]any{"context_length": 4096, "kv_cache_dtype": "auto"}},
+				},
+			}
+			unchanged, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+			if err != nil || len(unchanged.UnchangedDeploymentIDs) != 1 || len(unchanged.Deployments) != 0 {
+				t.Fatalf("explicit defaults should not restart an unchanged deployment: plan=%+v err=%v", unchanged, err)
+			}
+			request.DeploymentSettings[source.ID] = RepositoryReplacementSettings{
+				Parameters: map[string]any{"context_length": 8192, "kv_cache_dtype": "fp8"},
+			}
+			plan, err := h.svc.PlanRepositoryUpdate(ctx, repositoryID, request)
+			if err != nil || !plan.Ready || len(plan.Deployments) != 1 {
+				t.Fatalf("changed settings on the same recipe cannot be reviewed: plan=%+v err=%v", plan, err)
+			}
+			if initialState == "stopped" {
+				rollbackRun, err := h.svc.runs.Create(ctx, "library", "recipe-update", structMap(repositoryUpdateRunInput{RepositoryID: repositoryID, TargetDigest: digest, Plan: *plan}), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				rollbackCtx, cancel := context.WithTimeout(ctx, time.Second)
+				err = h.svc.rollbackRepositoryUpdate(rollbackCtx, rollbackRun, plan.Deployments, &repositoryUpdateProgress{Hardware: append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...)})
+				cancel()
+				if err != nil {
+					t.Fatalf("rollback could not preserve an originally stopped deployment: %v", err)
+				}
+				if row := deploymentRow(t, h, source.ID); row.DesiredState != "stopped" || row.ObservedState != "stopped" || row.RunID != original.RunID {
+					t.Fatalf("rollback started an originally stopped deployment: %+v", row)
+				}
+				if err := h.svc.runs.Complete(ctx, rollbackRun, runs.Failed, "recipe.update_failed", "replacement failed before launch"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, unchanged.Digest); !errors.Is(err, ErrPlanStale) {
+				t.Fatalf("changed settings reused an unchanged preview: %v", err)
+			}
+			if row := deploymentRow(t, h, source.ID); row.DesiredState != original.DesiredState || row.Parameters != original.Parameters {
+				t.Fatal("review or stale submission modified the source deployment")
+			}
+			runID, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, plan.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if initialState == "running" {
+				ackDeploymentStop(t, h, source.ID, digest)
+			}
+			replacementID := driveReplacementHealthy(t, h, digest)
+			waitRunState(t, h, runID, string(runs.Succeeded))
+			replacement := deploymentRow(t, h, replacementID)
+			if replacementID == source.ID || replacement.RecipeDigest != digest || replacement.ObservedState != "healthy" {
+				t.Fatalf("configuration did not replace only the run of the same recipe: %+v", replacement)
+			}
+			parameters := parametersForValue(replacement.Parameters)
+			if parameters["context_length"] != float64(8192) || parameters["kv_cache_dtype"] != "fp8" {
+				t.Fatalf("new run lost reviewed runtime settings: %s", replacement.Parameters)
+			}
+			if row := deploymentRow(t, h, source.ID); row.Parameters != original.Parameters || row.DesiredState != "stopped" {
+				t.Fatal("previous configuration was not retained for restoration")
+			}
+		})
+	}
+}
+
 func TestReplacementAcquisitionAllowsOnlyVerifiedReuseTransition(t *testing.T) {
 	now := time.Now().UTC()
 	approvedResource := downloads.Resource{
@@ -462,6 +623,140 @@ func TestReplacementAcquisitionAllowsOnlyVerifiedReuseTransition(t *testing.T) {
 	fresh.Acquisition.Resources[0].Identity = "hf://fixture/model@" + strings.Repeat("b", 40)
 	if replacementPlanMatchesAfterAcquisition(reviewed, &fresh) {
 		t.Fatal("reuse substituted another immutable revision")
+	}
+}
+
+func TestRepositoryInstallationUpdateNeverChangesDeployments(t *testing.T) {
+	for _, failFetch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "failure"}[failFetch], func(t *testing.T) {
+			h := newHarness(t)
+			ctx := context.Background()
+			h.seedNode(t, "node-a", nil, "")
+			enableInstallationUpdates(t, h, "node-a")
+			oldDigest := "sha256:" + strings.Repeat("a", 64)
+			targetDigest := "sha256:" + strings.Repeat("b", 64)
+			h.seedRecipe(t, oldDigest, noArtifactManifest)
+			repositoryID := "https://fixtures.local/package-only\n."
+			seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("1", 40), true)
+			sourcePlan, err := h.svc.Plan(ctx, PlanRequest{RecipeDigest: oldDigest})
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := h.svc.Create(ctx, CreateRequest{RecipeDigest: oldDigest, PlanDigest: sourcePlan.Digest})
+			if err != nil {
+				t.Fatal(err)
+			}
+			driveDeploymentHealthy(t, h, source.ID, "node-a")
+			before, err := h.q.GetDeployment(ctx, source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeCommands := len(h.nodes.workloadCommands())
+			h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+			seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("2", 40), true)
+			plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.UpToDate || len(plan.InstalledDevices) != 1 || len(plan.Deployments) != 0 || len(plan.RunningDeployments) != 0 {
+				t.Fatalf("package preview contains deployment work or misses installation: %+v", plan)
+			}
+			if failFetch {
+				h.nodes.onSend = func(message *agentv1.ServerMessage) {
+					if command := message.GetArtifactCommand(); command != nil {
+						h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: command.CommandId, Ok: false, Error: "fixture fetch failed"})
+					}
+				}
+			}
+			runID, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failFetch {
+				waitRunState(t, h, runID, string(runs.Failed))
+			} else {
+				ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+				waitRunState(t, h, runID, string(runs.Succeeded))
+			}
+			after, err := h.q.GetDeployment(ctx, source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.RecipeDigest != before.RecipeDigest || after.DesiredState != before.DesiredState || after.ObservedState != before.ObservedState {
+				t.Fatalf("package update mutated deployment: before=%+v after=%+v", before, after)
+			}
+			if len(h.nodes.workloadCommands()) != beforeCommands {
+				t.Fatal("package update sent a workload lifecycle command")
+			}
+			rows, err := h.q.ListDeployments(ctx)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("package update created replacement: %+v %v", rows, err)
+			}
+		})
+	}
+}
+
+func enableInstallationUpdates(t *testing.T, h *harness, nodeID string) {
+	t.Helper()
+	ctx := context.Background()
+	node, err := h.q.GetNode(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inv map[string]any
+	if err := json.Unmarshal([]byte(node.Inventory.String), &inv); err != nil {
+		t.Fatal(err)
+	}
+	inv["protocol_features"] = []string{recipe.InstallationUpdateProtocolFeature}
+	raw, err := json.Marshal(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{ID: nodeID, Inventory: nullString(string(raw))}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryInstallationUpdateRejectsChangedTargetAndDevices(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	enableInstallationUpdates(t, h, "node-a")
+	oldDigest := "sha256:" + strings.Repeat("c", 64)
+	targetDigest := "sha256:" + strings.Repeat("d", 64)
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/stale-package\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("3", 40), false)
+	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("4", 40), true)
+	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.seedNode(t, "node-b", nil, "")
+	enableInstallationUpdates(t, h, "node-b")
+	artifact, err := h.q.GetArtifactByIdentity(ctx, "recipe://"+oldDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{ArtifactID: artifact.ID, NodeID: "node-b", Path: "/recipes/old", State: "valid", Diagnostics: "[]"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest); !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("changed installation set accepted: %v", err)
+	}
+	plan, err = h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recipe.ActivateRepositoryVersion(ctx, h.q, repositoryID, oldDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest); !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("changed current target accepted: %v", err)
+	}
+	if len(h.nodes.artifactCommands()) != 0 || len(h.nodes.workloadCommands()) != 0 {
+		t.Fatal("stale approval sent device commands")
 	}
 }
 
@@ -535,7 +830,7 @@ func driveDeploymentHealthy(t *testing.T, h *harness, deploymentID, nodeID strin
 		row := deploymentRow(t, h, deploymentID)
 		if ParseDispatch(row.Dispatch).Get(0) == PhaseStarted {
 			h.svc.OnStateUpdate(context.Background(), nodeID, &agentv1.StateUpdate{
-				DeploymentId: deploymentID, ContainerId: deploymentID, State: "running", Rank: 0,
+				DeploymentId: deploymentID, RunId: row.RunID.String, ContainerId: deploymentID, State: "running", Rank: 0,
 			})
 			return
 		}
@@ -558,7 +853,7 @@ func ackDeploymentStop(t *testing.T, h *harness, deploymentID, targetDigest stri
 				t.Fatal(err)
 			}
 			for _, deployment := range deployments {
-				if deployment.RecipeDigest == targetDigest {
+				if deployment.ID != deploymentID && deployment.RecipeDigest == targetDigest {
 					t.Fatalf("replacement %s created before source stop acknowledgement", deployment.ID)
 				}
 			}
@@ -584,7 +879,7 @@ func driveReplacementHealthy(t *testing.T, h *harness, targetDigest string) stri
 			t.Fatal(err)
 		}
 		for _, deployment := range deployments {
-			if deployment.RecipeDigest == targetDigest {
+			if deployment.RecipeDigest == targetDigest && deployment.DesiredState == "running" {
 				replacementID = deployment.ID
 			}
 		}
@@ -600,7 +895,7 @@ func driveReplacementHealthy(t *testing.T, h *harness, targetDigest string) stri
 			row := deploymentRow(t, h, replacementID)
 			if ParseDispatch(row.Dispatch).Get(0) == PhaseStarted {
 				h.svc.OnStateUpdate(context.Background(), "node-a", &agentv1.StateUpdate{
-					DeploymentId: replacementID, ContainerId: "replacement", State: "running", Rank: 0,
+					DeploymentId: replacementID, RunId: row.RunID.String, ContainerId: "replacement", State: "running", Rank: 0,
 				})
 				return replacementID
 			}

@@ -1356,7 +1356,7 @@ func (q *Queries) GetRecipe(ctx context.Context, digest string) (Recipe, error) 
 const getRecipeRepository = `-- name: GetRecipeRepository :one
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at, head_check_error
+       created_at, updated_at, head_check_error, procedure
 FROM recipe_repositories
 WHERE id = ?
 `
@@ -1376,6 +1376,7 @@ func (q *Queries) GetRecipeRepository(ctx context.Context, id string) (RecipeRep
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.HeadCheckError,
+		&i.Procedure,
 	)
 	return i, err
 }
@@ -2660,7 +2661,7 @@ func (q *Queries) ListPlacementsOnNode(ctx context.Context, nodeID string) ([]Ar
 const listRecipeRepositories = `-- name: ListRecipeRepositories :many
 SELECT id, source_url, source_path, tracking_ref, current_digest,
        observed_head_commit, observed_head_tree, head_checked_at,
-       created_at, updated_at, head_check_error
+       created_at, updated_at, head_check_error, procedure
 FROM recipe_repositories
 ORDER BY updated_at DESC, id
 `
@@ -2686,6 +2687,7 @@ func (q *Queries) ListRecipeRepositories(ctx context.Context) ([]RecipeRepositor
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HeadCheckError,
+			&i.Procedure,
 		); err != nil {
 			return nil, err
 		}
@@ -3818,9 +3820,9 @@ func (q *Queries) UpsertPlacement(ctx context.Context, arg UpsertPlacementParams
 
 const upsertRecipeRepository = `-- name: UpsertRecipeRepository :exec
 INSERT INTO recipe_repositories (
-    id, source_url, source_path, tracking_ref, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(source_url, source_path) DO UPDATE SET
+    id, source_url, source_path, tracking_ref, created_at, updated_at, procedure
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(source_url, source_path, procedure) DO UPDATE SET
     updated_at = excluded.updated_at
 `
 
@@ -3831,6 +3833,7 @@ type UpsertRecipeRepositoryParams struct {
 	TrackingRef string `json:"tracking_ref"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+	Procedure   string `json:"procedure"`
 }
 
 func (q *Queries) UpsertRecipeRepository(ctx context.Context, arg UpsertRecipeRepositoryParams) error {
@@ -3841,6 +3844,7 @@ func (q *Queries) UpsertRecipeRepository(ctx context.Context, arg UpsertRecipeRe
 		arg.TrackingRef,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.Procedure,
 	)
 	return err
 }

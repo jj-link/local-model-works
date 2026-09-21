@@ -19,7 +19,12 @@ import (
 func (s *Service) GenerateProposal(ctx context.Context, draftID, operationID, runID string,
 	approval GenerationApproval, provider recipeassistant.Provider,
 	progress func(phase, message string)) (*Draft, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	timeout := 10 * time.Minute
+	if approval.Request.Mode == "add" {
+		// Repository investigation spans multiple bounded provider turns.
+		timeout = time.Hour
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	row, err := s.getDraftRow(ctx, draftID)
 	if err != nil {
@@ -51,6 +56,9 @@ func (s *Service) GenerateProposal(ctx context.Context, draftID, operationID, ru
 	if err != nil || digest != approval.PreviewSHA256 {
 		return s.failOperation(ctx, row, op, nil, nil, nil, newError("recipe.generation_consent_stale", "approved source content changed before generation", false))
 	}
+	if request.Mode == "add" {
+		s.attachInvestigation(ctx, draftID, value(row.ResolvedCommit), &request)
+	}
 	result, err := provider.Generate(ctx, request, func(message string) {
 		if progress != nil {
 			progress(PhaseGenerate, message)
@@ -59,10 +67,19 @@ func (s *Service) GenerateProposal(ctx context.Context, draftID, operationID, ru
 	if err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
 	}
-	for i := range result.Evidence {
-		if result.Evidence[i].SourceCommit == "" {
-			result.Evidence[i].SourceCommit = value(row.ResolvedCommit)
+	if request.Mode == "add" && len(result.Procedures) == 0 {
+		return s.failOperation(ctx, row, op, nil, nil, nil, newError("recipe.proposal_invalid", "Repository investigation must return documented procedures with supporting evidence.", false))
+	}
+	pinEvidence := func(evidence []recipeassistant.Evidence) {
+		for i := range evidence {
+			if evidence[i].SourceCommit == "" && !strings.HasPrefix(evidence[i].SourcePath, "https://") {
+				evidence[i].SourceCommit = value(row.ResolvedCommit)
+			}
 		}
+	}
+	pinEvidence(result.Evidence)
+	for i := range result.Procedures {
+		pinEvidence(result.Procedures[i].Evidence)
 	}
 	if err := validateProposalResult(result, request, renderCandidates(row.Candidates)); err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
@@ -71,30 +88,32 @@ func (s *Service) GenerateProposal(ctx context.Context, draftID, operationID, ru
 	if err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
 	}
-	proposal := Proposal{
-		ID: proposalID, BaseVersion: row.Version + 1, ProviderID: approval.ProviderID, ProviderVersion: approval.ProviderVersion,
-		Model: request.Model, RunID: runID, Manifest: result.Manifest, Summary: result.Summary, PreviewSHA256: approval.PreviewSHA256,
-	}
-	for _, file := range result.Files {
-		proposal.Files = append(proposal.Files, ProposalFile{Path: file.Path, Content: file.Content, SourcePath: file.SourcePath})
-	}
-	for _, selected := range result.SelectedSourceAssets {
-		proposal.SelectedSourceAssets = append(proposal.SelectedSourceAssets, AssetSelection{Path: selected.Path, SHA256: selected.SHA256, Origin: OriginSource})
-	}
-	for _, question := range result.Questions {
-		proposal.Questions = append(proposal.Questions, Question{ID: question.ID, Path: question.Path, Question: question.Question})
-	}
-	proposal.Questions = proposalQuestions(renderQuestions(row.Questions), proposal.Questions)
-	for _, evidence := range result.Evidence {
-		proposal.Evidence = append(proposal.Evidence, Evidence{Path: evidence.Path, SourcePath: evidence.SourcePath, SHA256: evidence.SHA256, SourceCommit: evidence.SourceCommit, StartLine: evidence.StartLine, EndLine: evidence.EndLine})
-	}
-	proposal.Manifest, err = pinnedManifest(row, proposal.Manifest)
+	var proposal Proposal
+	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
 	}
-	proposal.Diagnostics = append(retainedFindings(row.Diagnostics), s.validatorFindings(proposal.Manifest)...)
-	proposedCandidates, proposedSelected := proposalAssets(renderCandidates(row.Candidates), proposal)
-	proposal.Diagnostics = append(proposal.Diagnostics, manifestAssetFindings(proposal.Manifest, proposedCandidates, proposedSelected)...)
+	if err := json.Unmarshal(resultJSON, &proposal); err != nil {
+		return s.failOperation(ctx, row, op, nil, nil, nil, err)
+	}
+	proposal.ID, proposal.BaseVersion = proposalID, row.Version+1
+	proposal.ProviderID, proposal.ProviderVersion = approval.ProviderID, approval.ProviderVersion
+	proposal.Model, proposal.RunID, proposal.PreviewSHA256 = request.Model, runID, approval.PreviewSHA256
+	if len(proposal.Procedures) != 0 {
+		for i := range proposal.Procedures {
+			if err := s.prepareProcedure(row, &proposal.Procedures[i]); err != nil {
+				return s.failOperation(ctx, row, op, nil, nil, nil, err)
+			}
+		}
+	} else {
+		procedure := procedureFromProposal(proposal)
+		if err := s.prepareProcedure(row, &procedure); err != nil {
+			return s.failOperation(ctx, row, op, nil, nil, nil, err)
+		}
+		proposal.Manifest, proposal.Files, proposal.SelectedSourceAssets = procedure.Manifest, procedure.Files, procedure.SelectedSourceAssets
+		proposal.Questions, proposal.Diagnostics, proposal.Adaptations = procedure.Questions, procedure.Diagnostics, procedure.Adaptations
+	}
+	normalizeProposalCollections(&proposal)
 	encodedProposal, err := marshalJSON(proposal)
 	if err != nil {
 		return s.failOperation(ctx, row, op, nil, nil, nil, err)
@@ -132,10 +151,34 @@ func (s *Service) assistantRequest(ctx context.Context, row db.RecipeDraft, inst
 	if err != nil {
 		return recipeassistant.Request{}, err
 	}
-	request.ResultSchema = recipeassistant.ProposalOutputSchema()
 	request.SourcePins = map[string]any{"source": draft.Source, "commit": draft.ResolvedCommit, "tree": draft.ResolvedTree}
 	if draft.ChangeContext != nil {
 		request.SourcePins = map[string]any{"source": draft.Source, "commit": draft.ResolvedCommit, "tree": draft.ResolvedTree, "base_source": draft.ChangeContext.BaseSource, "base_commit": draft.ChangeContext.BaseCommit, "base_tree": draft.ChangeContext.BaseTree}
+	}
+	if draft.ChangeContext == nil || draft.ChangeContext.BaseRecipeDigest == "" {
+		if err := s.investigationInventory(ctx, draft, &request); err != nil {
+			return recipeassistant.Request{}, err
+		}
+		selected = nil
+	} else {
+		request.Mode = draft.ChangeContext.Kind
+		request.SourceStatus = "Only explicitly selected pinned source context is available. Missing instructions require questions; saved helpers are not upstream evidence."
+		if len(selected) == 0 {
+			selected, request.SourceStatus = changeSourceContext(draft)
+		}
+	}
+	request.ResultSchema = recipeassistant.ProposalOutputSchema(request.Mode)
+	if row.Proposal.Valid {
+		// Refinement sees the suggestion, not its provider metadata or unselected
+		// diagnostics. It remains inert and part of the exact consent digest.
+		var pending recipeassistant.Result
+		if err := json.Unmarshal([]byte(row.Proposal.String), &pending); err != nil {
+			return recipeassistant.Request{}, err
+		}
+		request.PendingProposal, err = json.Marshal(pending)
+		if err != nil {
+			return recipeassistant.Request{}, err
+		}
 	}
 	for _, asset := range draft.SelectedAssets {
 		if _, _, err := s.ReadOwnedFile(ctx, row.ID, asset.Path, asset.SHA256, ""); err != nil {
@@ -231,7 +274,24 @@ func validateProposalResult(result recipeassistant.Result, request recipeassista
 	if err := recipeassistant.ValidateResult(result); err != nil {
 		return err
 	}
+	if len(result.Procedures) != 0 {
+		if request.Mode != "add" {
+			return newError("recipe.proposal_invalid", "An update or repair must retain one saved procedure.", false)
+		}
+		for _, procedure := range result.Procedures {
+			if len(procedure.Evidence) == 0 {
+				return newError("recipe.proposal_evidence_invalid", "Each procedure requires supporting source evidence: "+procedure.Name, false)
+			}
+			if err := validateProposalResult(recipeassistant.Result{Manifest: procedure.Manifest, Files: procedure.Files, SelectedSourceAssets: procedure.SelectedSourceAssets, Questions: procedure.Questions, Evidence: procedure.Evidence, Adaptations: procedure.Adaptations}, request, candidates); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	selectedPaths := make(map[string]bool, len(result.Files)+len(result.SelectedSourceAssets))
+	if err := validateSourceOwnedProposal(result, request); err != nil {
+		return err
+	}
 	for _, file := range result.Files {
 		selectedPaths[file.Path] = true
 	}

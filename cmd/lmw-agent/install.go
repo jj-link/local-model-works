@@ -41,12 +41,27 @@ func install(args []string, stdout io.Writer) error {
 	peerAddr := fs.String("peer-addr", ":9444", "peer transfer listen address")
 	peerAdvertise := fs.String("peer-advertise", "", "routable peer transfer address")
 	dockerSocket := fs.String("docker-socket", "/var/run/docker.sock", "Docker socket")
+	upstreamExecution := fs.Bool("upstream-execution", false, "allow reviewed source lifecycle commands with this node's host authority")
+	hostPolicy := fs.String("upstream-host-policy", "hardened", "systemd policy: hardened or explicit host (writable host/home, shared /tmp, privilege escalation, surviving workers)")
+	dryRun := fs.Bool("dry-run", false, "print the installer plan without writing files")
 	fs.Var(&roots, "cache-root", "existing model/cache root (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	hostPolicyExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "upstream-host-policy" {
+			hostPolicyExplicit = true
+		}
+	})
+	if *hostPolicy != "hardened" && *hostPolicy != "host" {
+		return fmt.Errorf("--upstream-host-policy must be hardened or host")
+	}
+	if *upstreamExecution && (*hostPolicy != "host" || !hostPolicyExplicit) {
+		return fmt.Errorf("--upstream-execution requires explicit --upstream-host-policy=host; reviewed source gains the service user's host/Docker/sudo authority and workers survive agent stop/restart")
 	}
 	parsed, err := url.Parse(*serverURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
@@ -77,6 +92,44 @@ func install(args []string, stdout io.Writer) error {
 		stateRoot = "/var/lib/local-model-works-agent"
 	}
 	workspace := filepath.Join(stateRoot, "workspace")
+	unitSource, err := locateAgentUnit()
+	if err != nil {
+		return err
+	}
+	unit, err := os.ReadFile(unitSource)
+	if err != nil {
+		return fmt.Errorf("read agent unit: %w", err)
+	}
+	systemdRoot := os.Getenv("LMW_SYSTEMD_ROOT")
+	if systemdRoot == "" {
+		systemdRoot = "/etc/systemd/system"
+	}
+	dropIn := filepath.Join(systemdRoot, "local-model-works-agent.service.d")
+	hostDropIn := filepath.Join(dropIn, "30-upstream-host.conf")
+	if _, err := os.Stat(hostDropIn); err == nil && !hostPolicyExplicit {
+		return fmt.Errorf("existing upstream host policy requires explicit --upstream-host-policy=host or hardened; keep host with --upstream-execution=false to preserve approved workers on restart")
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect upstream host policy: %w", err)
+	}
+	var hostUnit []byte
+	if *hostPolicy == "host" {
+		hostUnit, err = os.ReadFile(filepath.Join(filepath.Dir(unitSource), "30-upstream-host.conf"))
+		if err != nil {
+			return fmt.Errorf("read packaged upstream host policy: %w", err)
+		}
+	}
+	fmt.Fprintf(stdout, "agent install plan: user=%s upstream-execution=%t systemd-policy=%s\n", *runAs, *upstreamExecution, *hostPolicy)
+	fmt.Fprintf(stdout, "write %s, %s and service drop-ins under %s; no service is started or restarted\n", filepath.Join(configDir, "agent.env"), filepath.Join(systemdRoot, "local-model-works-agent.service"), dropIn)
+	if *hostPolicy == "host" {
+		fmt.Fprintln(stdout, "HOST AUTHORITY: reviewed source can write the host filesystem and home, shares host /tmp with Docker bind mounts, and may use existing sudo/setuid privileges. Kernel/control-group protections are relaxed. This is not a sandbox.")
+		fmt.Fprintf(stdout, "Provision %s with the home, Docker access and noninteractive host privileges required by the original source; this installer does not grant sudo or group membership.\n", *runAs)
+		fmt.Fprintln(stdout, "KillMode=process: approved supervisors and their children deliberately survive agent service stop/restart. Stop workloads before retiring the agent; disabling new execution does not terminate them. Keep the host drop-in when disabling execution to retain this behavior.")
+	} else {
+		fmt.Fprintln(stdout, "HARDENED: preserve the ordinary service sandbox and cgroup termination. Removing a previous host drop-in changes restart/stop behavior; stop retained workloads under host policy before reverting.")
+	}
+	if *dryRun {
+		return nil
+	}
 	for _, dir := range []string{configDir, stateRoot, workspace, filepath.Join(stateRoot, "ca"), filepath.Join(stateRoot, "transfers"), filepath.Join(stateRoot, "logs")} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
@@ -90,6 +143,7 @@ func install(args []string, stdout io.Writer) error {
 		config.EnvAgentWorkspace + "=" + workspace,
 		config.EnvAgentDockerSock + "=" + *dockerSocket,
 		config.EnvAgentCacheRoots + "=" + strings.Join(roots, ":"),
+		config.EnvAgentUpstreamExecution + "=" + strconv.FormatBool(*upstreamExecution),
 		config.EnvPeerAddr + "=" + *peerAddr,
 		config.EnvPeerAdvertise + "=" + *peerAdvertise,
 	}
@@ -97,25 +151,12 @@ func install(args []string, stdout io.Writer) error {
 		return fmt.Errorf("write agent environment: %w", err)
 	}
 
-	unitSource, err := locateAgentUnit()
-	if err != nil {
-		return err
-	}
-	unit, err := os.ReadFile(unitSource)
-	if err != nil {
-		return fmt.Errorf("read agent unit: %w", err)
-	}
-	systemdRoot := os.Getenv("LMW_SYSTEMD_ROOT")
-	if systemdRoot == "" {
-		systemdRoot = "/etc/systemd/system"
-	}
 	if err := os.MkdirAll(systemdRoot, 0o755); err != nil {
 		return fmt.Errorf("create systemd root: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(systemdRoot, "local-model-works-agent.service"), unit, 0o644); err != nil {
 		return fmt.Errorf("write agent unit: %w", err)
 	}
-	dropIn := filepath.Join(systemdRoot, "local-model-works-agent.service.d")
 	if err := os.MkdirAll(dropIn, 0o755); err != nil {
 		return fmt.Errorf("create agent unit drop-in: %w", err)
 	}
@@ -136,6 +177,13 @@ func install(args []string, stdout io.Writer) error {
 		if err := os.WriteFile(cacheDropIn, []byte(cachePaths.String()), 0o644); err != nil {
 			return fmt.Errorf("write cache-root drop-in: %w", err)
 		}
+	}
+	if *hostPolicy == "host" {
+		if err := os.WriteFile(hostDropIn, hostUnit, 0o644); err != nil {
+			return fmt.Errorf("write upstream host policy: %w", err)
+		}
+	} else if err := os.Remove(hostDropIn); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove upstream host policy: %w", err)
 	}
 	fmt.Fprintf(stdout, "installed local-model-works-agent.service for %s\n", *runAs)
 	return nil

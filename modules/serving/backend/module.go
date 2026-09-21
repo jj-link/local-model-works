@@ -140,8 +140,8 @@ func (m *Module) plan(w http.ResponseWriter, r *http.Request) {
 
 // listLaunchProfiles — GET /recipes/{digest}/launch-profiles: saved
 // profiles for the launch dialog.
-func (m *Module) listLaunchProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := m.env.Deploy.ListLaunchProfiles(r.Context(), chi.URLParam(r, "digest"))
+func (m *Module) listLaunchProfiles(w http.ResponseWriter, r *http.Request, digest string) {
+	profiles, err := m.env.Deploy.ListLaunchProfiles(r.Context(), digest)
 	if err != nil {
 		m.deployErr(w, err)
 		return
@@ -151,13 +151,12 @@ func (m *Module) listLaunchProfiles(w http.ResponseWriter, r *http.Request) {
 
 // createLaunchProfile — POST /recipes/{digest}/launch-profiles: save an
 // operator-owned profile pinned to this recipe digest.
-func (m *Module) createLaunchProfile(w http.ResponseWriter, r *http.Request) {
+func (m *Module) createLaunchProfile(w http.ResponseWriter, r *http.Request, digest string) {
 	var req LaunchProfileUpsert
 	if err := httpx.DecodeBody(r, &req); err != nil {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	digest := chi.URLParam(r, "digest")
 	profile, err := m.env.Deploy.CreateLaunchProfile(r.Context(), deploy.UpsertLaunchProfileRequest{
 		Name:         req.Name,
 		RecipeDigest: digest,
@@ -173,13 +172,13 @@ func (m *Module) createLaunchProfile(w http.ResponseWriter, r *http.Request) {
 
 // updateLaunchProfile — PUT /launch-profiles/{id}: replace a saved
 // profile's values; the pinned digest is immutable.
-func (m *Module) updateLaunchProfile(w http.ResponseWriter, r *http.Request) {
+func (m *Module) updateLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
 	var req LaunchProfileUpsert
 	if err := httpx.DecodeBody(r, &req); err != nil {
 		httpx.WriteErr(w, http.StatusUnprocessableEntity, "resource.unprocessable", err.Error())
 		return
 	}
-	profile, err := m.env.Deploy.UpdateLaunchProfile(r.Context(), chi.URLParam(r, "id"),
+	profile, err := m.env.Deploy.UpdateLaunchProfile(r.Context(), id,
 		deploy.UpsertLaunchProfileRequest{
 			Name:         req.Name,
 			RecipeDigest: derefProfileRecipeDigest(req.RecipeDigest),
@@ -194,8 +193,8 @@ func (m *Module) updateLaunchProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteLaunchProfile — DELETE /launch-profiles/{id}.
-func (m *Module) deleteLaunchProfile(w http.ResponseWriter, r *http.Request) {
-	if err := m.env.Deploy.DeleteLaunchProfile(r.Context(), chi.URLParam(r, "id")); err != nil {
+func (m *Module) deleteLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
+	if err := m.env.Deploy.DeleteLaunchProfile(r.Context(), id); err != nil {
 		m.deployErr(w, err)
 		return
 	}

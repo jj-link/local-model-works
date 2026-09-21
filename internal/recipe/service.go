@@ -259,8 +259,10 @@ func (s *Service) storeReviewedPack(ctx context.Context, res *PackResult, source
 			if err != nil {
 				return Recipe{}, err
 			}
-			if _, err := qtx.GetRecipeRepository(ctx, actualID); err == nil {
-				return Recipe{}, &PackError{Code: "recipe.repository_exists", Message: "this repository is already in the library; open its saved recipe"}
+			if repository, err := qtx.GetRecipeRepository(ctx, actualID); err == nil {
+				if repository.CurrentDigest.String != digest {
+					return Recipe{}, &PackError{Code: "recipe.repository_exists", Message: "this procedure is already in the library; open its saved recipe"}
+				}
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return Recipe{}, err
 			}
@@ -739,9 +741,13 @@ func (s *Service) render(ctx context.Context, row db.Recipe, m *Manifest) (Recip
 	} else if !errors.Is(linkErr, sql.ErrNoRows) {
 		return Recipe{}, linkErr
 	}
+	name := visibleRecipeName(row.Source, row.Name)
+	if m.Metadata.Source != nil && m.Metadata.Source.Procedure != "" {
+		name += " · " + m.Metadata.Source.Procedure
+	}
 	v := Recipe{
 		Digest:        row.Digest,
-		Name:          visibleRecipeName(row.Source, row.Name),
+		Name:          name,
 		Version:       row.Version,
 		Model:         m.Metadata.Model,
 		Engine:        m.Metadata.Engine,

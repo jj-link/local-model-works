@@ -102,6 +102,7 @@ func New(d Deps) *Server {
 	runRoot := d.Cfg.RunRoot()
 	runsSvc := runs.New(d.DB, d.Q, bus, runRoot)
 	deploys := deploy.New(d.DB, d.Q, bus, runsSvc, nodes)
+	deploys.SetCommands(broker)
 	go deploys.RunRepositoryUpdateCoordinator(d.Ctx)
 	fabrics := fabric.New(d.Q, bus)
 	jobsReg := jobs.New(runsSvc, runRoot, d.Ctx, d.DB, d.Q)

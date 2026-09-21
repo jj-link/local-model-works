@@ -146,6 +146,27 @@ func (e PlacementState) Valid() bool {
 	}
 }
 
+// Defines values for RecipeAssistantProviderKind.
+const (
+	RecipeAssistantProviderKindCodex            RecipeAssistantProviderKind = "codex"
+	RecipeAssistantProviderKindLocal            RecipeAssistantProviderKind = "local"
+	RecipeAssistantProviderKindOpenaiCompatible RecipeAssistantProviderKind = "openai_compatible"
+)
+
+// Valid indicates whether the value is a known member of the RecipeAssistantProviderKind enum.
+func (e RecipeAssistantProviderKind) Valid() bool {
+	switch e {
+	case RecipeAssistantProviderKindCodex:
+		return true
+	case RecipeAssistantProviderKindLocal:
+		return true
+	case RecipeAssistantProviderKindOpenaiCompatible:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecipeAvailableResourceKind.
 const (
 	RecipeAvailableResourceKindArtifact RecipeAvailableResourceKind = "artifact"
@@ -529,22 +550,22 @@ func (e RecipeRunExcerptSelectionStream) Valid() bool {
 
 // Defines values for RecipeSourceType.
 const (
-	Catalog RecipeSourceType = "catalog"
-	Git     RecipeSourceType = "git"
-	Local   RecipeSourceType = "local"
-	Oci     RecipeSourceType = "oci"
+	RecipeSourceTypeCatalog RecipeSourceType = "catalog"
+	RecipeSourceTypeGit     RecipeSourceType = "git"
+	RecipeSourceTypeLocal   RecipeSourceType = "local"
+	RecipeSourceTypeOci     RecipeSourceType = "oci"
 )
 
 // Valid indicates whether the value is a known member of the RecipeSourceType enum.
 func (e RecipeSourceType) Valid() bool {
 	switch e {
-	case Catalog:
+	case RecipeSourceTypeCatalog:
 		return true
-	case Git:
+	case RecipeSourceTypeGit:
 		return true
-	case Local:
+	case RecipeSourceTypeLocal:
 		return true
-	case Oci:
+	case RecipeSourceTypeOci:
 		return true
 	default:
 		return false
@@ -707,6 +728,75 @@ func (e TransferPreviewAction) Valid() bool {
 	}
 }
 
+// Defines values for UpstreamExecutionPreviewExecutionConfigurationEditsFormat.
+const (
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgv               UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvHeredoc        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvQuotedHeredoc  UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "argv-quoted-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlag               UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "flag"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlagCompose        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "flag-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatJsonCompose        UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "json-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShell              UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellCompose       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-compose"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellDoubleQuoted  UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-double-quoted"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellHeredoc       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellQuotedHeredoc UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-quoted-heredoc"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellReparse       UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-reparse"
+	UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellWord          UpstreamExecutionPreviewExecutionConfigurationEditsFormat = "shell-word"
+)
+
+// Valid indicates whether the value is a known member of the UpstreamExecutionPreviewExecutionConfigurationEditsFormat enum.
+func (e UpstreamExecutionPreviewExecutionConfigurationEditsFormat) Valid() bool {
+	switch e {
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgv:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatArgvQuotedHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlag:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatFlagCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatJsonCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShell:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellCompose:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellDoubleQuoted:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellQuotedHeredoc:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellReparse:
+		return true
+	case UpstreamExecutionPreviewExecutionConfigurationEditsFormatShellWord:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpstreamExecutionPreviewExecutionEnvFormat.
+const (
+	UpstreamExecutionPreviewExecutionEnvFormatLiteral UpstreamExecutionPreviewExecutionEnvFormat = "literal"
+	UpstreamExecutionPreviewExecutionEnvFormatShell   UpstreamExecutionPreviewExecutionEnvFormat = "shell"
+)
+
+// Valid indicates whether the value is a known member of the UpstreamExecutionPreviewExecutionEnvFormat enum.
+func (e UpstreamExecutionPreviewExecutionEnvFormat) Valid() bool {
+	switch e {
+	case UpstreamExecutionPreviewExecutionEnvFormatLiteral:
+		return true
+	case UpstreamExecutionPreviewExecutionEnvFormatShell:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateRecipeChangeJSONBodyKind.
 const (
 	CreateRecipeChangeJSONBodyKindRepair CreateRecipeChangeJSONBodyKind = "repair"
@@ -754,7 +844,9 @@ type Compatibility struct {
 
 // DeploymentPlan defines model for DeploymentPlan.
 type DeploymentPlan struct {
-	Acquisition       *RecipeDownloadPlan             `json:"acquisition,omitempty"`
+	Acquisition *RecipeDownloadPlan `json:"acquisition,omitempty"`
+
+	// AcquisitionPolicy Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
 	AcquisitionPolicy DeploymentPlanAcquisitionPolicy `json:"acquisition_policy"`
 	Conflicts         *[]struct {
 		DeploymentId *openapi_types.UUID `json:"deployment_id,omitempty"`
@@ -794,13 +886,14 @@ type DeploymentPlan struct {
 	} `json:"ports,omitempty"`
 
 	// Ready false when conflicts or unmet compatibility block creation
-	Ready         bool               `json:"ready"`
-	RecipeDigest  string             `json:"recipe_digest"`
-	RecipeName    *string            `json:"recipe_name,omitempty"`
-	RecipeVersion *string            `json:"recipe_version,omitempty"`
-	Risks         *[]string          `json:"risks,omitempty"`
-	Storage       *[]StoragePreview  `json:"storage,omitempty"`
-	Transfers     *[]TransferPreview `json:"transfers,omitempty"`
+	Ready         bool                        `json:"ready"`
+	RecipeDigest  string                      `json:"recipe_digest"`
+	RecipeName    *string                     `json:"recipe_name,omitempty"`
+	RecipeVersion *string                     `json:"recipe_version,omitempty"`
+	Risks         *[]string                   `json:"risks,omitempty"`
+	Storage       *[]StoragePreview           `json:"storage,omitempty"`
+	Transfers     *[]TransferPreview          `json:"transfers,omitempty"`
+	Upstream      *[]UpstreamExecutionPreview `json:"upstream,omitempty"`
 
 	// Variants Resolved per-artifact model variants
 	Variants *map[string]string `json:"variants,omitempty"`
@@ -809,7 +902,7 @@ type DeploymentPlan struct {
 	WorkloadIndex *int `json:"workload_index,omitempty"`
 }
 
-// DeploymentPlanAcquisitionPolicy defines model for DeploymentPlan.AcquisitionPolicy.
+// DeploymentPlanAcquisitionPolicy Applies only to controller-managed resources; approved upstream scripts own their repository, dependency and model acquisition.
 type DeploymentPlanAcquisitionPolicy string
 
 // Diagnostic defines model for Diagnostic.
@@ -889,6 +982,28 @@ type Recipe struct {
 
 	// VersionCount Other installed versions of the same recipe name
 	VersionCount *int `json:"version_count,omitempty"`
+}
+
+// RecipeAssistantProvider defines model for RecipeAssistantProvider.
+type RecipeAssistantProvider struct {
+	// BaseUrl Server-resolved destination; never a client endpoint override
+	BaseUrl      *string `json:"base_url,omitempty"`
+	DeploymentId *string `json:"deployment_id,omitempty"`
+
+	// Id local:<deployment ID>, codex:<model ID>, or a configured remote provider ID
+	Id    string                      `json:"id"`
+	Kind  RecipeAssistantProviderKind `json:"kind"`
+	Label string                      `json:"label"`
+	Model *string                     `json:"model,omitempty"`
+}
+
+// RecipeAssistantProviderKind defines model for RecipeAssistantProvider.Kind.
+type RecipeAssistantProviderKind string
+
+// RecipeAssistantProviderCatalog defines model for RecipeAssistantProviderCatalog.
+type RecipeAssistantProviderCatalog struct {
+	Providers []RecipeAssistantProvider `json:"providers"`
+	Version   string                    `json:"version"`
 }
 
 // RecipeAvailability defines model for RecipeAvailability.
@@ -1184,9 +1299,11 @@ type RecipeDraft struct {
 	ParentDraftId        *string                     `json:"parent_draft_id,omitempty"`
 	Proposal             *RecipeDraftSuggestion      `json:"proposal,omitempty"`
 	Questions            []RecipeDraftQuestion       `json:"questions"`
+	RelatedDraftIds      *[]string                   `json:"related_draft_ids,omitempty"`
 	ResolvedCommit       *string                     `json:"resolved_commit,omitempty"`
 	ResolvedReferences   []RecipeResolvedReference   `json:"resolved_references"`
 	ResolvedTree         *string                     `json:"resolved_tree,omitempty"`
+	Review               *RecipeDraftProcedure       `json:"review,omitempty"`
 	RunId                *string                     `json:"run_id,omitempty"`
 	SelectedAssets       []RecipeDraftAssetSelection `json:"selected_assets"`
 	Source               map[string]interface{}      `json:"source"`
@@ -1197,6 +1314,13 @@ type RecipeDraft struct {
 
 // RecipeDraftState defines model for RecipeDraft.State.
 type RecipeDraftState string
+
+// RecipeDraftAdaptation defines model for RecipeDraftAdaptation.
+type RecipeDraftAdaptation struct {
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Reason      string `json:"reason"`
+}
 
 // RecipeDraftAssetSelection defines model for RecipeDraftAssetSelection.
 type RecipeDraftAssetSelection struct {
@@ -1276,6 +1400,32 @@ type RecipeDraftOperationAccepted struct {
 	RunId   string `json:"run_id"`
 }
 
+// RecipeDraftProcedure defines model for RecipeDraftProcedure.
+type RecipeDraftProcedure struct {
+	Adaptations *[]RecipeDraftAdaptation `json:"adaptations,omitempty"`
+	Description string                   `json:"description"`
+	Diagnostics []RecipeDraftDiagnostic  `json:"diagnostics"`
+	Evidence    []struct {
+		EndLine      *int    `json:"end_line,omitempty"`
+		Path         string  `json:"path"`
+		Sha256       string  `json:"sha256"`
+		SourceCommit *string `json:"source_commit,omitempty"`
+		SourcePath   *string `json:"source_path,omitempty"`
+		StartLine    *int    `json:"start_line,omitempty"`
+	} `json:"evidence"`
+	Files []struct {
+		Content    string  `json:"content"`
+		Path       string  `json:"path"`
+		SourcePath *string `json:"source_path,omitempty"`
+	} `json:"files"`
+	Id                   string                      `json:"id"`
+	Manifest             map[string]interface{}      `json:"manifest"`
+	Name                 string                      `json:"name"`
+	Questions            []RecipeDraftQuestion       `json:"questions"`
+	SelectedSourceAssets []RecipeDraftAssetSelection `json:"selected_source_assets"`
+	Summary              *string                     `json:"summary,omitempty"`
+}
+
 // RecipeDraftQuestion defines model for RecipeDraftQuestion.
 type RecipeDraftQuestion struct {
 	Answer   *string `json:"answer,omitempty"`
@@ -1293,8 +1443,9 @@ type RecipeDraftSource struct {
 
 // RecipeDraftSuggestion defines model for RecipeDraftSuggestion.
 type RecipeDraftSuggestion struct {
-	BaseVersion int                     `json:"base_version"`
-	Diagnostics []RecipeDraftDiagnostic `json:"diagnostics"`
+	Adaptations *[]RecipeDraftAdaptation `json:"adaptations,omitempty"`
+	BaseVersion int                      `json:"base_version"`
+	Diagnostics []RecipeDraftDiagnostic  `json:"diagnostics"`
 	Evidence    []struct {
 		EndLine      *int    `json:"end_line,omitempty"`
 		Path         string  `json:"path"`
@@ -1312,6 +1463,7 @@ type RecipeDraftSuggestion struct {
 	Manifest             map[string]interface{}      `json:"manifest"`
 	Model                *string                     `json:"model,omitempty"`
 	PreviewSha256        *string                     `json:"preview_sha256,omitempty"`
+	Procedures           *[]RecipeDraftProcedure     `json:"procedures,omitempty"`
 	ProviderId           *string                     `json:"provider_id,omitempty"`
 	ProviderVersion      *string                     `json:"provider_version,omitempty"`
 	Questions            []RecipeDraftQuestion       `json:"questions"`
@@ -1369,6 +1521,13 @@ type RecipeInstalledDevice struct {
 	NodeStatus       string   `json:"node_status"`
 }
 
+// RecipeReplacementLaunchSettings Explicitly replace inherited launch inputs with these values and the target's declared defaults. Omitted deployment entries preserve their current settings.
+type RecipeReplacementLaunchSettings struct {
+	Parameters    *map[string]interface{} `json:"parameters,omitempty"`
+	Variants      *map[string]string      `json:"variants,omitempty"`
+	WorkloadIndex *int                    `json:"workload_index,omitempty"`
+}
+
 // RecipeRepository defines model for RecipeRepository.
 type RecipeRepository struct {
 	CreatedAt          time.Time                 `json:"created_at"`
@@ -1380,6 +1539,7 @@ type RecipeRepository struct {
 	InstalledDevices   []RecipeInstalledDevice   `json:"installed_devices"`
 	ObservedHeadCommit *string                   `json:"observed_head_commit,omitempty"`
 	ObservedHeadTree   *string                   `json:"observed_head_tree,omitempty"`
+	Procedure          *string                   `json:"procedure,omitempty"`
 	SourcePath         string                    `json:"source_path"`
 	SourceUrl          string                    `json:"source_url"`
 	TrackingRef        string                    `json:"tracking_ref"`
@@ -1395,15 +1555,58 @@ type RecipeRepositoryDetail = RecipeRepository
 
 // RecipeRepositoryReplacementPlanRequest defines model for RecipeRepositoryReplacementPlanRequest.
 type RecipeRepositoryReplacementPlanRequest struct {
-	DeploymentIds []string `json:"deployment_ids"`
-	TargetDigest  string   `json:"target_digest"`
+	DeploymentIds      []string                                    `json:"deployment_ids"`
+	DeploymentSettings *map[string]RecipeReplacementLaunchSettings `json:"deployment_settings,omitempty"`
+	TargetDigest       string                                      `json:"target_digest"`
 }
 
 // RecipeRepositoryReplacementRequest defines model for RecipeRepositoryReplacementRequest.
 type RecipeRepositoryReplacementRequest struct {
-	DeploymentIds []string `json:"deployment_ids"`
-	PlanDigest    string   `json:"plan_digest"`
-	TargetDigest  string   `json:"target_digest"`
+	DeploymentIds      []string                                    `json:"deployment_ids"`
+	DeploymentSettings *map[string]RecipeReplacementLaunchSettings `json:"deployment_settings,omitempty"`
+	PlanDigest         string                                      `json:"plan_digest"`
+	TargetDigest       string                                      `json:"target_digest"`
+}
+
+// RecipeRepositoryUpdatePlan defines model for RecipeRepositoryUpdatePlan.
+type RecipeRepositoryUpdatePlan struct {
+	AddedPermissions     []string  `json:"added_permissions"`
+	CandidatePermissions []string  `json:"candidate_permissions"`
+	CurrentPermissions   []string  `json:"current_permissions"`
+	DeploymentIds        *[]string `json:"deployment_ids,omitempty"`
+	Deployments          *[]struct {
+		AddedPermissions   []string                `json:"added_permissions"`
+		CurrentPermissions []string                `json:"current_permissions"`
+		DeploymentPlan     DeploymentPlan          `json:"deployment_plan"`
+		Fabric             *string                 `json:"fabric,omitempty"`
+		Parameters         *map[string]interface{} `json:"parameters,omitempty"`
+		Placement          string                  `json:"placement"`
+		RemovedPermissions []string                `json:"removed_permissions"`
+		SourceDeploymentId string                  `json:"source_deployment_id"`
+		SourceDigest       string                  `json:"source_digest"`
+
+		// SourceWasStopped Rollback preserves the source deployment's stopped state instead of starting it.
+		SourceWasStopped *bool              `json:"source_was_stopped,omitempty"`
+		Variants         *map[string]string `json:"variants,omitempty"`
+		WorkloadIndex    int                `json:"workload_index"`
+	} `json:"deployments,omitempty"`
+	Diagnostics            []Diagnostic                    `json:"diagnostics"`
+	InstalledDevices       []RecipeUpdateDevice            `json:"installed_devices"`
+	PlanDigest             string                          `json:"plan_digest"`
+	Ready                  bool                            `json:"ready"`
+	RemovedPermissions     []string                        `json:"removed_permissions"`
+	RepositoryId           string                          `json:"repository_id"`
+	RunningDeployments     []RecipeUpdateRunningDeployment `json:"running_deployments"`
+	TargetDigest           string                          `json:"target_digest"`
+	TargetVersion          string                          `json:"target_version"`
+	UnchangedDeploymentIds *[]string                       `json:"unchanged_deployment_ids,omitempty"`
+	UpToDate               bool                            `json:"up_to_date"`
+}
+
+// RecipeRepositoryUpdateRequest defines model for RecipeRepositoryUpdateRequest.
+type RecipeRepositoryUpdateRequest struct {
+	PlanDigest   string `json:"plan_digest"`
+	TargetDigest string `json:"target_digest"`
 }
 
 // RecipeRepositoryVersion defines model for RecipeRepositoryVersion.
@@ -1501,8 +1704,11 @@ type RecipeUpdatePlan struct {
 		RemovedPermissions []string                `json:"removed_permissions"`
 		SourceDeploymentId string                  `json:"source_deployment_id"`
 		SourceDigest       string                  `json:"source_digest"`
-		Variants           *map[string]string      `json:"variants,omitempty"`
-		WorkloadIndex      int                     `json:"workload_index"`
+
+		// SourceWasStopped Rollback preserves the source deployment's stopped state instead of starting it.
+		SourceWasStopped *bool              `json:"source_was_stopped,omitempty"`
+		Variants         *map[string]string `json:"variants,omitempty"`
+		WorkloadIndex    int                `json:"workload_index"`
 	} `json:"deployments,omitempty"`
 	Diagnostics            []Diagnostic                    `json:"diagnostics"`
 	InstalledDevices       []RecipeUpdateDevice            `json:"installed_devices"`
@@ -1512,7 +1718,11 @@ type RecipeUpdatePlan struct {
 	RepositoryId           *string                         `json:"repository_id,omitempty"`
 	RunningDeployments     []RecipeUpdateRunningDeployment `json:"running_deployments"`
 	TargetDigest           *string                         `json:"target_digest,omitempty"`
+	TargetVersion          *string                         `json:"target_version,omitempty"`
 	UnchangedDeploymentIds *[]string                       `json:"unchanged_deployment_ids,omitempty"`
+
+	// UpToDate Every installed device has completed package acquisition and any required source preparation for the frozen saved settings.
+	UpToDate *bool `json:"up_to_date,omitempty"`
 }
 
 // RecipeUpdateRunningDeployment defines model for RecipeUpdateRunningDeployment.
@@ -1551,6 +1761,17 @@ type RecipeUpdateStatus struct {
 
 // RecipeUpdateStatusState defines model for RecipeUpdateStatus.State.
 type RecipeUpdateStatusState string
+
+// ResolvedSourceConfiguration defines model for ResolvedSourceConfiguration.
+type ResolvedSourceConfiguration struct {
+	Edits []struct {
+		End         int    `json:"end"`
+		Replacement string `json:"replacement"`
+		Start       int    `json:"start"`
+	} `json:"edits"`
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+}
 
 // StoragePreview defines model for StoragePreview.
 type StoragePreview struct {
@@ -1610,6 +1831,58 @@ type TransferRequest struct {
 	DestPath   *string            `json:"dest_path,omitempty"`
 	SourceNode openapi_types.UUID `json:"source_node"`
 }
+
+// UpstreamExecutionPreview Pinned upstream lifecycle, environment and explicit runtime-configuration adaptations approved for this node.
+type UpstreamExecutionPreview struct {
+	Configuration *[]ResolvedSourceConfiguration `json:"configuration,omitempty"`
+	Environment   *map[string]string             `json:"environment,omitempty"`
+	Execution     struct {
+		AuxiliaryContainers *[]string `json:"auxiliaryContainers,omitempty"`
+		Configuration       *[]struct {
+			Edits []struct {
+				Command   *string                                                   `json:"command,omitempty"`
+				End       int                                                       `json:"end"`
+				Flag      *string                                                   `json:"flag,omitempty"`
+				Format    UpstreamExecutionPreviewExecutionConfigurationEditsFormat `json:"format"`
+				Indirect  *bool                                                     `json:"indirect,omitempty"`
+				Parameter *string                                                   `json:"parameter,omitempty"`
+				Prefix    *string                                                   `json:"prefix,omitempty"`
+				Start     int                                                       `json:"start"`
+				Suffix    *string                                                   `json:"suffix,omitempty"`
+				Template  *string                                                   `json:"template,omitempty"`
+				Variable  *string                                                   `json:"variable,omitempty"`
+			} `json:"edits"`
+			Path   string `json:"path"`
+			Sha256 string `json:"sha256"`
+		} `json:"configuration,omitempty"`
+		Containers []string `json:"containers"`
+
+		// CoordinatorRank Only the head executes start/stop; other ranks finish their per-node install and independently observe its service.
+		CoordinatorRank *int                                        `json:"coordinatorRank,omitempty"`
+		EnvFile         *string                                     `json:"envFile,omitempty"`
+		EnvFormat       *UpstreamExecutionPreviewExecutionEnvFormat `json:"envFormat,omitempty"`
+		EnvTemplate     *string                                     `json:"envTemplate,omitempty"`
+		Install         *[][]string                                 `json:"install,omitempty"`
+		LogFile         *string                                     `json:"logFile,omitempty"`
+		Start           []string                                    `json:"start"`
+		Stop            []string                                    `json:"stop"`
+	} `json:"execution"`
+	NodeId   openapi_types.UUID `json:"node_id"`
+	NodeName *string            `json:"node_name,omitempty"`
+	Rank     int                `json:"rank"`
+	Source   struct {
+		Path      *string `json:"path,omitempty"`
+		Procedure *string `json:"procedure,omitempty"`
+		Revision  string  `json:"revision"`
+		Url       string  `json:"url"`
+	} `json:"source"`
+}
+
+// UpstreamExecutionPreviewExecutionConfigurationEditsFormat defines model for UpstreamExecutionPreview.Execution.Configuration.Edits.Format.
+type UpstreamExecutionPreviewExecutionConfigurationEditsFormat string
+
+// UpstreamExecutionPreviewExecutionEnvFormat defines model for UpstreamExecutionPreview.Execution.EnvFormat.
+type UpstreamExecutionPreviewExecutionEnvFormat string
 
 // ID defines model for ID.
 type ID = string
@@ -1831,6 +2104,9 @@ type StartRecipeRepositoryReplacementJSONRequestBody = RecipeRepositoryReplaceme
 // PlanRecipeRepositoryReplacementJSONRequestBody defines body for PlanRecipeRepositoryReplacement for application/json ContentType.
 type PlanRecipeRepositoryReplacementJSONRequestBody = RecipeRepositoryReplacementPlanRequest
 
+// StartRecipeRepositoryUpdateJSONRequestBody defines body for StartRecipeRepositoryUpdate for application/json ContentType.
+type StartRecipeRepositoryUpdateJSONRequestBody = RecipeRepositoryUpdateRequest
+
 // ImportRecipeJSONRequestBody defines body for ImportRecipe for application/json ContentType.
 type ImportRecipeJSONRequestBody = RecipeImport
 
@@ -1878,6 +2154,9 @@ type ServerInterface interface {
 
 	// (GET /recipe-assistant/codex/status)
 	GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /recipe-assistant/providers)
+	ListRecipeAssistantProviders(w http.ResponseWriter, r *http.Request)
 
 	// (POST /recipe-assistant/providers/{id}/test)
 	TestRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, id ID)
@@ -1953,6 +2232,12 @@ type ServerInterface interface {
 
 	// (POST /recipe-repositories/{id}/replacements/plan)
 	PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /recipe-repositories/{id}/updates)
+	StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /recipe-repositories/{id}/updates/plan)
+	PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string)
 
 	// (GET /recipes)
 	ListRecipes(w http.ResponseWriter, r *http.Request)
@@ -2041,6 +2326,11 @@ func (_ Unimplemented) ListRecipeAssistantCodexModels(w http.ResponseWriter, r *
 
 // (GET /recipe-assistant/codex/status)
 func (_ Unimplemented) GetRecipeAssistantCodexStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /recipe-assistant/providers)
+func (_ Unimplemented) ListRecipeAssistantProviders(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2166,6 +2456,16 @@ func (_ Unimplemented) StartRecipeRepositoryReplacement(w http.ResponseWriter, r
 
 // (POST /recipe-repositories/{id}/replacements/plan)
 func (_ Unimplemented) PlanRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-repositories/{id}/updates)
+func (_ Unimplemented) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /recipe-repositories/{id}/updates/plan)
+func (_ Unimplemented) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2428,6 +2728,20 @@ func (siw *ServerInterfaceWrapper) GetRecipeAssistantCodexStatus(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRecipeAssistantCodexStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecipeAssistantProviders operation middleware
+func (siw *ServerInterfaceWrapper) ListRecipeAssistantProviders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecipeAssistantProviders(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3489,6 +3803,58 @@ func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryReplacement(w http.Respon
 	handler.ServeHTTP(w, r)
 }
 
+// StartRecipeRepositoryUpdate operation middleware
+func (siw *ServerInterfaceWrapper) StartRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRecipeRepositoryUpdate(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanRecipeRepositoryUpdate operation middleware
+func (siw *ServerInterfaceWrapper) PlanRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanRecipeRepositoryUpdate(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecipes operation middleware
 func (siw *ServerInterfaceWrapper) ListRecipes(w http.ResponseWriter, r *http.Request) {
 
@@ -3994,6 +4360,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/recipe-assistant/codex/status", wrapper.GetRecipeAssistantCodexStatus)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/recipe-assistant/providers", wrapper.ListRecipeAssistantProviders)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipe-assistant/providers/{id}/test", wrapper.TestRecipeAssistantProvider)
 	})
 	r.Group(func(r chi.Router) {
@@ -4067,6 +4436,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/recipe-repositories/{id}/replacements/plan", wrapper.PlanRecipeRepositoryReplacement)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/updates", wrapper.StartRecipeRepositoryUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/recipe-repositories/{id}/updates/plan", wrapper.PlanRecipeRepositoryUpdate)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/recipes", wrapper.ListRecipes)

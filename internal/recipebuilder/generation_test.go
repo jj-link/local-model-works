@@ -62,9 +62,17 @@ func TestGenerateProposalBindsDraftAndProviderVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	provider := providerFunc(func(context.Context, recipeassistant.Request, func(string)) (recipeassistant.Result, error) {
+	provider := providerFunc(func(ctx context.Context, request recipeassistant.Request, _ func(string)) (recipeassistant.Result, error) {
 		called = true
-		return recipeassistant.Result{Manifest: json.RawMessage(`{}`), Files: []recipeassistant.File{{Path: "generated/start.sh", Content: "echo safe\n"}}}, nil
+		source, err := request.ReadSource(ctx, "README.md")
+		if err != nil {
+			return recipeassistant.Result{}, err
+		}
+		return recipeassistant.Result{Procedures: []recipeassistant.Procedure{{
+			ID: "documented", Name: "Documented launch", Description: "The retained documented launch procedure",
+			Manifest: json.RawMessage(`{}`), Files: []recipeassistant.File{{Path: "generated/start.sh", Content: "echo safe\n"}},
+			Evidence: []recipeassistant.Evidence{{Path: "runtime", SourcePath: source.Path, SHA256: source.SHA256, SourceCommit: source.SourceCommit, StartLine: 1, EndLine: 1}},
+		}}}, nil
 	})
 	if _, err := service.GenerateProposal(ctx, draft.ID, reserved.Operation.ID, "", GenerationApproval{DraftVersion: draft.Version}, provider, nil); errorCode(err) != "recipe.generation_consent_stale" {
 		t.Fatalf("stale consent error = %v", err)
@@ -198,5 +206,141 @@ func TestApprovedGenerationRejectsChangedSourceBeforeProviderCall(t *testing.T) 
 	}
 	if current.Operation != nil || current.State == "analyzing" {
 		t.Fatalf("corrupt evidence stranded work: %+v", current)
+	}
+}
+
+func TestProcedureAcceptanceSeparatesDraftsAndReplaysWithoutDuplicates(t *testing.T) {
+	service, draft := foundationDraft(t)
+	ctx := context.Background()
+	approval := generationApprovalForTest(t, service, draft, "")
+	reserved, err := service.ReserveOperation(ctx, draft.ID, draft.Version, PhaseGenerate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := service.GenerateProposal(ctx, draft.ID, reserved.Operation.ID, "", approval, providerFunc(func(ctx context.Context, request recipeassistant.Request, _ func(string)) (recipeassistant.Result, error) {
+		source, err := request.ReadSource(ctx, "helper.sh")
+		if err != nil {
+			return recipeassistant.Result{}, err
+		}
+		procedure := recipeassistant.Procedure{ID: "single", Name: "Single node", Description: "Documented single-node launch", Manifest: json.RawMessage(`{"assets":["helper.sh"]}`),
+			Files:    []recipeassistant.File{{Path: source.Path, Content: source.Content}},
+			Evidence: []recipeassistant.Evidence{{Path: "runtime", SourcePath: source.Path, SHA256: source.SHA256, SourceCommit: source.SourceCommit, StartLine: 1, EndLine: 1}}}
+		second := procedure
+		second.ID, second.Name, second.Description = "cluster", "Cluster", "Documented cluster launch"
+		second.Questions = []recipeassistant.Question{{ID: "topology", Path: "compatibility.nodeCount", Question: "How many hosts does your cluster have?"}}
+		return recipeassistant.Result{Procedures: []recipeassistant.Procedure{procedure, second}}, nil
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := service.AcceptProposal(ctx, draft.ID, generated.Version, generated.Proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted.RelatedDraftIDs) != 1 || accepted.Review == nil || accepted.Review.ID != "single" {
+		t.Fatalf("missing accepted procedure siblings: %+v", accepted)
+	}
+	sibling, err := service.Get(ctx, accepted.RelatedDraftIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sibling.Review.ID != "cluster" || sibling.ParentDraftID != draft.ID || sibling.State != "needs_input" || len(sibling.Questions) != 1 {
+		t.Fatalf("sibling lost its independent review/questions: %+v", sibling)
+	}
+	for _, item := range []*Draft{accepted, sibling} {
+		if len(item.SelectedAssets) != 1 || item.SelectedAssets[0].Origin != OriginSource {
+			t.Fatalf("unchanged upstream helper was rewritten: %+v", item.SelectedAssets)
+		}
+		if _, body, err := service.ReadOwnedFile(ctx, item.ID, "helper.sh", item.SelectedAssets[0].SHA256, ""); err != nil || string(body) != "original\n" {
+			t.Fatalf("source helper not retained: %q %v", body, err)
+		}
+	}
+	firstManifest, _ := recipe.Parse(accepted.Manifest)
+	secondManifest, _ := recipe.Parse(sibling.Manifest)
+	firstID, _, _, _ := recipe.RepositoryIdentity(*firstManifest.Metadata.Source)
+	secondID, _, _, _ := recipe.RepositoryIdentity(*secondManifest.Metadata.Source)
+	if firstID == secondID {
+		t.Fatal("distinct procedures collide in the catalog")
+	}
+	replayed, err := service.AcceptProposal(ctx, draft.ID, generated.Version, generated.Proposal.ID)
+	if err != nil || len(replayed.RelatedDraftIDs) != 1 || replayed.RelatedDraftIDs[0] != sibling.ID {
+		t.Fatalf("acceptance replay duplicated or lost siblings: %+v %v", replayed, err)
+	}
+	updated, err := service.Update(ctx, sibling.ID, sibling.Version, UpdateRequest{Manifest: sibling.Manifest, SelectedAssets: sibling.SelectedAssets, Answers: []Answer{{QuestionID: "topology", Answer: "2"}}})
+	if err != nil || updated.Questions[0].Answer != "2" {
+		t.Fatalf("independent answer failed: %+v %v", updated, err)
+	}
+	unchanged, err := service.Get(ctx, accepted.ID)
+	if err != nil || unchanged.Version != accepted.Version || len(unchanged.Questions) != 0 {
+		t.Fatalf("sibling edit mutated first procedure: %+v %v", unchanged, err)
+	}
+}
+
+func TestUpstreamProposalRequiresExactTargetEvidence(t *testing.T) {
+	manifest := json.RawMessage(`{"workloads":[{"upstream":{"start":["./start.sh"],"stop":["./stop.sh"],"containers":["upstream"]}}]}`)
+	result := recipeassistant.Result{Manifest: manifest}
+	request := recipeassistant.Request{Mode: "update", SourcePins: map[string]any{"commit": "new"}, Context: []recipeassistant.ContextFile{{Path: "README.md", SHA256: "hash", Origin: OriginSource, SourceCommit: "new", Content: "./start.sh starts upstream; ./stop.sh stops it\n"}}}
+	for _, field := range []string{"start", "stop", "containers"} {
+		result.Evidence = append(result.Evidence, recipeassistant.Evidence{Path: "workloads[0].upstream." + field, SourcePath: "README.md", SHA256: "hash", SourceCommit: "new", StartLine: 1, EndLine: 1})
+	}
+	if err := validateProposalResult(result, request, nil); err != nil {
+		t.Fatalf("exact target citations rejected: %v", err)
+	}
+	result.Evidence[0].SourceCommit = "old"
+	if errorCode(validateProposalResult(result, request, nil)) != "recipe.proposal_evidence_invalid" {
+		t.Fatal("old revision authorized the target command")
+	}
+	result.Evidence[0].SourceCommit = "new"
+	result.Evidence[0].Path = "workloads[0]"
+	if errorCode(validateProposalResult(result, request, nil)) != "recipe.proposal_evidence_invalid" {
+		t.Fatal("ancestor citation authorized an uncited command")
+	}
+	result.Questions = []recipeassistant.Question{{ID: "start", Path: "workloads[0].upstream.start", Question: "Which upstream start command?", Answer: "./start.sh"}}
+	if errorCode(validateProposalResult(result, request, nil)) != "recipe.proposal_evidence_invalid" {
+		t.Fatal("answered question authorized a prepopulated command")
+	}
+	result.Manifest = json.RawMessage(`{"workloads":[{"upstream":{"stop":["./stop.sh"],"containers":["upstream"]}}]}`)
+	if err := validateProposalResult(result, request, nil); err != nil {
+		t.Fatalf("unset fact with explicit question rejected: %v", err)
+	}
+	result.Questions = nil
+	if errorCode(validateProposalResult(result, request, nil)) != "recipe.proposal_question_invalid" {
+		t.Fatal("missing command escaped the question gate")
+	}
+}
+
+func TestExistingRecipePreviewIncludesPinnedSourceAndRefinement(t *testing.T) {
+	service, draft := foundationDraft(t)
+	ctx := context.Background()
+	change := ChangeContext{Kind: "repair", BaseRecipeDigest: "saved", BaseCommit: draft.ResolvedCommit, BaseManifest: draft.Manifest, BaseSourceStatus: "available"}
+	changeJSON, _ := json.Marshal(change)
+	pending := Proposal{ID: "pending", Manifest: json.RawMessage(`{"metadata":{"description":"refine this suggestion"}}`), Questions: []Question{{ID: "start", Path: "workloads[0].upstream.start", Question: "Which documented start procedure?"}}, Diagnostics: []Diagnostic{{ID: "private", Message: "unselected diagnostic"}}}
+	proposalJSON, _ := json.Marshal(pending)
+	if _, err := service.db.ExecContext(ctx, `UPDATE recipe_drafts SET change_context=?, proposal=?, questions=? WHERE id=?`, string(changeJSON), string(proposalJSON), `[{"id":"stop","question":"Which stop procedure?","answer":"Use documented stop.sh"}]`, draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	request, err := service.GenerationRequest(ctx, draft.ID, draft.Version, "refine", "model", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Mode != "repair" || len(request.Context) != 1 || request.Context[0].Content != "original\n" || request.Context[0].SourceCommit != draft.ResolvedCommit {
+		t.Fatalf("existing recipe request lost pinned source: %+v", request)
+	}
+	var refinement recipeassistant.Result
+	if err := json.Unmarshal(request.PendingProposal, &refinement); err != nil || string(refinement.Manifest) != string(pending.Manifest) || len(refinement.Questions) != 1 {
+		t.Fatalf("pending suggestion unavailable for refinement: %s %v", request.PendingProposal, err)
+	}
+	if len(request.Questions) != 1 || request.Questions[0].Answer != "Use documented stop.sh" || len(request.Diagnostics) != 0 || len(request.RunExcerpts) != 0 {
+		t.Fatalf("answers lost or private diagnostics/logs attached: %+v", request)
+	}
+	approval := GenerationApproval{Request: request}
+	before, err := approval.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval.Request.PendingProposal = json.RawMessage(`{"manifest":{}}`)
+	after, err := approval.Digest()
+	if err != nil || before == after {
+		t.Fatal("refinement content escaped consent digest")
 	}
 }

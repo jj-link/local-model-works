@@ -212,7 +212,10 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, refresh bool) (*Pla
 			}
 			specs = append(specs, spec)
 		}
-		images := []recipe.Image{manifest.Workloads[plan.WorkloadIndex].Image}
+		var images []recipe.Image
+		if manifest.Workloads[plan.WorkloadIndex].Upstream == nil {
+			images = append(images, manifest.Workloads[plan.WorkloadIndex].Image)
+		}
 		if manifest.Prepare != nil {
 			images = append(images, manifest.Prepare.Image)
 		}
@@ -544,7 +547,11 @@ func (s *Service) selectPeer(ctx context.Context, r *Resource, creds []Credentia
 			continue
 		}
 		node, err := s.q.GetNode(ctx, placement.NodeID)
-		if err != nil || !hasFeature(nodeReport(node)) || nodeReport(node).PeerListen == "" {
+		if err != nil {
+			continue
+		}
+		report := nodeReport(node)
+		if !hasFeature(report) || !validPeerAddress(report.PeerListen) {
 			continue
 		}
 		if refresh {

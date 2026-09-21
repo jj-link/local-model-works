@@ -30,7 +30,8 @@
           "properties": {
             "url": { "type": "string", "format": "uri" },
             "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            "path": { "type": "string", "pattern": "^\\S+$", "maxLength": 512 }
+            "path": { "type": "string", "pattern": "^\\S+$", "maxLength": 512 },
+            "procedure": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$", "description": "Stable identifier of a separately documented upstream launch procedure." }
           }
         }
       }
@@ -57,7 +58,8 @@
           "additionalProperties": false,
           "properties": {
             "transport": { "type": "string", "enum": ["roce", "tcp"] },
-            "minBandwidthGbps": { "type": "integer", "minimum": 0 }
+            "minBandwidthGbps": { "type": "integer", "minimum": 0 },
+            "sharedGIDIndex": { "type": "boolean" }
           }
         }
       }
@@ -71,7 +73,7 @@
     "parameters": {
       "type": "array",
       "items": { "$ref": "#/$defs/parameter" },
-      "maxItems": 64
+      "maxItems": 512
     },
     "workloads": {
       "type": "array",
@@ -89,11 +91,139 @@
     },
     "verify": { "$ref": "#/$defs/extension" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "workloads": { "contains": { "required": ["upstream"] } } },
+        "required": ["workloads"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": { "maxItems": 0 },
+          "prepare": false,
+          "verify": false,
+          "metadata": {
+            "properties": {
+              "source": {
+                "properties": {
+                  "path": { "anyOf": [{ "const": "." }, { "$ref": "#/$defs/upstreamPath" }] }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "templateString": {
       "type": "string",
       "maxLength": 8192,
-      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.(?:address|node_address|interface|rdma_device|gid_index)|artifact\\.[a-z0-9][a-z0-9_]*\\.path|setting\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
+      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.(?:address|node_address|interface|rdma_device|gid_index)|cluster\\.node\\.(?:0|[1-9][0-9]*)\\.(?:id|address|fabric\\.(?:node_addr|interface|rdma_device|gid_index))|artifact\\.[a-z0-9][a-z0-9_]*\\.path|setting\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
+    },
+    "upstreamPath": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+      "not": { "pattern": "(^|/)\\.\\.?(/|$)" }
+    },
+    "upstreamString": {
+      "allOf": [
+        { "$ref": "#/$defs/templateString" },
+        { "not": { "pattern": "[\\x00-\\x1f\\x7f-\\x9f]|\\$\\{artifact\\.|(^|[/\\\\=\\s])\\.\\.([/\\\\\\s]|$)" } }
+      ]
+    },
+    "upstreamArgv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "prefixItems": [{ "allOf": [{ "$ref": "#/$defs/upstreamString" }, { "pattern": "\\S" }] }],
+      "items": { "$ref": "#/$defs/upstreamString" }
+    },
+    "upstreamContainers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "allOf": [{ "$ref": "#/$defs/upstreamString" }, { "minLength": 1, "pattern": "^(?:[A-Za-z0-9]|\\$\\{[^}]+\\})(?:[A-Za-z0-9_.-]|\\$\\{[^}]+\\})*$" }] }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "stop", "containers"],
+      "properties": {
+        "configuration": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/sourceConfigurationFile" } },
+        "install": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/upstreamArgv" } },
+        "installByRank": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^(0|[1-9][0-9]*)$" },
+          "additionalProperties": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/upstreamArgv" } }
+        },
+        "start": { "$ref": "#/$defs/upstreamArgv" },
+        "stop": { "$ref": "#/$defs/upstreamArgv" },
+        "containers": { "$ref": "#/$defs/upstreamContainers" },
+        "coordinatorRank": { "type": "integer", "const": 0, "description": "The authored coordinator runs on the API head (rank zero); other ranks independently observe it." },
+        "containersByRank": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^(0|[1-9][0-9]*)$" },
+          "additionalProperties": { "$ref": "#/$defs/upstreamContainers" }
+        },
+        "auxiliaryContainers": { "$ref": "#/$defs/upstreamContainers" },
+        "envFile": { "$ref": "#/$defs/upstreamPath" },
+        "envTemplate": { "$ref": "#/$defs/upstreamPath" },
+        "envFormat": { "type": "string", "enum": ["shell", "literal"] },
+        "logFile": { "$ref": "#/$defs/upstreamPath" }
+      },
+      "dependentRequired": { "envTemplate": ["envFile"], "envFile": ["envFormat"], "envFormat": ["envFile"] }
+    },
+    "sourceConfigurationFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "edits"],
+      "properties": {
+        "path": { "allOf": [{ "$ref": "#/$defs/upstreamPath" }, { "maxLength": 1024 }] },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "edits": { "type": "array", "minItems": 1, "maxItems": 2048, "items": { "$ref": "#/$defs/sourceConfigurationEdit" } }
+      }
+    },
+    "sourceConfigurationEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "format"],
+      "oneOf": [{ "required": ["parameter"] }, { "required": ["template"] }, { "required": ["variable"] }, { "required": ["command"] }],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+        "end": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+        "parameter": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,62}$" },
+        "template": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "maxLength": 256 },
+        "command": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "maxLength": 256 },
+        "indirect": { "type": "boolean" },
+        "prefix": { "type": "string", "maxLength": 1048576 },
+        "suffix": { "type": "string", "maxLength": 1048576 },
+        "format": { "type": "string", "enum": ["shell", "shell-word", "shell-reparse", "shell-heredoc", "shell-quoted-heredoc", "shell-double-quoted", "shell-compose", "json-compose", "flag", "flag-compose", "argv", "argv-heredoc", "argv-quoted-heredoc"] },
+        "flag": { "type": "string", "pattern": "^--?[A-Za-z0-9][A-Za-z0-9_-]*$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "format": { "enum": ["flag", "flag-compose"] } } },
+          "then": { "required": ["flag"] },
+          "else": { "properties": { "flag": false } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "shell-word" } } },
+          "then": { "anyOf": [{ "required": ["variable"] }, { "required": ["command"] }] },
+          "else": { "properties": { "variable": false, "command": false, "prefix": false, "suffix": false, "indirect": false } }
+        }
+        ,{
+          "if": { "required": ["command"] },
+          "then": { "properties": { "prefix": false, "suffix": false, "indirect": false } }
+        }
+      ]
     },
     "variantSource": {
 
@@ -171,6 +301,13 @@
         "type": { "type": "string", "enum": ["int", "float", "bool", "string", "enum"] },
         "default": {},
         "description": { "type": "string", "maxLength": 1000 },
+        "label": { "type": "string", "maxLength": 256 },
+        "group": { "type": "string", "maxLength": 256 },
+        "format": { "type": "string", "enum": ["", "argv"] },
+        "optional": { "type": "boolean", "description": "Omission preserves the upstream default instead of requiring an override." },
+        "forbiddenArgs": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "maxLength": 128, "pattern": "^--?[A-Za-z0-9][A-Za-z0-9_-]*$" } },
+        "argvPolicy": { "type": "string", "enum": ["", "docker"] },
+        "forbiddenEnv": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "maxLength": 256, "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" } },
         "sensitive": { "type": "boolean", "description": "Redact this parameter's value from selected AI assistance log excerpts." },
         "min": { "type": "number" },
         "max": { "type": "number" },
@@ -239,8 +376,33 @@
     "workload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "command", "args", "resources"],
+      "if": { "required": ["upstream"] },
+      "allOf": [
+        {
+          "if": { "required": ["upstream"], "properties": { "upstream": { "required": ["coordinatorRank"] } } },
+          "then": { "properties": { "startOrder": { "const": "parallel" } } }
+        }
+      ],
+      "then": {
+        "required": ["permissions"],
+        "properties": {
+          "image": false,
+          "command": false,
+          "args": false,
+          "resources": false,
+          "devices": false,
+          "networkMode": false,
+          "hostPreparation": false,
+          "permissions": { "contains": { "const": "host.upstream-exec" } },
+          "env": { "additionalProperties": { "$ref": "#/$defs/upstreamString" } },
+          "ranks": { "uniqueItems": true, "items": { "maximum": 63 } },
+          "readiness": { "required": ["httpGet"], "properties": { "exec": false } },
+          "verify": { "required": ["httpGet"], "properties": { "exec": false } }
+        }
+      },
+      "else": { "required": ["image", "command", "args", "resources"] },
       "properties": {
+        "upstream": { "$ref": "#/$defs/upstream" },
         "match": {
           "type": "object",
           "additionalProperties": false,
@@ -272,7 +434,7 @@
         "env": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/templateString" },
-          "maxProperties": 128,
+          "maxProperties": 256,
           "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
         },
         "ports": {
@@ -350,7 +512,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["network.host", "devices.rdma", "memory.shm-large", "rootfs.write", "host.memory-tuning"]
+            "enum": ["network.host", "devices.rdma", "memory.shm-large", "rootfs.write", "host.memory-tuning", "host.upstream-exec"]
           },
           "uniqueItems": true
         }

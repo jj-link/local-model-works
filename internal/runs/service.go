@@ -55,12 +55,12 @@ func (s State) Terminal() bool {
 
 // transitions is the allowed state graph.
 var transitions = map[State][]State{
-	Queued:     {Planning, Waiting, Running, Cancelling, Failed},
-	Planning:   {Waiting, Running, Verifying, Cancelling, Failed},
-	Waiting:    {Running, Cancelling, Failed},
+	Queued:     {Planning, Waiting, Running, Cancelling, Failed, Interrupted},
+	Planning:   {Waiting, Running, Verifying, Cancelling, Failed, Interrupted},
+	Waiting:    {Running, Cancelling, Failed, Interrupted},
 	Running:    {Verifying, Cancelling, Failed, Interrupted},
-	Verifying:  {Succeeded, Failed, Cancelling},
-	Cancelling: {Cancelled, Failed},
+	Verifying:  {Succeeded, Failed, Cancelling, Interrupted},
+	Cancelling: {Cancelled, Failed, Interrupted},
 }
 
 // IsOneShot reports whether a run kind cannot outlive its work: on
@@ -347,6 +347,20 @@ func (s *Service) MarkInterrupted(ctx context.Context) (int, error) {
 // double-acquire fails the insert with a constraint error, which the
 // caller rolls back as a conflict.
 func (s *Service) AcquireLeases(ctx context.Context, qtx *db.Queries, ownerKind, ownerID string, resources []string) error {
+	active, err := qtx.ActiveLeasesWithOwners(ctx)
+	if err != nil {
+		return fmt.Errorf("read resource leases: %w", err)
+	}
+	for _, requested := range resources {
+		for _, held := range active {
+			if held.OwnerKind == ownerKind && held.OwnerID == ownerID {
+				continue
+			}
+			if ResourcesConflict(requested, held.Resource) {
+				return fmt.Errorf("lease %s conflicts with %s held by %s", requested, held.Resource, held.OwnerID)
+			}
+		}
+	}
 	for _, r := range resources {
 		if err := qtx.AcquireLease(ctx, db.AcquireLeaseParams{
 			Resource: r, OwnerKind: ownerKind, OwnerID: ownerID,
@@ -393,7 +407,7 @@ func (s *Service) ResourcesOf(ctx context.Context, ownerKind, ownerID string) Re
 			continue
 		}
 		switch parts[0] {
-		case "node":
+		case "node", "upstream-node":
 			add(&res.Nodes, parts[1])
 		case "gpu":
 			// Keep the full lease identity (gpu:<node>:<uuid>) so values

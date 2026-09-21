@@ -34,7 +34,8 @@ class EventStream {
   private listeners = new Set<() => void>();
   private handle: StreamHandle | null = null;
   private queryClient: QueryClient | null = null;
-  private lastInvalidate = 0;
+  private pendingQueries = new Set<string>();
+  private invalidateTimer: number | undefined;
   private nextId = 1;
 
   bindQueryClient(qc: QueryClient): void {
@@ -49,6 +50,9 @@ class EventStream {
   stop(): void {
     this.handle?.close();
     this.handle = null;
+    window.clearTimeout(this.invalidateTimer);
+    this.invalidateTimer = undefined;
+    this.pendingQueries.clear();
   }
 
   private ingest(ev: SseEvent): void {
@@ -70,13 +74,16 @@ class EventStream {
 
   private invalidate(type: string): void {
     if (!this.queryClient) return;
-    const now = Date.now();
-    if (now - this.lastInvalidate < INVALIDATE_DEBOUNCE_MS) return;
-    this.lastInvalidate = now;
     const keys = EVENT_TO_QUERY[type.split(".")[0]];
     if (!keys) return;
-    const qc = this.queryClient;
-    for (const k of keys) void qc.invalidateQueries({ queryKey: [k] });
+    for (const key of keys) this.pendingQueries.add(key);
+    if (this.invalidateTimer !== undefined) return;
+    this.invalidateTimer = window.setTimeout(() => {
+      this.invalidateTimer = undefined;
+      const qc = this.queryClient;
+      for (const key of this.pendingQueries) void qc?.invalidateQueries({ queryKey: [key] });
+      this.pendingQueries.clear();
+    }, INVALIDATE_DEBOUNCE_MS);
   }
 
   subscribe = (listener: () => void): (() => void) => {

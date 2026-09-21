@@ -85,8 +85,15 @@ func (a *Agent) handleDownload(ctx context.Context, command *agentv1.DownloadCom
 		return
 	}
 	if command.GetOp() == agentv1.DownloadOp_DOWNLOAD_OP_INSPECT {
+		timeout := 2 * time.Minute
+		if spec.Kind == downloads.ResourceArtifact && spec.SizeBytes != nil && *spec.SizeBytes > 0 {
+			seconds := min(*spec.SizeBytes/(256<<20), int64((30*time.Minute-timeout)/time.Second))
+			timeout += time.Duration(seconds) * time.Second
+		} else if spec.Kind == downloads.ResourceArtifact {
+			timeout = 30 * time.Minute
+		}
 		var cancel context.CancelFunc
-		commandCtx, cancel = context.WithTimeout(commandCtx, 2*time.Minute)
+		commandCtx, cancel = context.WithTimeout(commandCtx, timeout)
 		defer cancel()
 	}
 	report := func(p artifactDownloadProgress) {
@@ -269,18 +276,18 @@ func (a *Agent) inspectDownload(ctx context.Context, spec downloads.ResourceSpec
 			out.IndexDigest, out.ManifestDigest = pinned, child.Digest
 			out.SizeBytes = &child.SizeBytes
 			out.State = downloads.ResourceAvailable
-			return out, nil
+		} else {
+			if info.IndexDigest != pinned || info.ManifestDigest == "" {
+				return out, fmt.Errorf("download.image_manifest_observation_unsupported")
+			}
+			if spec.ManifestDigest != "" && info.ManifestDigest != spec.ManifestDigest {
+				out.State = downloads.ResourceInvalid
+				return out, nil
+			}
+			out.IndexDigest, out.ManifestDigest = info.IndexDigest, info.ManifestDigest
+			out.SizeBytes = &info.SizeBytes
+			out.State = downloads.ResourceAvailable
 		}
-		if info.IndexDigest != pinned || info.ManifestDigest == "" {
-			return out, fmt.Errorf("download.image_manifest_observation_unsupported")
-		}
-		if spec.ManifestDigest != "" && info.ManifestDigest != spec.ManifestDigest {
-			out.State = downloads.ResourceInvalid
-			return out, nil
-		}
-		out.IndexDigest, out.ManifestDigest = info.IndexDigest, info.ManifestDigest
-		out.SizeBytes = &info.SizeBytes
-		out.State = downloads.ResourceAvailable
 	} else {
 		storage, err := runtime.InspectStorage(spec.Destination)
 		if err != nil {

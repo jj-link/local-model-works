@@ -1,3 +1,5 @@
+import type { Accelerator } from "~/lib/api";
+
 // Single source of truth for human state labels, semantic tones, and
 // value formatting. Tones map 1:1 to CSS palette colors.
 
@@ -151,6 +153,23 @@ export function number(n: number | null | undefined, digits = 0): string {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
+}
+
+/** Summarize each distinct vendor/model pair in inventory order. */
+export function acceleratorSummary(accelerators: readonly Pick<Accelerator, "vendor" | "name">[]): string {
+  const groups = new Map<string, { label: string; count: number }>();
+  for (const accelerator of accelerators) {
+    const vendor = accelerator.vendor ?? "";
+    const name = accelerator.name ?? "";
+    const key = JSON.stringify([vendor, name]);
+    const group = groups.get(key);
+    if (group) {
+      group.count += 1;
+    } else {
+      groups.set(key, { label: `${vendor} ${name}`.trim() || "unknown accelerator", count: 1 });
+    }
+  }
+  return Array.from(groups.values(), ({ label, count }) => `${count}× ${label}`).join(" · ");
 }
 
 export function shortId(id: string | null | undefined): string {

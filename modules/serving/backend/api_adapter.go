@@ -8,17 +8,17 @@ func (m *Module) ListDeployments(w http.ResponseWriter, r *http.Request)     { m
 func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request)    { m.create(w, r) }
 func (m *Module) PlanDeployment(w http.ResponseWriter, r *http.Request)      { m.plan(w, r) }
 func (m *Module) GetDeployment(w http.ResponseWriter, r *http.Request, _ ID) { m.get(w, r) }
-func (m *Module) ListLaunchProfiles(w http.ResponseWriter, r *http.Request, _ string) {
-	m.listLaunchProfiles(w, r)
+func (m *Module) ListLaunchProfiles(w http.ResponseWriter, r *http.Request, digest string) {
+	m.listLaunchProfiles(w, r, digest)
 }
-func (m *Module) CreateLaunchProfile(w http.ResponseWriter, r *http.Request, _ string) {
-	m.createLaunchProfile(w, r)
+func (m *Module) CreateLaunchProfile(w http.ResponseWriter, r *http.Request, digest string) {
+	m.createLaunchProfile(w, r, digest)
 }
-func (m *Module) UpdateLaunchProfile(w http.ResponseWriter, r *http.Request, _ string) {
-	m.updateLaunchProfile(w, r)
+func (m *Module) UpdateLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
+	m.updateLaunchProfile(w, r, id)
 }
-func (m *Module) DeleteLaunchProfile(w http.ResponseWriter, r *http.Request, _ string) {
-	m.deleteLaunchProfile(w, r)
+func (m *Module) DeleteLaunchProfile(w http.ResponseWriter, r *http.Request, id string) {
+	m.deleteLaunchProfile(w, r, id)
 }
 func (m *Module) DeploymentLogs(w http.ResponseWriter, r *http.Request, _ ID, _ DeploymentLogsParams) {
 	m.logs(w, r)

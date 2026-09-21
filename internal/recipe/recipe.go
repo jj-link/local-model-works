@@ -14,8 +14,10 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/jj-link/local-model-works/internal/sourceconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,6 +32,7 @@ const (
 	TemplNodeID           = "${node.id}"
 	TemplNodeRank         = "${node.rank}"
 	TemplNodeAddress      = "${node.address}"
+	TemplNodeAccelerators = "${node.accelerators}"
 	TemplFabricAddr       = "${fabric.address}"
 	TemplFabricNodeAddr   = "${fabric.node_address}"
 	TemplFabricInterface  = "${fabric.interface}"
@@ -65,9 +68,10 @@ type Metadata struct {
 }
 
 type Source struct {
-	URL      string `json:"url"`
-	Revision string `json:"revision,omitempty"`
-	Path     string `json:"path,omitempty"`
+	URL       string `json:"url"`
+	Revision  string `json:"revision,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Procedure string `json:"procedure,omitempty"`
 }
 
 // RepositoryIdentity returns the stable identity of a repository-backed
@@ -105,6 +109,12 @@ func RepositoryIdentity(source Source) (id, normalizedURL, normalizedPath string
 		return "", "", "", fmt.Errorf("recipe repository: source path %q escapes the repository", source.Path)
 	}
 	id = "repo-" + hex.EncodeToString([]byte(normalizedURL+"\n"+normalizedPath))
+	if source.Procedure != "" {
+		if strings.TrimSpace(source.Procedure) != source.Procedure || strings.ContainsAny(source.Procedure, "\r\n\x00") {
+			return "", "", "", fmt.Errorf("recipe repository: procedure must be a nonblank single-line identifier")
+		}
+		id += "-" + hex.EncodeToString([]byte(source.Procedure))
+	}
 	return id, normalizedURL, normalizedPath, nil
 }
 
@@ -125,6 +135,7 @@ type AccCompat struct {
 type FabricCompat struct {
 	Transport        string `json:"transport,omitempty"`
 	MinBandwidthGbps int    `json:"minBandwidthGbps,omitempty"`
+	SharedGIDIndex   bool   `json:"sharedGIDIndex,omitempty"`
 }
 
 type Artifact struct {
@@ -182,34 +193,60 @@ type ArtSource struct {
 }
 
 type Parameter struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Default     any      `json:"default,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Sensitive   bool     `json:"sensitive,omitempty"`
-	Min         *float64 `json:"min,omitempty"`
-	Max         *float64 `json:"max,omitempty"`
-	MinLength   *int     `json:"minLength,omitempty"`
-	MaxLength   *int     `json:"maxLength,omitempty"`
-	Enum        []any    `json:"enum,omitempty"`
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	Default       any      `json:"default,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Label         string   `json:"label,omitempty"`
+	Group         string   `json:"group,omitempty"`
+	Format        string   `json:"format,omitempty"`
+	Optional      bool     `json:"optional,omitempty"`
+	ForbiddenArgs []string `json:"forbiddenArgs,omitempty"`
+	ArgvPolicy    string   `json:"argvPolicy,omitempty"`
+	ForbiddenEnv  []string `json:"forbiddenEnv,omitempty"`
+	Sensitive     bool     `json:"sensitive,omitempty"`
+	Min           *float64 `json:"min,omitempty"`
+	Max           *float64 `json:"max,omitempty"`
+	MinLength     *int     `json:"minLength,omitempty"`
+	MaxLength     *int     `json:"maxLength,omitempty"`
+	Enum          []any    `json:"enum,omitempty"`
 }
 
 type Workload struct {
-	Match           *Match            `json:"match,omitempty"`
-	Image           Image             `json:"image"`
-	Command         []string          `json:"command"`
-	Args            []string          `json:"args"`
-	Env             map[string]string `json:"env,omitempty"`
-	Ports           []Port            `json:"ports,omitempty"`
-	Resources       Resources         `json:"resources"`
-	Devices         *Devices          `json:"devices,omitempty"`
-	NetworkMode     string            `json:"networkMode,omitempty"`
-	Readiness       *Probe            `json:"readiness,omitempty"`
-	Verify          *Probe            `json:"verify,omitempty"`
-	Ranks           []int             `json:"ranks,omitempty"`
-	StartOrder      string            `json:"startOrder,omitempty"`
-	HostPreparation *HostPreparation  `json:"hostPreparation,omitempty"`
-	Permissions     []string          `json:"permissions,omitempty"`
+	Match           *Match             `json:"match,omitempty"`
+	Image           Image              `json:"image,omitzero"`
+	Command         []string           `json:"command,omitzero"`
+	Args            []string           `json:"args,omitzero"`
+	Env             map[string]string  `json:"env,omitempty"`
+	Ports           []Port             `json:"ports,omitempty"`
+	Resources       Resources          `json:"resources,omitzero"`
+	Devices         *Devices           `json:"devices,omitempty"`
+	NetworkMode     string             `json:"networkMode,omitempty"`
+	Readiness       *Probe             `json:"readiness,omitempty"`
+	Verify          *Probe             `json:"verify,omitempty"`
+	Ranks           []int              `json:"ranks,omitempty"`
+	StartOrder      string             `json:"startOrder,omitempty"`
+	HostPreparation *HostPreparation   `json:"hostPreparation,omitempty"`
+	Permissions     []string           `json:"permissions,omitempty"`
+	Upstream        *UpstreamExecution `json:"upstream,omitempty"`
+}
+
+// UpstreamExecution preserves the repository's authored lifecycle commands.
+// Commands run with host authority, not in an LMW-managed container sandbox.
+type UpstreamExecution struct {
+	Install             [][]string          `json:"install,omitempty"`
+	InstallByRank       map[int][][]string  `json:"installByRank,omitempty"`
+	Start               []string            `json:"start"`
+	Stop                []string            `json:"stop"`
+	Containers          []string            `json:"containers"`
+	CoordinatorRank     *int                `json:"coordinatorRank,omitempty"`
+	ContainersByRank    map[int][]string    `json:"containersByRank,omitempty"`
+	AuxiliaryContainers []string            `json:"auxiliaryContainers,omitempty"`
+	EnvFile             string              `json:"envFile,omitempty"`
+	EnvTemplate         string              `json:"envTemplate,omitempty"`
+	EnvFormat           string              `json:"envFormat,omitempty"`
+	LogFile             string              `json:"logFile,omitempty"`
+	Configuration       []sourceconfig.File `json:"configuration,omitempty"`
 }
 
 // HostPreparation declares the narrow host-memory controls LMW applies after
@@ -355,6 +392,9 @@ func (m *Manifest) HighRiskPermissions() []string {
 		}
 	}
 	for _, w := range m.Workloads {
+		if w.Upstream != nil {
+			add("host.upstream-exec")
+		}
 		if w.NetworkMode == "host" {
 			add("network.host")
 		}
@@ -421,6 +461,7 @@ type RenderContext struct {
 	NodeID           string
 	NodeRank         int
 	NodeAddress      string
+	NodeAccelerators string // comma-separated UUIDs from this node's reviewed placement
 	FabricAddr       string
 	FabricNodeAddr   string
 	FabricInterface  string
@@ -428,6 +469,17 @@ type RenderContext struct {
 	FabricGIDIndex   string
 	Artifacts        map[string]string // artifact name -> node-local path
 	Settings         map[string]any
+	Nodes            map[int]RenderNode
+}
+
+// RenderNode is a peer's exact reviewed placement and fabric configuration.
+type RenderNode struct {
+	NodeID           string
+	NodeAddress      string
+	FabricNodeAddr   string
+	FabricInterface  string
+	FabricRDMADevice string
+	FabricGIDIndex   string
 }
 
 // Resolve returns the concrete value for a template variable.
@@ -439,6 +491,8 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return fmt.Sprintf("%d", c.NodeRank), true
 	case TemplNodeAddress:
 		return c.NodeAddress, true
+	case TemplNodeAccelerators:
+		return c.NodeAccelerators, c.NodeAccelerators != ""
 	case TemplFabricAddr:
 		return c.FabricAddr, true
 	case TemplFabricNodeAddr:
@@ -449,6 +503,28 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return c.FabricRDMADevice, true
 	case TemplFabricGIDIndex:
 		return c.FabricGIDIndex, true
+	}
+	if rank, field, ok := clusterTemplate(v); ok {
+		node, found := c.Nodes[rank]
+		if !found {
+			return "", false
+		}
+		var value string
+		switch field {
+		case "id":
+			value = node.NodeID
+		case "address":
+			value = node.NodeAddress
+		case "fabric.node_addr":
+			value = node.FabricNodeAddr
+		case "fabric.interface":
+			value = node.FabricInterface
+		case "fabric.rdma_device":
+			value = node.FabricRDMADevice
+		case "fabric.gid_index":
+			value = node.FabricGIDIndex
+		}
+		return value, value != ""
 	}
 	if strings.HasPrefix(v, TemplArtifact) && strings.HasSuffix(v, ".path}") {
 		name := strings.TrimSuffix(strings.TrimPrefix(v, TemplArtifact), ".path}")
@@ -461,6 +537,27 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return formatSettingValue(vv), ok
 	}
 	return "", false
+}
+
+func clusterTemplate(v string) (rank int, field string, ok bool) {
+	const prefix = "${cluster.node."
+	if !strings.HasPrefix(v, prefix) || !strings.HasSuffix(v, "}") {
+		return 0, "", false
+	}
+	rankText, field, found := strings.Cut(v[len(prefix):len(v)-1], ".")
+	if !found {
+		return 0, "", false
+	}
+	rank, err := strconv.Atoi(rankText)
+	if err != nil || rank < 0 || strconv.Itoa(rank) != rankText {
+		return 0, "", false
+	}
+	switch field {
+	case "id", "address", "fabric.node_addr", "fabric.interface", "fabric.rdma_device", "fabric.gid_index":
+		return rank, field, true
+	default:
+		return 0, "", false
+	}
 }
 
 func formatSettingValue(v any) string {
@@ -565,6 +662,11 @@ func (m *Manifest) EffectiveSettings(overrides map[string]any) (map[string]any, 
 			return nil, fmt.Errorf("setting %q invalid: %s", k, d)
 		}
 		out[k] = v
+	}
+	for _, p := range m.Parameters {
+		if _, exists := out[p.Name]; !exists && !p.Optional {
+			return nil, fmt.Errorf("setting %q is required", p.Name)
+		}
 	}
 	return out, nil
 }

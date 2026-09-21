@@ -16,8 +16,7 @@ import (
 
 type assistantProviderSettings struct {
 	Assistant struct {
-		DefaultProviderID string                    `json:"default_provider_id"`
-		Providers         []assistantProviderConfig `json:"providers"`
+		Providers []assistantProviderConfig `json:"providers"`
 	} `json:"assistant"`
 }
 
@@ -41,34 +40,135 @@ func decodeAssistantSettings(stored map[string]any) (assistantProviderSettings, 
 	return settings, err
 }
 
-func findAssistantProvider(settings assistantProviderSettings, id string) *assistantProviderConfig {
-	for i := range settings.Assistant.Providers {
-		if settings.Assistant.Providers[i].ID == id {
-			return &settings.Assistant.Providers[i]
+// assistantProviders is the shared catalog for discovery and selection. Saved
+// local/Codex profiles are deliberately ignored: those identities belong to the
+// deployment service and connected account, not settings.
+func (m *Module) assistantProviders(ctx context.Context, stored map[string]any) ([]assistantProviderConfig, error) {
+	settings, err := decodeAssistantSettings(stored)
+	if err != nil {
+		return nil, err
+	}
+	providers := make([]assistantProviderConfig, 0)
+	if m.env.Deploy != nil {
+		// Service.List omits view errors; enumerate rows so discovery failures
+		// cannot silently turn a real provider into an empty catalog.
+		deployments, err := m.env.Q.ListDeployments(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, deployment := range deployments {
+			if deployment.DesiredState != "running" || deployment.ObservedState != "healthy" {
+				continue
+			}
+			endpoint, err := m.resolveEnrolledLocal(ctx, deployment.ID)
+			if err != nil {
+				var typed *recipeassistant.Error
+				if errors.As(err, &typed) && (typed.Code == "assistant.deployment_not_ready" || typed.Code == "assistant.endpoint_unavailable" || typed.Code == "assistant.deployment_unknown") {
+					continue
+				}
+				return nil, err
+			}
+			providers = append(providers, assistantProviderConfig{ID: "local:" + deployment.ID, Label: endpoint.Model + " (local)", Kind: "local", DeploymentID: deployment.ID, BaseURL: endpoint.URL, Model: endpoint.Model})
 		}
 	}
-	return nil
+	if m.env.RecipeAssistant != nil {
+		account, err := m.env.RecipeAssistant.Account(ctx)
+		if err != nil {
+			var typed *recipeassistant.Error
+			if !errors.As(err, &typed) || typed.Code != "assistant.codex_missing" {
+				return nil, err
+			}
+		} else if account.Connected {
+			models, err := m.env.RecipeAssistant.Models(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, model := range models {
+				label := model.DisplayName
+				if label == "" {
+					label = model.ID
+				}
+				providers = append(providers, assistantProviderConfig{ID: "codex:" + model.ID, Label: label + " (Codex)", Kind: "codex", BaseURL: "codex://saved-account", Model: model.ID})
+			}
+		}
+	}
+	for _, provider := range settings.Assistant.Providers {
+		if provider.Kind != "openai_compatible" {
+			continue
+		}
+		// Reserved prefixes must never let a saved endpoint impersonate a
+		// server-owned deployment or account model, even when unavailable.
+		if provider.ID == "" || strings.HasPrefix(provider.ID, "local:") || strings.HasPrefix(provider.ID, "codex:") {
+			return nil, &recipeassistant.Error{Code: "assistant.provider_invalid", Message: "remote provider ID is empty or uses a reserved prefix"}
+		}
+		for _, existing := range providers {
+			if existing.ID == provider.ID {
+				return nil, &recipeassistant.Error{Code: "assistant.provider_invalid", Message: "remote provider IDs must be unique"}
+			}
+		}
+		if err := recipeassistant.ValidateEndpoint(provider.BaseURL); err != nil {
+			return nil, err
+		}
+		providers = append(providers, provider)
+	}
+	return providers, nil
 }
 
-func (m *Module) testRecipeAssistantProvider(w http.ResponseWriter, r *http.Request) {
-	providerID := chi.URLParam(r, "id")
+func selectAssistantProvider(providers []assistantProviderConfig, id string) (assistantProviderConfig, error) {
+	for _, provider := range providers {
+		if provider.ID == id {
+			return provider, nil
+		}
+	}
+	return assistantProviderConfig{}, &recipeassistant.Error{Code: "assistant.provider_unknown", Message: "selected provider is unknown or unavailable"}
+}
+
+func (m *Module) listRecipeAssistantProviders(w http.ResponseWriter, r *http.Request) {
+	stored, version, err := m.env.Settings.Get(r.Context(), "library")
+	if err != nil {
+		writeAssistantError(w, err)
+		return
+	}
+	providers, err := m.assistantProviders(r.Context(), stored)
+	if err != nil {
+		writeAssistantError(w, err)
+		return
+	}
+	// Keep credentials out of the response, including encrypted secret IDs.
+	type publicProvider struct {
+		ID           string `json:"id"`
+		Label        string `json:"label"`
+		Kind         string `json:"kind"`
+		DeploymentID string `json:"deployment_id,omitempty"`
+		BaseURL      string `json:"base_url,omitempty"`
+		Model        string `json:"model,omitempty"`
+	}
+	public := make([]publicProvider, 0, len(providers))
+	for _, provider := range providers {
+		public = append(public, publicProvider{ID: provider.ID, Label: provider.Label, Kind: provider.Kind, DeploymentID: provider.DeploymentID, BaseURL: provider.BaseURL, Model: provider.Model})
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"version": version, "providers": public})
+}
+
+func (m *Module) testRecipeAssistantProvider(w http.ResponseWriter, r *http.Request, providerID string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	stored, _, err := m.env.Settings.Get(r.Context(), "library")
 	if err != nil {
 		writeAssistantError(w, err)
 		return
 	}
-	settings, err := decodeAssistantSettings(stored)
+	providers, err := m.assistantProviders(ctx, stored)
 	if err != nil {
 		writeAssistantError(w, err)
 		return
 	}
-	selected := findAssistantProvider(settings, providerID)
-	if selected == nil {
-		httpx.WriteJSON(w, http.StatusNotFound, httpx.Error{Code: "assistant.provider_unknown", Message: "saved provider does not exist"})
+	selected, err := selectAssistantProvider(providers, providerID)
+	if err != nil {
+		writeAssistantError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
 	model := selected.Model
 	switch selected.Kind {
 	case "local":
@@ -91,20 +191,9 @@ func (m *Module) testRecipeAssistantProvider(w http.ResponseWriter, r *http.Requ
 		}
 		_, err = provider.Probe(ctx)
 	case "codex":
-		if m.env.RecipeAssistant == nil {
-			err = &recipeassistant.Error{Code: "assistant.codex_unavailable", Message: "Codex provider is unavailable", Retryable: true}
-			break
-		}
-		_, err = m.env.RecipeAssistant.Account(ctx)
-		if err == nil {
-			models, modelsErr := m.env.RecipeAssistant.Models(ctx)
-			err = modelsErr
-			if model == "" && len(models) != 0 {
-				model = models[0].ID
-			}
-		}
+		// Catalog discovery already checked the account and model availability.
 	default:
-		err = &recipeassistant.Error{Code: "assistant.provider_invalid", Message: "saved provider kind is invalid", Retryable: false}
+		err = &recipeassistant.Error{Code: "assistant.provider_invalid", Message: "provider kind is invalid", Retryable: false}
 	}
 	if err != nil {
 		writeAssistantError(w, err)

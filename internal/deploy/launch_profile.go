@@ -104,6 +104,7 @@ func (s *Service) validateLaunchProfileValues(ctx context.Context, digest string
 	if err != nil {
 		return fmt.Errorf("recipe manifest: %w", err)
 	}
+	deferProfileDeviceSettings(m)
 	if _, _, err := effectiveLaunchValues(m, variants, parameters); err != nil {
 		return fmt.Errorf("%w: %v", ErrProfile, err)
 	}
@@ -237,6 +238,14 @@ func resolveSettings(ctx context.Context, s *Service, m *recipe.Manifest, digest
 	} else {
 		variants = req.Variants
 		parameters = req.Parameters
+	}
+	parameters, err := s.deviceSettingDefaults(ctx, m, req, parameters)
+	if err != nil {
+		var sshErr *workerSSHError
+		if errors.As(err, &sshErr) {
+			return nil, nil, err
+		}
+		return nil, nil, fmt.Errorf("%w: %w", ErrProfile, err)
 	}
 	resolvedVariants, resolvedParameters, err := effectiveLaunchValues(m, variants, parameters)
 	if err != nil {
