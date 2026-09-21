@@ -11,3 +11,5 @@ amend-check.sh
 /lmw
 /lmw-agent
 __pycache__/
+/.test-work/
+/.smoke/
