@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
+	"github.com/jj-link/local-model-works/internal/commands"
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/downloads"
@@ -51,6 +53,7 @@ type Service struct {
 	bus              *events.EventBus
 	runs             *runs.Service
 	nodes            NodeSender
+	commands         *commands.Broker
 	downloads        acquisitionService
 	acquisitionLive  map[string]bool
 	acquisitionLocks map[string]*sync.Mutex
@@ -110,6 +113,13 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 	}
 	variants, values, err := resolveSettings(ctx, s, m, req.RecipeDigest, req)
 	if err != nil {
+		var sshErr *workerSSHError
+		if errors.As(err, &sshErr) {
+			plan := &Plan{RecipeDigest: req.RecipeDigest, RecipeName: row.Name, RecipeVersion: row.Version, AcquisitionPolicy: policy,
+				Diagnostics: []diag.Diagnostic{diag.Error("upstream.worker_ssh_unavailable", err.Error())}}
+			plan.Digest = plan.PlanDigest()
+			return plan, nil
+		}
 		return nil, err
 	}
 	plan := &Plan{
@@ -509,6 +519,22 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			if !okc {
 				continue
 			}
+			if m.Compatibility.Fabric != nil && m.Compatibility.Fabric.SharedGIDIndex {
+				gid, matched := int32(-1), 0
+				for _, binding := range fabriccfg.ParseBindings(f.Bindings) {
+					if !nodeSet[binding.NodeID] || binding.GIDIndex == nil {
+						continue
+					}
+					if gid >= 0 && gid != *binding.GIDIndex {
+						okc = false
+					}
+					gid = *binding.GIDIndex
+					matched++
+				}
+				if !okc || matched != len(nodeSet) {
+					continue
+				}
+			}
 			plan.Fabric = &f.ID
 			break
 		}
@@ -518,7 +544,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		}
 	}
 
-	// Ports + endpoint. Per-rank host port = base + rank, base = host || container.
+	// Container ports retain rank offsets; authored coordinator APIs listen only on the head.
 	nodeByID := map[string]*candidate{}
 	for i := range candidates {
 		nodeByID[candidates[i].nodeID] = &candidates[i]
@@ -540,10 +566,12 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			continue
 		}
 		previewedNodes[placement.NodeID] = true
-		plan.Images = append(plan.Images, ImagePreview{
-			NodeID: placement.NodeID, NodeName: placement.NodeName,
-			Reference: w.Image.Reference, Digest: w.Image.Digest, Action: "verify-or-pull",
-		})
+		if w.Upstream == nil {
+			plan.Images = append(plan.Images, ImagePreview{
+				NodeID: placement.NodeID, NodeName: placement.NodeName,
+				Reference: w.Image.Reference, Digest: w.Image.Digest, Action: "verify-or-pull",
+			})
+		}
 		if w.HostPreparation == nil {
 			continue
 		}
@@ -579,6 +607,9 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		}
 		planPorts := map[portKey][]string{} // -> placement node ids
 		for _, pl := range placements {
+			if w.Upstream != nil && w.Upstream.CoordinatorRank != nil && int(pl.Rank) != *w.Upstream.CoordinatorRank {
+				continue
+			}
 			c := nodeByID[pl.NodeID]
 			addr := pl.NodeName
 			if c != nil {
@@ -590,6 +621,9 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 					base = p.Container
 				}
 				hostPort := base + int(pl.Rank)
+				if w.Upstream != nil {
+					hostPort = base
+				}
 				proto := p.Protocol
 				if proto == "" {
 					proto = "tcp"
@@ -699,6 +733,48 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 	}
 
 	plan.Risks = append(plan.Risks, m.HighRiskPermissions()...)
+	if w.Upstream != nil && len(placements) == len(rankList) {
+		upstreamNodes := make(map[int]recipe.RenderNode, len(placements))
+		for _, placement := range placements {
+			node := recipe.RenderNode{NodeID: placement.NodeID}
+			candidate := nodeByID[placement.NodeID]
+			if candidate != nil {
+				node.NodeAddress = firstNonLoopback(candidate.inv)
+			}
+			if candidate == nil || candidate.inv == nil || !slices.Contains(candidate.inv.ProtocolFeatures, runtime.UpstreamProtocolFeature) {
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.authority_unavailable",
+					fmt.Sprintf("node %s must advertise upstream-execution-v1 with node-administrator host execution authority explicitly enabled", placement.NodeName)))
+			}
+			upstreamNodes[int(placement.Rank)] = node
+		}
+		if err := s.previewUpstream(ctx, plan, m, w, upstreamNodes); err != nil {
+			plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.review_incomplete", err.Error()))
+		}
+		s.previewWorkerSSH(ctx, plan)
+		for _, preview := range plan.Upstream {
+			if len(preview.Configuration) == 0 {
+				continue
+			}
+			candidate := nodeByID[preview.NodeID]
+			if candidate == nil || candidate.inv == nil || !slices.Contains(candidate.inv.ProtocolFeatures, runtime.UpstreamConfigurationProtocolFeature) {
+				plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.configuration_unavailable",
+					fmt.Sprintf("node %s needs an updated agent supporting upstream-configuration-v1 before runtime overrides can be applied", preview.NodeName)))
+			}
+		}
+	}
+	for _, placement := range placements {
+		nodeLease := "upstream-node:" + placement.NodeID
+		for resource, owner := range leased {
+			if resource != nodeLease && (w.Upstream == nil || !runs.ResourcesConflict(nodeLease, resource)) {
+				continue
+			}
+			conflict := Conflict{Resource: resource, OccupiedBy: owner.OwnerID}
+			if owner.OwnerKind == "deployment" {
+				conflict.DeploymentID = owner.OwnerID
+			}
+			plan.Conflicts = append(plan.Conflicts, conflict)
+		}
+	}
 
 	plan.Ready = len(placements) == len(rankList) && len(plan.Conflicts) == 0 &&
 		!diag.HasError(plan.Diagnostics)
@@ -864,6 +940,7 @@ type placementSet struct {
 	AcquisitionPolicy    string               `json:"acquisition_policy"`
 	AcquisitionTargets   []downloads.Target   `json:"acquisition_targets,omitempty"`
 	AcquisitionResources []downloads.Resource `json:"acquisition_resources,omitempty"`
+	Upstream             []UpstreamPreview    `json:"upstream,omitempty"`
 }
 
 // ParsePlacementSet decodes a stored placement document; it tolerates the
@@ -896,6 +973,7 @@ func placementSetFromPlan(plan *Plan) placementSet {
 		Workload:          &workload,
 		Variants:          plan.Variants,
 		AcquisitionPolicy: plan.AcquisitionPolicy,
+		Upstream:          plan.Upstream,
 	}
 	if plan.Acquisition != nil {
 		placements.AcquisitionTargets = plan.Acquisition.Targets
@@ -1602,9 +1680,7 @@ func (s *Service) dispatchReady(ctx context.Context, depID string, rank int32, r
 }
 
 func (s *Service) workerStartReady(ctx context.Context, row db.GetDeploymentRow, rank int32) (bool, error) {
-	if rank != 0 {
-		return true, nil
-	}
+	// A source-owned coordinator starts only after every observer has armed.
 	manifest, err := s.manifestFor(ctx, row.RecipeDigest)
 	if err != nil {
 		return false, err
@@ -1612,6 +1688,27 @@ func (s *Service) workerStartReady(ctx context.Context, row db.GetDeploymentRow,
 	_, workload, err := s.selectWorkload(ctx, row, manifest)
 	if err != nil {
 		return false, err
+	}
+	if workload.Upstream != nil && workload.Upstream.CoordinatorRank != nil {
+		if int(rank) != *workload.Upstream.CoordinatorRank {
+			return true, nil
+		}
+		phases := ParseDispatch(row.Dispatch)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for _, placement := range ParsePlacementSet(row.Placement).Entries {
+			if placement.Rank == rank {
+				continue
+			}
+			state := s.rankStates[row.ID][placement.Rank]
+			if phases.Get(placement.Rank) != PhaseStarted || (state != "observing" && state != "running" && state != "ready") {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	if rank != 0 {
+		return true, nil
 	}
 	if workload.StartOrder != "workers-first" {
 		return true, nil
@@ -1805,7 +1902,7 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 			return
 		}
 		s.setPhase(ctx, depID, rank, PhaseStarted)
-		if runID != "" {
+		if runID != "" && len(ParsePlacementSet(row.Placement).Upstream) == 0 {
 			_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
 		}
 		s.dispatchNext(ctx, depID, rank, runID, pl)
@@ -1814,6 +1911,7 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 		if cr.Ok {
 			s.OnStateUpdate(ctx, pl.NodeID, &agentv1.StateUpdate{
 				DeploymentId:      depID,
+				RunId:             runID,
 				ContainerId:       cr.ContainerId,
 				State:             cr.ContainerState,
 				Rank:              rank,
@@ -1824,6 +1922,7 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 		} else if isContainerMissing(cr.Error) {
 			s.OnStateUpdate(ctx, pl.NodeID, &agentv1.StateUpdate{
 				DeploymentId:      depID,
+				RunId:             runID,
 				State:             "missing",
 				Rank:              rank,
 				DiagnosticCode:    "container.missing",
@@ -1835,6 +1934,11 @@ func (s *Service) OnCommandResult(ctx context.Context, cr *agentv1.CommandResult
 		if cr.Ok || missing {
 			s.setPhase(ctx, depID, rank, PhaseStopped)
 			s.checkStopComplete(ctx, depID, runID)
+		} else {
+			// A rejected stop does not confirm that resources are free.
+			// Keep stopping until an explicit retry or reconnect succeeds.
+			s.noteDispatch(ctx, depID, diag.Error("workload.stop_failed",
+				fmt.Sprintf("rank %d: %s", rank, cr.Error)).Res(fmt.Sprintf("rank:%d", rank)))
 		}
 	}
 }
@@ -2448,7 +2552,7 @@ func (s *Service) aggregateRankState(deploymentID string, placements placementSe
 			ready++
 		case "offline":
 			offline++
-		case "created", "restarting", "":
+		case "created", "installing", "starting", "observing", "restarting", "":
 			preparing++
 		case "degraded", "exited", "dead", "missing":
 			failed++
@@ -2482,6 +2586,11 @@ func mapObserved(state, diagnostic string) (observed string, d diag.Diagnostic) 
 		return "stopped", diag.Error("workload.exited", "container exited")
 	case "restarting":
 		return "starting", diag.Info("workload.restarting", "container restarting")
+	case "installing", "starting", "observing":
+		if diagnostic != "" {
+			return "starting", diag.Info("upstream.starting", diagnostic)
+		}
+		return "starting", diag.Info("upstream.starting", "upstream lifecycle is still preparing the service")
 	case "created":
 		return "preparing", diag.Info("workload.created", "container created, awaiting start")
 	case "removing":
@@ -2621,13 +2730,13 @@ func (s *Service) failWorkload(ctx context.Context, row db.GetDeploymentRow, su 
 	}))
 }
 
-// OnStateUpdate applies one agent state report to its deployment.
+// OnStateUpdate applies reports only to the deployment's current run.
 func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.StateUpdate) {
-	if su.DeploymentId == "" {
+	if su.DeploymentId == "" || su.RunId == "" {
 		return
 	}
 	row, err := s.q.GetDeployment(ctx, su.DeploymentId)
-	if err != nil {
+	if err != nil || !row.RunID.Valid || row.RunID.String != su.RunId {
 		return
 	}
 	s.setPlacementContainer(ctx, row.ID, su.Rank, su.ContainerId)
@@ -2675,12 +2784,21 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 				}
 			}
 		}
-		if port != 0 {
+		if port != 0 || (su.State == "running" && endpoint.Valid) {
 			if node, err := s.q.GetNode(ctx, nodeID); err == nil && node.Inventory.Valid {
 				var inv inventory.Inventory
 				if json.Unmarshal([]byte(node.Inventory.String), &inv) == nil {
-					if addr := firstNonLoopback(&inv); addr != "" {
-						endpoint = sql.NullString{String: net.JoinHostPort(addr, strconv.Itoa(port)), Valid: true}
+					if port == 0 && inv.AdvertiseAddress != "" {
+						// Explicit address changes retain the actual published port,
+						// including dynamic ports absent from later agent reports.
+						if _, published, err := net.SplitHostPort(endpoint.String); err == nil {
+							port, _ = strconv.Atoi(published)
+						}
+					}
+					if port != 0 {
+						if addr := firstNonLoopback(&inv); addr != "" {
+							endpoint = sql.NullString{String: net.JoinHostPort(addr, strconv.Itoa(port)), Valid: true}
+						}
 					}
 				}
 			}
@@ -2719,9 +2837,15 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 	if row.RunID.Valid {
 		runID = row.RunID.String
 	}
+	if su.State == "observing" || su.State == "running" {
+		s.wakeWorkerFirstHead(ctx, row.ID, runID)
+	}
 	if runID != "" {
 		phase := su.State
 		if observed == "healthy" {
+			if len(placements.Upstream) > 0 {
+				_ = s.runs.SetState(ctx, runID, runs.Running, "", "")
+			}
 			for _, rank := range placements.AllRanks() {
 				s.setServeRankProgress(ctx, runID, rank, map[string]any{"phase": "healthy"})
 			}
@@ -2871,6 +2995,32 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 	}
 	if len(ps.AcquisitionResources) == 0 {
 		return nil, fmt.Errorf("%w: stopped deployment has no reviewed acquisition contract", ErrPlanStale)
+	}
+	if len(plan.Upstream) > 0 {
+		if len(ps.Upstream) != len(plan.Upstream) {
+			return nil, fmt.Errorf("%w: stopped deployment has no complete reviewed upstream lifecycle", ErrPlanStale)
+		}
+		plannedFabric := ""
+		if plan.Fabric != nil {
+			plannedFabric = *plan.Fabric
+		}
+		if plannedFabric != row.Fabric.String {
+			return nil, fmt.Errorf("%w: the reviewed upstream fabric is no longer applicable", ErrPlanStale)
+		}
+		for _, placement := range plan.Placements {
+			if !slices.ContainsFunc(ps.Upstream, func(preview UpstreamPreview) bool {
+				return preview.NodeID == placement.NodeID && preview.Rank == placement.Rank
+			}) {
+				return nil, fmt.Errorf("%w: upstream restart would change an approved target", ErrPlanStale)
+			}
+		}
+		// Source, argv, observation identities and supported inputs are frozen.
+		// Restart and rollback must not substitute freshly observed peer addresses.
+		plan.Upstream = ps.Upstream
+		s.previewWorkerSSH(ctx, plan)
+		if diag.HasError(plan.Diagnostics) {
+			return nil, fmt.Errorf("%w: %v", ErrNotReady, diag.Decode(diag.Encode(plan.Diagnostics)))
+		}
 	}
 	// Restart retains the approved acquisition sources and destinations. A new
 	// inventory observation cannot silently authorize a different download.
@@ -3122,7 +3272,9 @@ type Deployment struct {
 	RecipeDigest      string            `json:"recipe_digest"`
 	RecipeName        string            `json:"recipe_name,omitempty"`
 	RecipeVersion     string            `json:"recipe_version,omitempty"`
-	Settings          map[string]any    `json:"settings,omitempty"`
+	Settings          map[string]any    `json:"parameters,omitempty"`
+	Variants          map[string]string `json:"variants,omitempty"`
+	WorkloadIndex     *int              `json:"workload_index,omitempty"`
 	Engine            string            `json:"engine,omitempty"`
 	Placements        []Placement       `json:"placements"`
 	Fabric            *string           `json:"fabric,omitempty"`
@@ -3252,11 +3404,14 @@ func listRowToDeployment(r db.ListDeploymentsRow) db.Deployment {
 }
 
 func (s *Service) view(ctx context.Context, row db.Deployment) (*Deployment, error) {
+	placement := ParsePlacementSet(row.Placement)
 	v := &Deployment{
 		ID:            row.ID,
 		RecipeDigest:  row.RecipeDigest,
 		Settings:      decodeParameters(row.Parameters),
-		Placements:    ParsePlacementSet(row.Placement).Entries,
+		Placements:    placement.Entries,
+		Variants:      placement.Variants,
+		WorkloadIndex: placement.Workload,
 		DesiredState:  row.DesiredState,
 		ObservedState: row.ObservedState,
 		Diagnostics:   diag.Decode(row.Diagnostics),
@@ -3357,6 +3512,9 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	if err != nil {
 		return nil, err
 	}
+	if w.Upstream != nil {
+		return frozenUpstreamSpec(row, pl, runID)
+	}
 	values := parametersFor(row)
 	nodeAddress := ""
 	if node, nodeErr := s.q.GetNode(ctx, pl.NodeID); nodeErr == nil && node.Inventory.Valid {
@@ -3400,7 +3558,8 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	}
 	rctx := recipe.RenderContext{
 		NodeID: pl.NodeID, NodeRank: int(rank), NodeAddress: nodeAddress,
-		FabricAddr: fabricAddress, FabricNodeAddr: fabricNodeAddress,
+		NodeAccelerators: pl.acceleratorBinding(),
+		FabricAddr:       fabricAddress, FabricNodeAddr: fabricNodeAddress,
 		FabricInterface: fabricInterface, FabricRDMADevice: fabricRDMADevice,
 		FabricGIDIndex: fabricGIDIndex, Artifacts: map[string]string{}, Settings: values,
 	}
@@ -3459,24 +3618,40 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 		}
 		spec.Cmd = append(spec.Cmd, rendered)
 	}
+	if len(pl.Accelerators) > 0 {
+		spec.GPUDeviceIDs = append(spec.GPUDeviceIDs, pl.Accelerators...)
+	} else if pl.AcceleratorUUID != "" {
+		spec.GPUDeviceIDs = append(spec.GPUDeviceIDs, pl.AcceleratorUUID)
+	}
 	for key, value := range w.Env {
+		if key == "CUDA_VISIBLE_DEVICES" && len(spec.GPUDeviceIDs) > 0 {
+			continue
+		}
+		if name, ok := strings.CutPrefix(value, "${setting."); ok && strings.HasSuffix(name, "}") {
+			name = strings.TrimSuffix(name, "}")
+			if parameter := m.ParameterByName(name); parameter != nil && parameter.Optional {
+				if _, supplied := rctx.Settings[name]; !supplied {
+					continue
+				}
+			}
+		}
 		rendered, renderErr := m.Render(value, rctx)
 		if renderErr != nil {
 			return nil, renderErr
 		}
 		spec.Env = append(spec.Env, key+"="+rendered)
 	}
+	if len(spec.GPUDeviceIDs) > 0 {
+		// WSL exposes every adapter even with Docker DeviceIDs; bind CUDA to
+		// the assigned UUIDs rather than the host's CUDA enumeration order.
+		spec.Env = append(spec.Env, "CUDA_VISIBLE_DEVICES="+strings.Join(spec.GPUDeviceIDs, ","))
+	}
 	sort.Strings(spec.Env)
 	spec.ShmBytes = w.Resources.ShmBytes
 	spec.TmpfsBytes = w.Resources.TmpfsBytes
 	spec.PidsLimit = w.Resources.Pids
-	if len(pl.Accelerators) > 1 {
-		spec.GPUDeviceIDs = append(spec.GPUDeviceIDs, pl.Accelerators...)
-	} else if pl.AcceleratorUUID != "" {
-		spec.GPUDeviceIDs = append(spec.GPUDeviceIDs, pl.AcceleratorUUID)
-	}
 	if w.Devices != nil {
-		if w.Devices.Accelerator != nil && w.Devices.Accelerator.All {
+		if w.Devices.Accelerator != nil && w.Devices.Accelerator.All && len(spec.GPUDeviceIDs) == 0 {
 			spec.GPUsAll = true
 		}
 		if w.Devices.RDMA != nil && len(w.Devices.RDMA.Devices) > 0 {

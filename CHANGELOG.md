@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- Fix: retire completed upstream observers once every attached container is terminal, allow never-started rejected launches to stop logically without touching foreign containers, and report rejected stop commands instead of leaving deployments silently stuck.
+- Fix: resolve missing worker SSH defaults through the selected head's existing SSH configuration and verify the exact selected-worker connection before readiness or restart; preserve explicit targets and fabric bindings without changing keys or trust.
+- UI: expose Retry readiness check for blocked Run previews without launching models or changing saved configuration.
+- UI: simplify Run on device for every recipe with explicit device selection, automatic defaults and readiness checks, collapsed searchable settings, and always-visible Cancel/Run actions; remove browser recovery and the separate run-plan step without starting downloads or execution before Run.
+- Feature: derive supported required worker settings from the selected agents' actual account, home, workspace and cache roots, preserving explicit/profile defaults and binding derived values to launch approval.
+- Feature: confirm recipe updates against exact installed devices, automatically verify supported upstream lifecycles and carry saved settings and authenticated installation edits forward, with durable per-device package/source preparation and no model lifecycle operations.
+- Fix: prepare source even when update packages are cached, preserve verified existing package metadata, and block agents without the explicit installation-update protocol before confirmation.
+- Fix: update the reviewed GLM EXL3 recipe to upstream `8f29c6d` as 2.2.1 with TP2-scoped teardown; preserve arguments in split upstream launchers, safely serialize computed worker-cache mounts, and retain explicit repository-root paths when packaging source updates.
+- Fix: replace the NVIDIA process-telemetry panic guard with a count-checked NVML binding so an oversized successful driver response cannot crash the local agent; retain ordinary buffer growth and unavailable-memory filtering.
+- Feature: expose reviewed upstream environment, vLLM/SGLang, Docker and Compose configuration across all six maintained procedures, preserving optional upstream defaults and validating exact-source runtime bindings.
+- Feature: configure existing source-owned, native and catalog deployments without requiring a repository link; review effective selections and the complete upstream launch contract before consent, preserve devices and fabric, and attempt restoration on replacement failure.
+- Fix: resolve URL-encoded launch-profile digests and retain independent unsaved configuration edits across recipe-version switches; invalidate prior configuration approval when the saved run changes.
+- Fix: preserve literal settings across nested shell, heredoc and Compose expansion, including DeepSeek worker-cache paths in local and NFS branches; keep disabled Compose flags from splitting folded commands.
+- UI: replace the recipe manifest-first screen with a compact device/version overview, friendly model identity, editable next-run settings, direct run/update actions, and secondary technical-details and AI views; preserve launch review, version history, and explicit source approval.
+- Feature: replace generated upstream launchers and patch/image/model composition with exact reviewed repository revisions, authored install/start/stop commands and source-supported inputs; retain native recipe bundles and evidence-only AI assistance. Require administrator host-policy opt-in and explicit `host.upstream-exec` approval, retain source installation history/status/logs, and review target inputs before selected replacement with attempted restoration—not host/dependency rollback. Block the prior GLM NVFP4 adaptation until an applicable authored lifecycle is reviewed.
+- Docs: document native WSL controller lifetime policy, its Windows-user-wide scope, and availability checks without a WSL client session.
+- Fix: batch all affected console query refreshes so deployment traffic cannot drop recipe updates.
+- Feature: explain saved recipe launch instructions with model files, engine, meaningful runtime settings and recorded upstream differences; expose assistant selection and manual editing directly, preserve request handoff/recovery, and review individual changed fields before saving.
+- Feature: add a separate Qwen3.8 Flash Next single-Spark compiler and recipe with pinned upstream overlays, disk-backed PLE offload, FP8 KV cache, MTP3, and managed vision/tool-serving support.
+- Fix: serve single-Spark Qwen Flash Next on port 8000, including readiness and verification probes; reserve port 8888 for cluster deployments.
+- Fix: reuse SHA-256 results for unchanged files on Linux agents across launch gates and transfer manifests; invalidate reuse on file identity, size, mode, modification-time, or change-time differences, retaining full verification after writes and agent restarts.
+- Fix: reconcile all six maintained recipe families with reviewed upstream procedures and immutable artifacts, preserving historical packages and running deployment pins.
+- Fix: restore DeepSeek's upstream default-on correctness patches and rank-local fabric bindings; correct mixed FP4+FP8 and reasoning capability declarations.
+- Fix: default both Qwen27 profiles to the BF16-LMHead checkpoint; protect RTX administrator endpoints with a per-start middleware-only credential that is absent from public server arguments.
+- Fix: update GLM EXL3 to the published E3 runtime and correctness overlays; refresh both GLM drafters and NVFP4 variants; preserve null and unmatched/duplicate tool results in the owned multimodal template.
+- Fix: apply the complete dual-Qwen ModelOpt, PLE, and FP8-QSA patch stack using a read-only checkpoint view, supported NVIDIA metadata, and merged nested PLE/YaRN overrides.
+- Test: replace stale recipe-version/default snapshots with deterministic packaging, monotonic versioning, immutable source provenance, and missing/unexpected upstream-asset rejection checks.
+- Fix: make repeated acquisition cancellation safe, release peer-copy reservations when no transfer was dispatched, and recover every active one-shot phase without preventing controller startup.
+- Fix: populate recipe investigation directly from healthy enrolled deployments, connected Codex account models, and configured API providers; remove redundant saved local/Codex profiles and preserve explicit destination/content review.
+- Fix: accept URL-encoded provider identities in connection tests and omit unused structured-response fields from text-only probes.
+- Fix: place provider selection and content review directly beneath the recipe investigation heading instead of after source-comparison details.
+- Fix: preserve verified OCI index references at workload launch instead of substituting cached child descriptors that Docker cannot address independently.
+- Fix: honor assigned GPU UUIDs in Docker requests and CUDA visibility, including WSL hosts where Docker device filtering alone still exposes every adapter.
+- Fix: group Overview and Fleet GPU labels by vendor and model so mixed-GPU nodes no longer display every accelerator as the first model.
+- Feature: investigate pinned GitHub repositories without manual source selection, review documented execution procedures, hardware, deployment parameters, evidence and adaptations, and accept distinct launch procedures as independent catalog recipes.
+- Fix: preserve unchanged upstream helpers and legacy catalog history, make procedure acceptance retry-safe, and prevent repeated inspection or saving an unreviewed compiler starter.
+- Fix: enforce structured assistant output with evidence-bound instruction URLs, batch repository evidence within the existing context allowance, and include CI build and devcontainer definitions in investigation.
+- Fix: complete anonymous public-registry token challenges during reference verification and replace mutable image references with verified digests before recipe validation and saving.
+- Fix: keep empty draft/proposal collections iterable and report nested schema failures at their actual fields instead of a generic validation error.
+- Fix: request a bounded 32,768-token completion allowance for repository analysis and distinguish provider token-limit truncation from malformed JSON or missing repository facts.
 - Feature: center recipe work on a shared catalog with Configuration, Updates, and Devices, explicit Add from GitHub and save-only library actions, package-only repair, retained immutable versions, and dedicated AI assistance settings.
 - Fix: hide the catalog's unfinished-work section when empty and label recoverable entries "Unfinished additions".
 - Fix: remove model-workload CPU quotas, CPU affinity, and RAM ceilings from recipe schemas, templates, editing, launch rendering, and legacy imports; retain hardware inventory and compatibility checks.
@@ -9,7 +49,8 @@
 - Fix: retain the explicit repository-root path when pinning edited recipe source metadata, preserving schema validity for URL-only additions and repairs.
 - Fix: compare new recipe configurations without parsing a nonexistent saved baseline, showing edited or suggested fields as additions instead of an internal JSON error.
 - Fix: verify and acquire Docker images through their pinned index and requested platform while checking the exact child-manifest digest, recognizing existing multi-platform image caches without redundant pulls.
-- Fix: verify classic Docker stores through explicit child-manifest references, recognize the ARM64/v8 baseline, and bound full-snapshot inspection time by declared content size rather than a fixed 45-second deadline.
+- Fix: verify classic Docker stores through explicit child-manifest references, recognize the ARM64/v8 baseline, and allow full-snapshot integrity inspection with size-based deadlines or a 30-minute deadline when size is unknown.
+- Fix: reject unspecified peer listener addresses during acquisition planning, falling back to an eligible origin instead of selecting an unreachable peer.
 - Feature: add frozen all-resource download plans, independent device acquisition, verified file/image/package availability, durable per-item progress, explicit resumable attempts, and cancellation ownership barriers across disconnects and restarts.
 - Fix: default launches to verified existing resources, recheck resource identity at every launch gate, and preserve already-running models during controller reconciliation without reacquiring their files.
 - Fix: retain independent editing and provider-recovery buffers, invalidate stale source consent and runtime reviews, and keep failed download and selected-replacement operations visible without automatic replay.

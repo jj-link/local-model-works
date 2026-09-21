@@ -424,6 +424,60 @@ func TestDeploymentEndpointMetadataSurvivesRead(t *testing.T) {
 	}
 }
 
+func TestAdvertisedAddressRefreshesEndpointAndReadinessWithoutChangingPort(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	inv, err := inventory.Parse(inventoryWith(gpuAccs("a"), ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv.Interfaces = []inventory.Interface{
+		{Name: "mirrored", Addresses: []string{"100.102.241.73"}},
+		{Name: "tailscale0", Addresses: []string{"100.74.194.53"}},
+	}
+	saveInventory := func() {
+		t.Helper()
+		data, err := json.Marshal(inv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{ID: "node-a", Inventory: nullString(string(data))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveInventory()
+	h.seedRecipe(t, "endpoint-serve", endpointManifest)
+	dep := h.createDeployment(t, "endpoint-serve")
+	h.svc.readinessProbe = func(_ context.Context, row db.GetDeploymentRow) (bool, string) {
+		return row.Endpoint.String == "100.74.194.53:49152", "waiting for advertised address"
+	}
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, RunId: dep.RunID, Rank: 0,
+		ContainerId: "running-container", State: "running", EndpointPort: 49152,
+	})
+	before, err := h.svc.Get(ctx, dep.ID)
+	if err != nil || before.Endpoint == nil || before.Endpoint.Host != "100.102.241.73" {
+		t.Fatalf("initial discovered endpoint: %+v, %v", before, err)
+	}
+	inv.AdvertiseAddress = "100.74.194.53"
+	saveInventory()
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, RunId: dep.RunID, Rank: 0,
+		ContainerId: "running-container", State: "running",
+	})
+	after, err := h.svc.Get(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Endpoint == nil || after.Endpoint.Host != "100.74.194.53" || after.Endpoint.Port != 49152 || after.ObservedState != "healthy" {
+		t.Fatalf("address refresh failed to preserve the published port and recover readiness: %+v", after)
+	}
+	if after.RunID != dep.RunID {
+		t.Fatal("address refresh restarted the model")
+	}
+}
+
 // TestDeploymentLegacyEndpointFallsBackToRecipe proves a deployment whose
 // persisted endpoint_model is null (a pre-migration row) still resolves its
 // model from the setting/metadata fallback when the view is read back.
@@ -804,6 +858,42 @@ func TestVariantSelectionUsesActuallyPlacedAccelerator(t *testing.T) {
 	}
 }
 
+func TestWorkloadRestrictsCUDAVisibilityToAssignedGPU(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "mixed", []inventory.Accelerator{
+		{Index: 0, UUID: "GPU-small", Vendor: "nvidia", Architecture: "sm_89", MemoryBytes: 24 << 30},
+		{Index: 1, UUID: "GPU-selected", Vendor: "nvidia", Architecture: "sm_120", MemoryBytes: 96 << 30},
+	}, "")
+	h.seedRecipe(t, "recipe", `{
+	  "apiVersion":"lmw.dev/v1","kind":"Recipe","metadata":{"name":"gpu","version":"1"},
+	  "compatibility":{"nodeCount":1,"accelerator":{"vendor":"nvidia","architectures":["sm_120"],"count":1}},
+	  "workloads":[{"image":{"reference":"test:latest"},"command":["serve"],"args":["--devices","${node.accelerators}"],
+	    "resources":{"pids":64},
+	    "devices":{"accelerator":{"all":true}},"env":{"CUDA_VISIBLE_DEVICES":"0"}}]
+	}`)
+	deployment := h.createDeployment(t, "recipe")
+	placement := h.svc.placementFor(context.Background(), deployment.ID, 0)
+	spec, err := h.svc.renderSpec(context.Background(), deployment.ID, 0, deployment.RunID, &placement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.GPUsAll || len(spec.GPUDeviceIDs) != 1 || spec.GPUDeviceIDs[0] != "GPU-selected" {
+		t.Fatalf("workload can escape its assigned accelerator: all=%v devices=%v", spec.GPUsAll, spec.GPUDeviceIDs)
+	}
+	if len(spec.Cmd) != 2 || spec.Cmd[1] != "GPU-selected" {
+		t.Fatalf("native template does not retain the reviewed accelerator UUID: %v", spec.Cmd)
+	}
+	var visible []string
+	for _, entry := range spec.Env {
+		if strings.HasPrefix(entry, "CUDA_VISIBLE_DEVICES=") {
+			visible = append(visible, entry)
+		}
+	}
+	if len(visible) != 1 || visible[0] != "CUDA_VISIBLE_DEVICES=GPU-selected" {
+		t.Fatalf("CUDA visibility does not enforce the assigned UUID: %v", visible)
+	}
+}
+
 func deploymentRow(t *testing.T, h *harness, depID string) db.GetDeploymentRow {
 	t.Helper()
 	waitAcquisition(t, h.svc)
@@ -995,7 +1085,7 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 
 	// The agent reports the container is gone.
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DeploymentId: dep.ID, RunId: dep.RunID, ContainerId: "c1", State: "missing", Rank: 0,
 		DiagnosticCode: "container.missing",
 	})
 
@@ -1021,7 +1111,7 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 	// A queued pre-stop observation must not regress a confirmed stop.
 	commandCount := len(h.nodes.workloadCommands())
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "created", Rank: 0,
+		DeploymentId: dep.ID, RunId: dep.RunID, ContainerId: "c1", State: "created", Rank: 0,
 	})
 	row = deploymentRow(t, h, dep.ID)
 	if row.ObservedState != "stopped" || ParseDispatch(row.Dispatch).Get(0) != PhaseStopped {
@@ -1033,7 +1123,7 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 
 	// A genuinely active container after confirmation is driven back to stop.
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "running", Rank: 0,
+		DeploymentId: dep.ID, RunId: dep.RunID, ContainerId: "c1", State: "running", Rank: 0,
 	})
 	row = deploymentRow(t, h, dep.ID)
 	if row.ObservedState != "stopping" || ParseDispatch(row.Dispatch).Get(0) != PhaseStopping {
@@ -1044,10 +1134,119 @@ func TestStopCompletesFromMissingRank(t *testing.T) {
 		t.Fatalf("recovery workload op = %v, want STOP", got)
 	}
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DeploymentId: dep.ID, RunId: dep.RunID, ContainerId: "c1", State: "missing", Rank: 0,
 	})
 	if row = deploymentRow(t, h, dep.ID); row.ObservedState != "stopped" {
 		t.Fatalf("recovered stop observed = %s, want stopped", row.ObservedState)
+	}
+}
+
+func TestRestartRejectsPreviousRunAndUnscopedStateReports(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	driveDeploymentHealthy(t, h, dep.ID, "node-a")
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("stop original run: %v", err)
+	}
+	commands := h.nodes.workloadCommands()
+	stop := commands[len(commands)-1].msg.GetWorkloadCommand()
+	if stop.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("last command = %s, want STOP", stop.GetOp())
+	}
+	h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: stop.GetCommandId(), Ok: true})
+	if got := runState(t, h, dep.RunID); got != string(runs.Cancelled) {
+		t.Fatalf("original run = %s, want cancelled", got)
+	}
+
+	restarted, err := h.svc.Start(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if restarted.ID != dep.ID || restarted.RunID == "" || restarted.RunID == dep.RunID {
+		t.Fatalf("restart identity = deployment %s run %s", restarted.ID, restarted.RunID)
+	}
+	driveDeploymentHealthy(t, h, dep.ID, "node-a")
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId: dep.ID, RunId: restarted.RunID, ContainerId: "container-new", State: "running", Rank: 0,
+	})
+	before := deploymentRow(t, h, dep.ID)
+	placement := ParsePlacementSet(before.Placement).EntryFor(0)
+	if before.DesiredState != "running" || before.ObservedState != "healthy" ||
+		placement == nil || placement.Container != "container-new" {
+		t.Fatalf("current-run running report did not establish healthy placement: %+v", before)
+	}
+	commandCount := len(h.nodes.workloadCommands())
+
+	for _, report := range []struct {
+		name  string
+		runID string
+		state string
+	}{
+		{name: "previous running", runID: dep.RunID, state: "running"},
+		{name: "previous missing", runID: dep.RunID, state: "missing"},
+		{name: "unscoped running", state: "running"},
+		{name: "unscoped missing", state: "missing"},
+	} {
+		t.Run(report.name, func(t *testing.T) {
+			h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+				DeploymentId:      dep.ID,
+				RunId:             report.runID,
+				ContainerId:       dep.ID,
+				State:             report.state,
+				Rank:              0,
+				DiagnosticMessage: "retained runtime diagnostic",
+			})
+			after := deploymentRow(t, h, dep.ID)
+			if after.DesiredState != "running" || after.ObservedState != "healthy" {
+				t.Errorf("rejected report changed deployment state to %s/%s", after.DesiredState, after.ObservedState)
+			}
+			if after.Placement != before.Placement {
+				t.Errorf("rejected report replaced current container placement: %s", after.Placement)
+			}
+			if after.Diagnostics != before.Diagnostics {
+				t.Errorf("rejected report contaminated diagnostics: %s", after.Diagnostics)
+			}
+			if after.Dispatch != before.Dispatch || after.Endpoint != before.Endpoint {
+				t.Errorf("rejected report changed dispatch or endpoint: %+v", after)
+			}
+			if got := runState(t, h, restarted.RunID); got != string(runs.Running) {
+				t.Errorf("rejected report changed current run to %s", got)
+			}
+			if got := len(h.nodes.workloadCommands()); got != commandCount {
+				t.Errorf("rejected report dispatched %d additional commands", got-commandCount)
+			}
+		})
+	}
+
+	// The same terminal report from the current run must still fail the workload.
+	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
+		DeploymentId:      dep.ID,
+		RunId:             restarted.RunID,
+		ContainerId:       "container-new",
+		State:             "missing",
+		Rank:              0,
+		DiagnosticMessage: "current container disappeared",
+	})
+	after := deploymentRow(t, h, dep.ID)
+	if after.DesiredState != "stopped" || after.ObservedState != "stopped" {
+		t.Fatalf("current-run missing report left deployment %s/%s", after.DesiredState, after.ObservedState)
+	}
+	run, err := h.svc.runs.Get(ctx, restarted.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != string(runs.Failed) || run.ErrorCode == nil || *run.ErrorCode != "workload.missing" ||
+		run.ErrorMessage == nil || !strings.Contains(*run.ErrorMessage, "current container disappeared") {
+		t.Fatalf("current-run missing report did not fail current run: %+v", run)
+	}
+	if strings.Contains(after.Diagnostics, "retained runtime diagnostic") {
+		t.Fatalf("previous-run diagnostic leaked into failure: %s", after.Diagnostics)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Cancelled) {
+		t.Fatalf("original run changed to %s, want cancelled", got)
 	}
 }
 
@@ -1081,7 +1280,7 @@ func TestRunningHeadBecomesHealthyOnlyAfterReadinessPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := &agentv1.StateUpdate{
-		DeploymentId: deployment.ID, ContainerId: "container-a", State: "running", Rank: 0,
+		DeploymentId: deployment.ID, RunId: deployment.RunID, ContainerId: "container-a", State: "running", Rank: 0,
 	}
 	h.svc.OnStateUpdate(ctx, "node-a", update)
 	row := deploymentRow(t, h, deployment.ID)
@@ -1138,6 +1337,7 @@ func TestUnexpectedWorkloadTerminationFailsAndStopsDeployment(t *testing.T) {
 
 			update := &agentv1.StateUpdate{
 				DeploymentId:      dep.ID,
+				RunId:             dep.RunID,
 				ContainerId:       "container-a",
 				State:             tt.state,
 				Rank:              0,
@@ -1228,6 +1428,7 @@ func TestUnexpectedRankFailureHoldsLeasesUntilPeersStop(t *testing.T) {
 
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
 		DeploymentId: dep.ID,
+		RunId:        dep.RunID,
 		ContainerId:  "container-a",
 		State:        "exited",
 		Rank:         0,
@@ -1258,6 +1459,7 @@ func TestUnexpectedRankFailureHoldsLeasesUntilPeersStop(t *testing.T) {
 
 	h.svc.OnStateUpdate(ctx, "node-b", &agentv1.StateUpdate{
 		DeploymentId: dep.ID,
+		RunId:        dep.RunID,
 		ContainerId:  "container-b",
 		State:        "missing",
 		Rank:         1,
@@ -1313,7 +1515,7 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 		t.Fatalf("stop: %v", err)
 	}
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DeploymentId: dep.ID, RunId: dep.RunID, ContainerId: "c1", State: "missing", Rank: 0,
 		DiagnosticCode: "container.missing",
 	})
 	row = deploymentRow(t, h, dep.ID)
@@ -1362,7 +1564,7 @@ func TestStartReDrivesStoppedAndDeleteFreesSlot(t *testing.T) {
 		t.Fatalf("second stop: %v", err)
 	}
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
-		DeploymentId: dep.ID, ContainerId: "c1", State: "missing", Rank: 0,
+		DeploymentId: dep.ID, RunId: started.RunID, ContainerId: "c1", State: "missing", Rank: 0,
 		DiagnosticCode: "container.missing",
 	})
 	if err := h.svc.Delete(ctx, dep.ID); err != nil {
@@ -1503,6 +1705,103 @@ func TestRepeatedStopRedrivesUnresolvedRank(t *testing.T) {
 	}
 }
 
+func TestRejectedStopReportsDiagnosticAndRetainsResourcesUntilRetry(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+	driveDeploymentHealthy(t, h, dep.ID, "node-a")
+
+	placement := ParsePlacementSet(deploymentRow(t, h, dep.ID).Placement).Entries[0]
+	activeGPULeases := func() int {
+		t.Helper()
+		var active int
+		if err := h.dbh.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM leases WHERE resource=? AND owner_kind='deployment' AND owner_id=? AND state='active'",
+			"gpu:node-a:"+placement.AcceleratorUUID, dep.ID).Scan(&active); err != nil {
+			t.Fatalf("count GPU leases: %v", err)
+		}
+		return active
+	}
+	if got := activeGPULeases(); got != 1 {
+		t.Fatalf("active GPU leases before stop = %d, want 1", got)
+	}
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	commands := h.nodes.workloadCommands()
+	stop := commands[len(commands)-1].msg.GetWorkloadCommand()
+	if stop.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+		t.Fatalf("last operation = %s, want STOP", stop.GetOp())
+	}
+	runBeforeRejection := runState(t, h, dep.RunID)
+	const rejection = "refusing to stop containers owned by another installation"
+	h.svc.OnCommandResult(ctx, &agentv1.CommandResult{
+		CommandId: stop.GetCommandId(), Ok: false, Error: rejection,
+	})
+
+	view, err := h.svc.Get(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("deployment view: %v", err)
+	}
+	if view.DesiredState != "stopped" || view.ObservedState != "stopping" {
+		t.Fatalf("rejected stop state = %s/%s, want stopped/stopping", view.DesiredState, view.ObservedState)
+	}
+	found := false
+	for _, diagnostic := range view.Diagnostics {
+		if diagnostic.Code != "workload.stop_failed" {
+			continue
+		}
+		found = true
+		if diagnostic.Severity != "error" || !strings.Contains(diagnostic.Message, rejection) ||
+			diagnostic.Resource == nil || *diagnostic.Resource != "rank:0" {
+			t.Fatalf("stop failure diagnostic = %+v", diagnostic)
+		}
+	}
+	if !found {
+		t.Fatalf("deployment diagnostics omit rejected stop: %+v", view.Diagnostics)
+	}
+	if got := ParseDispatch(deploymentRow(t, h, dep.ID).Dispatch).Get(0); got != PhaseStopping {
+		t.Fatalf("rejected stop phase = %s, want stopping", got)
+	}
+	if got := runState(t, h, dep.RunID); got != runBeforeRejection {
+		t.Fatalf("rejected stop changed run state from %s to %s", runBeforeRejection, got)
+	}
+	if got := activeGPULeases(); got != 1 {
+		t.Fatalf("rejected stop released GPU lease: active = %d, want 1", got)
+	}
+	if got := len(h.nodes.workloadCommands()); got != len(commands) {
+		t.Fatalf("rejected stop implicitly dispatched a retry: commands = %d, want %d", got, len(commands))
+	}
+
+	if _, err := h.svc.Stop(ctx, dep.ID); err != nil {
+		t.Fatalf("explicit stop retry: %v", err)
+	}
+	retried := h.nodes.workloadCommands()
+	if len(retried) != len(commands)+1 {
+		t.Fatalf("explicit retry command count = %d, want %d", len(retried), len(commands)+1)
+	}
+	retry := retried[len(retried)-1].msg.GetWorkloadCommand()
+	if retry.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP || retry.GetCommandId() == stop.GetCommandId() {
+		t.Fatalf("explicit retry did not send a fresh STOP: %+v", retry)
+	}
+	if got := activeGPULeases(); got != 1 {
+		t.Fatalf("retry released unconfirmed GPU lease: active = %d, want 1", got)
+	}
+	h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: retry.GetCommandId(), Ok: true})
+	row := deploymentRow(t, h, dep.ID)
+	if row.DesiredState != "stopped" || row.ObservedState != "stopped" || ParseDispatch(row.Dispatch).Get(0) != PhaseStopped {
+		t.Fatalf("confirmed retry did not finish stop: %+v", row)
+	}
+	if got := runState(t, h, dep.RunID); got != string(runs.Cancelled) {
+		t.Fatalf("confirmed stop run state = %s, want cancelled", got)
+	}
+	if got := activeGPULeases(); got != 0 {
+		t.Fatalf("confirmed stop retained GPU lease: active = %d, want 0", got)
+	}
+}
+
 func TestConvergeRepairsAllStoppedLegacyDeployment(t *testing.T) {
 	h := newHarness(t)
 	h.seedNode(t, "node-a", gpuAccs("a"), "")
@@ -1576,6 +1875,7 @@ func TestStartPersistsReplannedPlacementAndRetainsFailedRun(t *testing.T) {
 	}
 	h.svc.OnStateUpdate(ctx, "node-a", &agentv1.StateUpdate{
 		DeploymentId:      dep.ID,
+		RunId:             dep.RunID,
 		ContainerId:       "container-old",
 		State:             "exited",
 		Rank:              0,
