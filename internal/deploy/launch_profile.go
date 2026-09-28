@@ -212,7 +212,7 @@ func (s *Service) ListLaunchProfiles(ctx context.Context, digest string) ([]*Lau
 
 // resolveSettings computes resolved artifact variants and parameter values
 // for a plan. Saved profiles are digest-pinned and revalidated at plan time.
-func resolveSettings(ctx context.Context, s *Service, m *recipe.Manifest, digest string, req PlanRequest) (map[string]string, map[string]any, error) {
+func resolveSettings(ctx context.Context, s *Service, m *recipe.Manifest, digest string, req PlanRequest, frozenSettings bool) (map[string]string, map[string]any, error) {
 	var variants map[string]string
 	var parameters map[string]any
 	if req.LaunchProfileID != "" {
@@ -239,13 +239,18 @@ func resolveSettings(ctx context.Context, s *Service, m *recipe.Manifest, digest
 		variants = req.Variants
 		parameters = req.Parameters
 	}
-	parameters, err := s.deviceSettingDefaults(ctx, m, req, parameters)
-	if err != nil {
-		var sshErr *workerSSHError
-		if errors.As(err, &sshErr) {
-			return nil, nil, err
+	if !frozenSettings {
+		// Restart and rollback retain approved inputs, including absent optional
+		// cache overrides. Fresh device facts must not change a frozen launch.
+		var err error
+		parameters, err = s.deviceSettingDefaults(ctx, m, req, parameters)
+		if err != nil {
+			var sshErr *workerSSHError
+			if errors.As(err, &sshErr) {
+				return nil, nil, err
+			}
+			return nil, nil, fmt.Errorf("%w: %w", ErrProfile, err)
 		}
-		return nil, nil, fmt.Errorf("%w: %w", ErrProfile, err)
 	}
 	resolvedVariants, resolvedParameters, err := effectiveLaunchValues(m, variants, parameters)
 	if err != nil {

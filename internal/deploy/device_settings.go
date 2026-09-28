@@ -14,16 +14,15 @@ import (
 	"github.com/jj-link/local-model-works/internal/recipe"
 )
 
-// deviceSettingDefaults fills only source-owned worker bindings whose declared
-// settings have no value. Automatic placement retains its existing behavior:
-// device facts are defaults only after the operator explicitly selects ranks.
+// deviceSettingDefaults fills source-owned worker and host-cache bindings.
+// Device facts are defaults only after the operator explicitly selects ranks.
 func (s *Service) deviceSettingDefaults(ctx context.Context, m *recipe.Manifest, req PlanRequest, parameters map[string]any) (map[string]any, error) {
-	if len(req.Placements) == 0 || m.Metadata.Source == nil {
+	if m.Metadata.Source == nil {
 		return parameters, nil
 	}
 	needsDefaults := false
 	for _, parameter := range m.Parameters {
-		if _, supplied := parameters[parameter.Name]; !supplied && parameter.Type == "string" && !parameter.Optional && !parameter.Sensitive && parameter.Default == nil {
+		if _, supplied := parameters[parameter.Name]; !supplied && parameter.Type == "string" && !parameter.Sensitive && parameter.Default == nil {
 			needsDefaults = true
 			break
 		}
@@ -60,9 +59,17 @@ func (s *Service) deviceSettingDefaults(ctx context.Context, m *recipe.Manifest,
 	if workload == nil || workload.Upstream == nil || !slices.Contains(workload.Permissions, "host.upstream-exec") {
 		return parameters, nil
 	}
+	resolved, err := s.hostCacheDefaults(ctx, m, workload, req.Placements, parameters)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Placements) == 0 {
+		return resolved, nil
+	}
 
-	resolved := parameters
-	copied := false
+	// Host inference only adds keys and already clones before mutation. Keep the
+	// original overrides separate so worker bindings still detect conflicts.
+	copied := len(resolved) > len(parameters)
 	reports := map[string]*inventory.Inventory{}
 	sshTargets := map[string]string{}
 	for _, key := range slices.Sorted(maps.Keys(workload.Env)) {
@@ -145,6 +152,12 @@ func deferProfileDeviceSettings(m *recipe.Manifest) {
 	for _, workload := range m.Workloads {
 		if workload.Upstream == nil || !slices.Contains(workload.Permissions, "host.upstream-exec") {
 			continue
+		}
+		for i := range m.Parameters {
+			parameter := &m.Parameters[i]
+			if parameter.Type == "string" && !parameter.Sensitive && parameter.Default == nil && hostCacheBinding(&workload, parameter.Name) {
+				parameter.Optional = true
+			}
 		}
 		for key, binding := range workload.Env {
 			if _, _, ok := workerSettingBinding(key); !ok {

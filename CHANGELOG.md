@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix: default source-bound host Hugging Face cache settings to the selected device's configured writable shared root, including hardcoded checkout-local cache assignments; preserve explicit/profile/literal-source defaults and frozen restarts, support portable cache profiles, block unknown or conflicting roots, and bind the selected cache path to launch approval.
 - Fix: retire completed upstream observers once every attached container is terminal, allow never-started rejected launches to stop logically without touching foreign containers, and report rejected stop commands instead of leaving deployments silently stuck.
 - Fix: resolve missing worker SSH defaults through the selected head's existing SSH configuration and verify the exact selected-worker connection before readiness or restart; preserve explicit targets and fabric bindings without changing keys or trust.
 - UI: expose Retry readiness check for blocked Run previews without launching models or changing saved configuration.

@@ -38,8 +38,7 @@ func (c *configurationCollector) externalInputs(file *syntax.File, source string
 		if _, _, valid := assignmentText(name + "="); !valid || assigned[name] && !self[name] {
 			return true
 		}
-		value, _ := constantWord(p.Exp.Word)
-		c.bindEnvironment(name, value, "Consumed by the original launch procedure.", source, true, c.workload.Upstream.EnvFormat == "literal")
+		c.fallbackEnvironment(name, p.Exp.Word, "Consumed by the original launch procedure.", source)
 		return true
 	})
 }

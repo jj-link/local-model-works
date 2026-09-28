@@ -95,10 +95,10 @@ func New(dbh *sql.DB, q *db.Queries, bus *events.EventBus, runsSvc *runs.Service
 
 // Plan previews a deployment from the current fleet state.
 func (s *Service) Plan(ctx context.Context, req PlanRequest) (*Plan, error) {
-	return s.plan(ctx, req, nil)
+	return s.plan(ctx, req, nil, false)
 }
 
-func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool) (*Plan, error) {
+func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments map[string]bool, frozenSettings bool) (*Plan, error) {
 	policy, err := acquisitionPolicy(req.AcquisitionPolicy)
 	if err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 	if err != nil {
 		return nil, fmt.Errorf("recipe manifest: %w", err)
 	}
-	variants, values, err := resolveSettings(ctx, s, m, req.RecipeDigest, req)
+	variants, values, err := resolveSettings(ctx, s, m, req.RecipeDigest, req, frozenSettings)
 	if err != nil {
 		var sshErr *workerSSHError
 		if errors.As(err, &sshErr) {
@@ -2979,14 +2979,14 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 	for _, e := range ps.Entries {
 		overrides = append(overrides, PlacementOverride{NodeID: e.NodeID, Rank: e.Rank})
 	}
-	plan, err := s.Plan(ctx, PlanRequest{
+	plan, err := s.plan(ctx, PlanRequest{
 		RecipeDigest:      row.RecipeDigest,
 		Placements:        overrides,
 		Variants:          ps.Variants,
 		Parameters:        parametersFor(row),
 		AcquisitionPolicy: ps.AcquisitionPolicy,
 		WorkloadIndex:     ps.Workload,
-	})
+	}, nil, len(ps.Upstream) > 0)
 	if err != nil {
 		return nil, err
 	}

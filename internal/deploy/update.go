@@ -413,7 +413,7 @@ func (s *Service) planReplacement(ctx context.Context, repositoryID string, requ
 			Placements: overrides, Variants: targetVariants,
 			WorkloadIndex:     targetWorkload,
 			AcquisitionPolicy: AcquisitionDownloadMissing,
-		}, map[string]bool{row.ID: true})
+		}, map[string]bool{row.ID: true}, false)
 		if planErr != nil {
 			return nil, planErr
 		}
@@ -1139,7 +1139,7 @@ func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, dep
 			RecipeDigest: targetDigest, Parameters: deployment.DeploymentPlan.Parameters,
 			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.DeploymentPlan.Variants,
 			WorkloadIndex: &deployment.DeploymentPlan.WorkloadIndex, AcquisitionPolicy: policy,
-		}, nil)
+		}, nil, false)
 		if err != nil {
 			return "", err
 		}

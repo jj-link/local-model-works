@@ -191,6 +191,24 @@ func (c *configurationCollector) bindEnvironment(name, value, description, sourc
 	c.workload.Env[name] = "${setting." + key + "}"
 }
 
+// Executable literal cache fallbacks outrank device-derived defaults. Commented
+// environment examples still go through bindEnvironment without a default.
+func (c *configurationCollector) fallbackEnvironment(name string, word *syntax.Word, description, source string) {
+	value, literal := constantWord(word)
+	c.bindEnvironment(name, value, description, source, true, c.workload.Upstream.EnvFormat == "literal")
+	if !literal || value == "" || name != "HF_HOME" && name != "HF_CACHE" {
+		return
+	}
+	binding := c.workload.Env[name]
+	if !strings.HasPrefix(binding, "${setting.") || !strings.HasSuffix(binding, "}") {
+		return
+	}
+	key := strings.TrimSuffix(strings.TrimPrefix(binding, "${setting."), "}")
+	if parameter := c.parameter(key); parameter != nil && parameter.Default == nil && !parameter.Sensitive {
+		parameter.Default = value
+	}
+}
+
 func (c *configurationCollector) environment(content []byte, source, format string) error {
 	lines := strings.Split(string(content), "\n")
 	var comments []string
@@ -302,8 +320,7 @@ func (c *configurationCollector) documentedInputs(file *syntax.File, content []b
 			return true
 		}
 		if description, exists := documented[p.Param.Value]; exists {
-			value, _ := constantWord(p.Exp.Word)
-			c.bindEnvironment(p.Param.Value, value, description, source, true, c.workload.Upstream.EnvFormat == "literal")
+			c.fallbackEnvironment(p.Param.Value, p.Exp.Word, description, source)
 		}
 		return true
 	})
@@ -331,10 +348,18 @@ func (c *configurationCollector) hardcodedCaches(file *syntax.File, source strin
 				continue
 			}
 			minimum := 1
+			var defaultValue any
+			if value, literal := constantWord(assignment.Value); literal && value != "" {
+				defaultValue = value
+			}
+			description := source + ": host " + name + " cache root. An explicit absolute path can reuse already-downloaded weights or compiled kernels. Unset retains the source's computed workspace-relative path. The original variable, bind mounts and downloads are unchanged."
+			if name == "HF_HOME" {
+				description = source + ": host Hugging Face home. Without an explicit setting or literal source default, uses the selected execution device's configured writable shared Hugging Face root; no suitable root blocks launch instead of creating a private checkout cache. The original bind mounts and downloads are unchanged."
+			}
 			c.manifest.Parameters = append(c.manifest.Parameters, recipe.Parameter{
-				Name: key, Type: "string", Optional: true, MinLength: &minimum,
+				Name: key, Type: "string", Optional: true, Default: defaultValue, MinLength: &minimum,
 				Label: humanLabel(name), Group: "Memory and caches",
-				Description: source + ": host " + name + " cache root. An explicit absolute path can reuse already-downloaded weights or compiled kernels. Unset retains the source's computed workspace-relative path. The original variable, bind mounts and downloads are unchanged.",
+				Description: description,
 			})
 			configuration := &c.workload.Upstream.Configuration[0]
 			configuration.Edits = append(configuration.Edits, sourceconfig.Edit{
@@ -400,8 +425,7 @@ func (c *configurationCollector) scriptInputs(file *syntax.File, source string) 
 			if fallback == nil {
 				continue
 			}
-			value, _ := constantWord(fallback.Word)
-			c.bindEnvironment(name, value, conciseSyntaxComments(stmt.Comments), source, true, c.workload.Upstream.EnvFormat == "literal")
+			c.fallbackEnvironment(name, fallback.Word, conciseSyntaxComments(stmt.Comments), source)
 		}
 	}
 	// HF_TOKEN is consumed directly instead of through a default assignment.
