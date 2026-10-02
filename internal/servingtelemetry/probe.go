@@ -20,10 +20,11 @@ import (
 type Backend string
 
 const (
-	BackendUnknown  Backend = "unknown"
-	BackendVLLM     Backend = "vllm"
-	BackendSGLang   Backend = "sglang"
-	BackendLlamaCPP Backend = "llamacpp"
+	BackendUnknown    Backend = "unknown"
+	BackendVLLM       Backend = "vllm"
+	BackendSGLang     Backend = "sglang"
+	BackendLlamaCPP   Backend = "llamacpp"
+	BackendTensorFold Backend = "tensorfold"
 )
 
 // Persisted monitor error codes. Response bodies and credentials are never
@@ -72,6 +73,8 @@ type depState struct {
 	sglangSticky    float64
 	sglangStickySet bool
 	sglangStickyAt  time.Time
+
+	tensorfold tensorFoldCounters
 }
 
 // NewProber builds a Prober around an injected HTTP client (tests supply a
@@ -104,6 +107,8 @@ func (p *Prober) Probe(ctx context.Context, dep deploy.MonitorTarget) telemetry.
 		return p.probeSGLang(ctx, st, base, now)
 	case BackendLlamaCPP:
 		return p.probeLlamaCPP(ctx, st, base, now)
+	case BackendTensorFold:
+		return p.probeTensorFold(ctx, st, base, now)
 	default:
 		return p.fail(st, fmt.Errorf("%s", ErrUnsupported))
 	}
@@ -118,6 +123,7 @@ func (p *Prober) fail(st *depState, err error) telemetry.ServingPayload {
 		st.gen, st.prompt, st.iter, st.ttftSum = 0, 0, 0, 0
 		st.sglangSticky, st.sglangStickySet = 0, false
 		st.last = time.Time{}
+		st.tensorfold = tensorFoldCounters{}
 	}
 	code := monitorCode(err)
 	msg := err.Error()
@@ -136,6 +142,8 @@ func monitorCode(err error) string {
 	switch {
 	case s == ErrUnsupported:
 		return ErrUnsupported
+	case s == ErrInvalidResponse:
+		return ErrInvalidResponse
 	case s == ErrUnauthorized:
 		return ErrUnauthorized
 	case strings.Contains(s, "timeout"):
@@ -197,6 +205,22 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 		st.backendAt = now
 		return nil
 	}
+	// TensorFold's CUDA health document identifies its backend explicitly.
+	// Check it before the permissive legacy server-info JSON classifier.
+	body, healthErr := p.getBody(ctx, base+"/health")
+	if healthErr == nil {
+		var identity struct {
+			Backend string `json:"backend"`
+		}
+		if json.Unmarshal([]byte(body), &identity) == nil && identity.Backend == string(BackendTensorFold) {
+			if _, err := parseTensorFoldHealth(body); err != nil {
+				return err
+			}
+			st.backend = BackendTensorFold
+			st.backendAt = now
+			return nil
+		}
+	}
 	if body, err := p.getBody(ctx, base+"/get_server_info"); err == nil && isJSON(body) {
 		st.backend = BackendSGLang
 		st.backendAt = now
@@ -206,6 +230,10 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 		st.backend = BackendLlamaCPP
 		st.backendAt = now
 		return nil
+	}
+	// A health failure must not prevent classification of legacy engines.
+	if healthErr != nil {
+		return healthErr
 	}
 	st.backend = BackendUnknown
 	return fmt.Errorf("%s", ErrUnsupported)

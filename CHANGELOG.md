@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feature: collect TensorFold live `/health` telemetry instead of misclassifying it as SGLang, and expose shared deployment/fleet live-statistics panels with sampled generation throughput, completed-request prompt accounting, requests/slots, KV usage, draft acceptance, freshness and history. Preserve valid zero counters, leave unsupported metrics unavailable and handle counter resets/stale baselines without fabricated rates.
 - Fix: default source-bound host Hugging Face cache settings to the selected device's configured writable shared root, including hardcoded checkout-local cache assignments; preserve explicit/profile/literal-source defaults and frozen restarts, support portable cache profiles, block unknown or conflicting roots, and bind the selected cache path to launch approval.
 - Fix: retire completed upstream observers once every attached container is terminal, allow never-started rejected launches to stop logically without touching foreign containers, and report rejected stop commands instead of leaving deployments silently stuck.
 - Fix: resolve missing worker SSH defaults through the selected head's existing SSH configuration and verify the exact selected-worker connection before readiness or restart; preserve explicit targets and fabric bindings without changing keys or trust.

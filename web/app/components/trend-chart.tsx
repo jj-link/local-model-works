@@ -50,6 +50,7 @@ export function TrendChart({
   // Stable identity: recreate only when the series shape changes.
   const defKey = useMemo(() => series.map((s) => `${s.label}:${s.color}`).join("|"), [series]);
   const heightClass = height === 220 ? "h-[220px]" : "h-[180px]";
+  const plotHeightClass = height === 220 ? "min-h-[220px]" : "min-h-[180px]";
    const data = useMemo(() => align(series), [series]);
   // Has-data drives both the empty placeholder and the plot's create/destroy
   // lifecycle so an initially empty chart mounts uPlot only when async sample
@@ -131,7 +132,7 @@ export function TrendChart({
   return (
     <div
       ref={hostRef}
-      className={`w-full ${heightClass}`}
+      className={`w-full ${plotHeightClass}`}
       aria-label={ariaLabel ?? yLabel ?? "trend chart"}
       role="img"
     />

@@ -26,6 +26,7 @@ import {
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { DiagnosticsList } from "~/components/diagnostics-list";
+import { DeploymentLiveStats } from "~/components/fleet/deployment-monitor";
 import { LogPane } from "~/components/log-pane";
 import { CopyButton } from "~/components/copy-button";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
@@ -302,6 +303,8 @@ export default function DeploymentDetailRoute() {
       </div>
 
       {configure ? <DeploymentSettings key={d.id} deploymentID={d.id} /> : null}
+
+      <DeploymentLiveStats deploymentId={d.id} recipeName={d.recipe_name} observedState={d.observed_state} />
 
       {progressRows.length > 0 ? (
         <Section title="launch progress">
