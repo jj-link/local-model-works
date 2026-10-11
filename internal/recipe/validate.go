@@ -165,6 +165,12 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 			if src.Type == "file" && src.Digest == "" {
 				add("recipe.file-unpinned", "file artifact requires a sha256 digest", path+".digest")
 			}
+			if src.Type == "file" && strings.HasPrefix(src.Identity, "https://") {
+				u, err := url.Parse(src.Identity)
+				if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.Opaque != "" || strings.IndexFunc(src.Identity, unicode.IsControl) >= 0 {
+					add("recipe.file-origin", "file origin must be absolute HTTPS without embedded credentials, fragments or control characters", path+".identity")
+				}
+			}
 		}
 		if len(a.Variants) > 0 {
 			if a.DefaultVariant == "" {

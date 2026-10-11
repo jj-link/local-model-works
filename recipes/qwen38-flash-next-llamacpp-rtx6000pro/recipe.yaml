@@ -1,0 +1,245 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: qwen38-flash-next-llamacpp-rtx6000pro
+  version: 1.0.0
+  model: Qwen3.8-Flash-Next
+  engine: llama.cpp
+  description: >-
+    Full Qwen3.8-Flash-Next UD-Q4_K_XL with shared Q8_0 MTP and F16 vision
+    projector on one LMW-selected SM120 GPU. Four original model shards,
+    the shared MTP head and the projector are individually checksum-pinned;
+    acquisition never requests the other quantizations in the Hugging Face
+    repository. Unsloth b11539-mix-2500203 runs with GPU-resident main layers,
+    lazy file-backed PLE, mmap, explicit context sizing and five MTP drafts.
+    The default is 262144 context tokens and one concurrent request. CPU and
+    RAM remain unlimited by the container; no host memory tuning is required.
+    A verified portable runtime archive is extracted into /opt/llama-runtime
+    in the writable container layer, then the launcher execs upstream
+    llama-server. The source revision identifies the release automation;
+    the portable binary reports mixed-build source commit
+    1cdd47c403d51390d85872bf3e1e50c5ca3ccae9, not an independently retrievable
+    source tree. Model weights use Qwen Community License 1.0; llama.cpp is MIT.
+  license: MIT AND LicenseRef-Qwen-Community-1.0
+  source:
+    url: https://github.com/unslothai/llama.cpp
+    revision: "3a1e7cc1d81709ba368a4ca41e138fadabceeb13"
+    path: .
+# Model license declaration at the pinned revision:
+# https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/766911a6b7369840a91dbcd95f9f997acaab6cd6/README.md
+# License text: https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE
+# Launch procedure: https://unsloth.ai/docs/models/qwen3.8-next
+compatibility:
+  nodeCount: 1
+  accelerator:
+    vendor: nvidia
+    architectures: [sm_120]
+    count: 1
+    minMemoryBytes: 96636764160
+artifacts:
+  - name: model_shard_1
+    kind: file
+    sizeBytes: 10946624
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+      digest: sha256:4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082
+    mount: /var/lib/lmw/artifacts/model/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+    validation: file
+  - name: model_shard_2
+    kind: file
+    sizeBytes: 49859583136
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf
+      digest: sha256:3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9
+    mount: /var/lib/lmw/artifacts/model/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf
+    validation: file
+  - name: model_shard_3
+    kind: file
+    sizeBytes: 49376141504
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf
+      digest: sha256:56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3
+    mount: /var/lib/lmw/artifacts/model/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf
+    validation: file
+  - name: model_shard_4
+    kind: file
+    sizeBytes: 12087983520
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+      digest: sha256:753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a
+    mount: /var/lib/lmw/artifacts/model/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+    validation: file
+  - name: mtp
+    kind: file
+    sizeBytes: 2786568256
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
+      digest: sha256:5ff54097406a905cf3a724c709124ceb0e3e10235ee862298969e91c96fa96e6
+    mount: /var/lib/lmw/artifacts/model/MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
+    validation: file
+  - name: mmproj
+    kind: file
+    sizeBytes: 904004000
+    source:
+      type: file
+      identity: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/766911a6b7369840a91dbcd95f9f997acaab6cd6/mmproj-F16.gguf
+      digest: sha256:1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980
+    mount: /var/lib/lmw/artifacts/model/mmproj-F16.gguf
+    validation: file
+  - name: runtime_archive
+    kind: file
+    sizeBytes: 322612058
+    source:
+      type: file
+      identity: https://github.com/unslothai/llama.cpp/releases/download/b11539-mix-2500203/app-b11539-mix-2500203-linux-x64-cuda13-portable.tar.gz
+      digest: sha256:888d8b324b0015d77372dbb8c2f2405d1b7f9d55eb3f8b4d3c40ff299719027e
+    mount: /var/lib/lmw/artifacts/llama-cuda13.tar.gz
+    validation: file
+  - name: openmp_runtime
+    kind: file
+    sizeBytes: 148062
+    source:
+      type: file
+      identity: https://security.ubuntu.com/ubuntu/pool/main/g/gcc-14/libgomp1_14.2.0-4ubuntu2~24.04.1_amd64.deb
+      digest: sha256:e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144
+    mount: /var/lib/lmw/artifacts/libgomp1.deb
+    validation: file
+parameters:
+  - name: context_length
+    type: int
+    default: 262144
+    min: 4096
+    max: 262144
+    group: Capacity
+    description: Explicit llama-server context capacity; automatic fitting is disabled.
+  - name: max_concurrent_requests
+    type: int
+    default: 1
+    min: 1
+    max: 4
+    group: Capacity
+    description: Parallel server slots; review context and GPU memory capacity before increasing.
+  - name: temperature
+    type: float
+    default: 1.0
+    min: 0
+    max: 2
+    group: Sampling
+    description: Upstream recommended thinking-mode temperature; requests may override it.
+  - name: top_p
+    type: float
+    default: 0.95
+    min: 0
+    max: 1
+    group: Sampling
+  - name: top_k
+    type: int
+    default: 20
+    min: 0
+    max: 1000
+    group: Sampling
+  - name: min_p
+    type: float
+    default: 0.0
+    min: 0
+    max: 1
+    group: Sampling
+  - name: presence_penalty
+    type: float
+    default: 0.0
+    min: -2
+    max: 2
+    group: Sampling
+  - name: repeat_penalty
+    type: float
+    default: 1.0
+    min: 0.1
+    max: 2
+    group: Sampling
+  - name: reasoning_effort
+    type: enum
+    default: xhigh
+    enum: [low, medium, xhigh]
+    group: Reasoning
+    description: Default thinking effort; requests can disable thinking with enable_thinking=false.
+workloads:
+  - image:
+      reference: docker.io/nvidia/cuda:13.0.2-runtime-ubuntu24.04
+      digest: sha256:121b25126d81cddeae4c048aa46e94050514ca6b8609a124027b38073e7ef4b6
+    command: [/lmw/assets/launch.sh]
+    args:
+      - --model
+      - ${artifact.model_shard_1.path}
+      - --model-draft
+      - ${artifact.mtp.path}
+      - --mmproj
+      - ${artifact.mmproj.path}
+      - --spec-type
+      - draft-mtp
+      - --spec-draft-n-max
+      - "5"
+      - --lazy-mode
+      - "on"
+      - --load-mode
+      - mmap
+      - -ngl
+      - "99"
+      - --fit
+      - "off"
+      - --jinja
+      - --ctx-size
+      - ${setting.context_length}
+      - --parallel
+      - ${setting.max_concurrent_requests}
+      - --temp
+      - ${setting.temperature}
+      - --top-p
+      - ${setting.top_p}
+      - --top-k
+      - ${setting.top_k}
+      - --min-p
+      - ${setting.min_p}
+      - --presence-penalty
+      - ${setting.presence_penalty}
+      - --repeat-penalty
+      - ${setting.repeat_penalty}
+      - --reasoning-effort
+      - ${setting.reasoning_effort}
+      - --alias
+      - Qwen3.8-Flash-Next
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --metrics
+      - --perf
+    networkMode: bridge
+    permissions: [rootfs.write]
+    ports:
+      - container: 8000
+        host: 8000
+        protocol: tcp
+    resources:
+      shmBytes: 67108864
+      pids: 1024
+    readiness:
+      httpGet:
+        path: /health
+        port: 8000
+      intervalSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 30
+    verify:
+      httpGet:
+        path: /v1/models
+        port: 8000
+      expect:
+        statusCode: 200
+        bodyContains: Qwen3.8-Flash-Next
+assets:
+  - launch.sh

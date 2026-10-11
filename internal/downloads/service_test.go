@@ -479,3 +479,22 @@ func TestImagePlatformTreatsOnlyARM64V8AsBaseline(t *testing.T) {
 		t.Fatal("a newer ISA requirement was discarded")
 	}
 }
+
+func TestSelectedArtifactRejectsUnsafeHTTPSFileOrigins(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("b", 64)
+	origin := "https://huggingface.co/owner/model/resolve/" + strings.Repeat("a", 40) + "/weights.gguf?download=true"
+	artifact := recipe.Artifact{
+		Name: "weights", Kind: "file", SizeBytes: 123,
+		Source: &recipe.ArtSource{Type: "file", Identity: origin, Digest: digest},
+	}
+	for _, origin := range []string{
+		"https://user:secret@example.com/weights.gguf",
+		"https://example.com/weights.gguf#fragment",
+		"https:///weights.gguf",
+	} {
+		artifact.Source.Identity = origin
+		if _, err := selectedArtifact(artifact, "", "/cache"); err == nil {
+			t.Fatalf("unsafe HTTPS origin accepted: %s", origin)
+		}
+	}
+}

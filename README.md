@@ -137,6 +137,8 @@ To update running models, select exact deployments under **Replace selected runn
 
 Native source-authored `recipe.yaml`/`recipe.json` bundles remain supported without reconstructing their runtime. Their declared package assets, images and model resources retain the generic packaging and acquisition workflow. Public registry references are verified and pinned to digests; verification failures block saving.
 
+For individual immutable downloads, `source.type: file` accepts an HTTPS `source.identity` and requires `source.digest: sha256:<hex>`. Malformed URLs, control characters, embedded credentials, fragments and insecure HTTP origins are rejected during recipe validation. Separate file artifacts can select exact GGUF shards and sidecars without claiming that a partial Hugging Face checkout is a complete managed snapshot.
+
 On **Devices**, review **Download to device** separately from running. Its frozen plan lists all declared model/data files, platform-specific images, helper packages, exact sources, credentials, destinations, storage, and staging requirements. Verified reuse and supported partial-data recovery precede eligible peer or origin acquisition; unknown identity, integrity, or storage requirements block submission. Download eligibility does not reserve GPUs or require an idle serving device. Completion requires every declared resource to be verified, not merely a successful transfer or an existing directory.
 
 **Run on device** defaults to verified existing files only. Missing or changed resources block every launch gate without implicitly fetching them. **Download and run** is a separate explicit choice with a fresh resource review. Runtime settings, ranks, permissions, host preparation, and hardware suitability still require their own launch plan.
@@ -146,6 +148,17 @@ Each node reports durable per-file and aggregate acquisition progress. Interrupt
 On Linux agents, successful SHA-256 calculations are reused while the file identity, size, permissions, modification time, and change time remain unchanged. Launch checks and peer manifests therefore do not reread unchanged model weights at every stage. Downloads and repairs still require matching checksums; a changed file is hashed again, and a missing or mismatched file blocks launch. This bounded cache is process-local: agent restart or cache eviction requires fresh verification. Platforms without supported change-time metadata continue full verification.
 
 Native managed workloads run without container-imposed CPU quotas, CPU affinity restrictions, or RAM ceilings. Recipes do not expose these controls. Upstream scripts own their own runtime options; device inventory and hardware checks do not constrain their host execution.
+
+#### Qwen3.8 Flash Next with llama.cpp on RTX PRO 6000
+
+[`qwen38-flash-next-llamacpp-rtx6000pro`](recipes/qwen38-flash-next-llamacpp-rtx6000pro/recipe.yaml) is a native managed-container bundle for one 96 GB-class SM120 GPU, not a Spark upstream-script adaptation. It uses the full, non-pruned Unsloth `UD-Q4_K_XL` checkpoint, shared `Q8_0` MTP head and `mmproj-F16.gguf` at HF revision `766911a6b7369840a91dbcd95f9f997acaab6cd6`. The six selected weight files total approximately `107.1 GiB`; other quantizations are not downloaded. Each file has its own SHA-256 and read-only mount.
+
+The runtime is Unsloth's `b11539-mix-2500203` Linux x64 CUDA 13 portable archive, SHA-256 `888d8b324b0015d77372dbb8c2f2405d1b7f9d55eb3f8b4d3c40ff299719027e`. Release provenance is pinned to `3a1e7cc1d81709ba368a4ca41e138fadabceeb13`; the binary reports mixed-build commit `1cdd47c403d51390d85872bf3e1e50c5ca3ccae9`, which is not independently retrievable as a source tree. The CUDA 13.0.2 Ubuntu 24.04 image uses its exact x64 manifest `sha256:121b25126d81cddeae4c048aa46e94050514ca6b8609a124027b38073e7ef4b6`. A separately pinned Ubuntu OpenMP package supplies the missing runtime library. The launcher extracts these verified files under `/opt` in the writable container layer and directly executes `llama-server`; it does not install host packages, download at startup or allocate a RAM-backed installation directory.
+
+Defaults are one `262144`-token slot, five-token MTP drafting, vision, GPU-resident main layers and lazy, file-backed n-gram embeddings (`--lazy-mode on --load-mode mmap`). Automatic fitting is disabled, so startup cannot silently shorten the configured context. Context capacity is shared across parallel slots; increasing concurrency does not give each slot the full configured window. CPU/RAM ceilings and WSL RAM settings are not changed, and the embedding file's virtual mapping is not a requirement to pin the entire table in RAM. LMW's selected GPU UUID controls both Docker device requests and CUDA visibility, including WSL systems where Docker filtering alone exposes other adapters.
+
+Import this directory as a native recipe package and use the normal reviewed acquisition and launch workflow. Runtime/image storage is additional to the weight-file total. The OpenAI-compatible endpoint is `http://<workstation-address>:8000/v1`, model `Qwen3.8-Flash-Next`. No inference API key is configured; restrict network access to trusted clients. Model weights use Qwen Community License 1.0; llama.cpp is MIT, and container/runtime dependencies retain their own terms.
+
 
 ### Reviewed upstream procedures
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Feature: add a native RTX PRO 6000 Qwen3.8 Flash Next llama.cpp recipe with the full checksum-pinned Q4_K_XL checkpoint, shared Q8 MTP, F16 vision, one 262144-token slot and lazy file-backed n-gram tables. Pin the Unsloth runtime, x64 CUDA image and OpenMP dependency; retain placement-bound GPU visibility without changing host RAM settings.
+- Fix: permit checksum-required HTTPS origins for native file artifacts, enabling exact GGUF shard/sidecar acquisition without downloading every repository quantization or fabricating a complete Hugging Face snapshot. Reject malformed URLs, control characters, insecure transport, embedded credentials and fragments before import.
+
 - Feature: collect TensorFold live `/health` telemetry instead of misclassifying it as SGLang, and expose shared deployment/fleet live-statistics panels with sampled generation throughput, completed-request prompt accounting, requests/slots, KV usage, draft acceptance, freshness and history. Preserve valid zero counters, leave unsupported metrics unavailable and handle counter resets/stale baselines without fabricated rates.
 - Fix: default source-bound host Hugging Face cache settings to the selected device's configured writable shared root, including hardcoded checkout-local cache assignments; preserve explicit/profile/literal-source defaults and frozen restarts, support portable cache profiles, block unknown or conflicting roots, and bind the selected cache path to launch approval.
 - Fix: retire completed upstream observers once every attached container is terminal, allow never-started rejected launches to stop logically without touching foreign containers, and report rejected stop commands instead of leaving deployments silently stuck.
