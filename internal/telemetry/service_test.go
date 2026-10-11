@@ -260,3 +260,45 @@ func TestHistoryLimitBounds(t *testing.T) {
 		t.Fatalf("serving limit=100001 fallback: n=%d err=%v", len(servFB), err)
 	}
 }
+
+func TestServingKVMetricKindsRemainDistinctInRollups(t *testing.T) {
+	out := aggregateServingMinute([]ServingPayload{
+		{KVCacheUsageRatio: new(0.25), KVCacheMaxStreamUsageRatio: new(0.8)},
+		{KVCacheUsageRatio: new(0.5), KVCacheMaxStreamUsageRatio: new(0.0)},
+		{},
+	})
+	if out.KVCacheUsageRatio == nil || *out.KVCacheUsageRatio != 0.375 {
+		t.Fatalf("pool occupancy mixed with stream occupancy: %v", out.KVCacheUsageRatio)
+	}
+	if out.KVCacheMaxStreamUsageRatio == nil || *out.KVCacheMaxStreamUsageRatio != 0.4 {
+		t.Fatalf("stream average must include idle zero and exclude unavailable: %v", out.KVCacheMaxStreamUsageRatio)
+	}
+	missing := aggregateServingMinute([]ServingPayload{{}, {}})
+	if missing.KVCacheUsageRatio != nil || missing.KVCacheMaxStreamUsageRatio != nil {
+		t.Fatalf("unavailable KV measurements became zero: %+v", missing)
+	}
+}
+
+func TestServingQueueRollupPreservesAvailability(t *testing.T) {
+	zero, four := int32(0), int32(4)
+	for _, tc := range []struct {
+		name   string
+		values []*int32
+		want   *int32
+	}{
+		{"unreported", []*int32{nil, nil}, nil},
+		{"measured empty", []*int32{nil, &zero}, &zero},
+		{"ignore unavailable, include zero", []*int32{&four, nil, &zero}, new(int32(2))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			samples := make([]ServingPayload, len(tc.values))
+			for i, value := range tc.values {
+				samples[i] = ServingPayload{Available: true, Backend: "llamacpp", RequestsWaiting: value}
+			}
+			got := aggregateServingMinute(samples).RequestsWaiting
+			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+				t.Fatalf("queue rollup = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -435,7 +435,7 @@ export default function DeploymentDetailRoute() {
           </div>
         </div>
         <div className="min-w-0 p-3">
-          <LogPane key={d.run_id ?? "none"} url={deploymentLogsUrl(d.id, logRank)} active={LOG_ACTIVE.has(d.observed_state)} />
+          <LogPane key={d.run_id ?? "none"} url={deploymentLogsUrl(d.id, logRank)} active={LOG_ACTIVE.has(d.observed_state)} summarize />
         </div>
       </Section>
     </div>

@@ -35,6 +35,10 @@ type upstreamRecord struct {
 	Spec     ContainerSpec     `json:"spec"`
 	Removed  bool              `json:"removed,omitempty"`
 	Observed map[string]string `json:"observed"`
+	// LogSources retains immutable IDs that were observed for this installation,
+	// even after authored names point to replacements. It grants no lifecycle
+	// authority; retired IDs are eligible only for bounded retained-log drains.
+	LogSources map[string]string `json:"log_sources,omitempty"`
 	// Superseded revokes the whole installation's current authority without
 	// deleting historical IDs or the retained source workspace.
 	Superseded   bool              `json:"superseded,omitempty"`
@@ -112,6 +116,7 @@ func WithUpstream(base Runtime, persistentRoot string, allowExecution bool) (Run
 		if rec.Observed == nil {
 			rec.Observed = make(map[string]string)
 		}
+		historyChanged := rememberLogSources(&rec)
 		if rec.Job != nil && !rec.Superseded {
 			var status upstreamStatus
 			if err := readUpstreamJSON(filepath.Join(rec.Job.Dir, "status.json"), &status); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -122,6 +127,11 @@ func WithUpstream(base Runtime, persistentRoot string, allowExecution bool) (Run
 			}
 		}
 		r.records[rec.ID] = &rec
+		if rememberLogSources(&rec) || historyChanged {
+			if err := r.save(&rec); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return r, nil
 }
@@ -249,7 +259,23 @@ func (r *upstreamRuntime) record(id string) *upstreamRecord {
 }
 
 func (r *upstreamRuntime) save(rec *upstreamRecord) error {
+	rememberLogSources(rec)
 	return writeUpstreamJSON(filepath.Join(r.root, rec.ID, "record.json"), rec)
+}
+
+func rememberLogSources(rec *upstreamRecord) bool {
+	changed := false
+	for name, id := range rec.Observed {
+		if id == "" || rec.LogSources[id] != "" {
+			continue
+		}
+		if rec.LogSources == nil {
+			rec.LogSources = make(map[string]string)
+		}
+		rec.LogSources[id] = name
+		changed = true
+	}
+	return changed
 }
 
 func (r *upstreamRuntime) Create(ctx context.Context, spec *ContainerSpec) (string, error) {

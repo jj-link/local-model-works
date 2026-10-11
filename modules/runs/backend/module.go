@@ -157,9 +157,20 @@ func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
 	for {
-		chunk, next, size, rerr := m.env.Runs.ReadLog(run.ID, depID, 0, "stdout", offset, 0)
+		chunk, next, size, rerr := m.env.Runs.ReadLogText(run.ID, depID, 0, "stdout", offset)
 		if rerr != nil {
 			return
+		}
+		if offset > size {
+			tail, cursor, err := m.env.Runs.ReadLogTail(run.ID, depID, 0, "stdout")
+			if err != nil {
+				return
+			}
+			payload, _ := json.Marshal(string(tail))
+			fmt.Fprintf(w, "id: %d\nevent: snapshot\ndata: %s\n\n", cursor, payload)
+			offset = cursor
+			flusher.Flush()
+			continue
 		}
 		if len(chunk) > 0 {
 			payload, _ := json.Marshal(string(chunk))
@@ -169,7 +180,7 @@ func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 		}
 		// Terminate when the run is terminal and the fully drained log is
 		// fully delivered (the agent's final marker recorded the EOF).
-		if end, done := m.env.Runs.LogEnded(run.ID, depID, 0, "stdout"); done && offset >= size {
+		if end, done := m.env.Runs.LogEnded(run.ID, depID, 0, "stdout"); done && offset >= size && offset >= end {
 			cur, gerr := m.env.Runs.Get(r.Context(), run.ID)
 			if gerr == nil && runs.State(cur.State).Terminal() {
 				fmt.Fprintf(w, "id: %d\nevent: end\ndata: {\"size\":%d}\n\n", end, size)

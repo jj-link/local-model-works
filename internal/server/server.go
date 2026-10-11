@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -375,42 +373,4 @@ func parseDBTime(v string) (time.Time, error) {
 		return t, nil
 	}
 	return time.Parse(time.RFC3339, v)
-}
-
-// ensureRunRoot guarantees the run-state root exists.
-func (s *Server) ensureRunRoot() error {
-	return os.MkdirAll(s.cfg.RunRoot(), 0o755)
-}
-
-// runLogPath is the append-only log file for one deployment rank and
-// stream. It returns "" when a path component could escape RunRoot.
-func (s *Server) runLogPath(runID, deploymentID string, rank int32, stream string) string {
-	if deploymentID == "" {
-		deploymentID = "adhoc"
-	}
-	// runID and deploymentID arrive from the agent; refuse any component
-	// that could escape RunRoot.
-	if runID == "" || runID == "." || runID == ".." || deploymentID == "." ||
-		deploymentID == ".." || filepath.Base(runID) != runID || filepath.Base(deploymentID) != deploymentID {
-		return ""
-	}
-	if stream != "stdout" && stream != "stderr" {
-		stream = "stdout"
-	}
-	return filepath.Join(s.cfg.RunRoot(), runID, "logs", deploymentID,
-		filepath.Base(strings.ReplaceAll(deploymentID, " ", "_"))+"-rank"+itoa(rank)+"_"+stream+".log")
-}
-
-func itoa(n int32) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }

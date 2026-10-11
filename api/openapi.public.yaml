@@ -520,6 +520,20 @@ paths:
         - deployments
   /deployments/{id}/logs:
     get:
+      description: |
+        Streams both stdout and stderr for the selected rank. Without
+        Last-Event-ID, opens with one snapshot event whose JSON data is
+        {"stdout":"...","stderr":"..."}, containing up to 200 recent lines
+        within 64 KiB per stream. Subsequent message events carry JSON
+        {"stream":"stdout"|"stderr","data":"..."} byte-range fragments.
+        Every event id is "<stdout byte offset>:<stderr byte offset>";
+        Last-Event-ID resumes both files at those exact offsets. An explicit
+        value of 0 reads both retained files from the beginning. Other cursor
+        formats are rejected with 400. The end event carries final offsets
+        {"stdout":0,"stderr":0} and is sent only after both EOFs are delivered
+        and the run is terminal. Output order across files is delivery order,
+        not a reconstruction of container write order. Filtering in the console
+        never alters stored logs.
       operationId: deploymentLogs
       parameters:
         - $ref: '#/components/parameters/ID'
@@ -534,6 +548,8 @@ paths:
               schema:
                 type: string
           description: Log stream
+        "400":
+          description: Invalid rank or combined log cursor
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
@@ -6410,6 +6426,11 @@ components:
           format: double
           nullable: true
           type: number
+        kv_cache_max_stream_usage_ratio:
+          description: Largest native active-stream context/window ratio; includes planned prefill tokens and excludes idle retained prefixes. Not physical GPU-memory or shared-pool utilization.
+          format: double
+          nullable: true
+          type: number
         kv_cache_usage_ratio:
           format: double
           nullable: true
@@ -6431,6 +6452,7 @@ components:
           format: int64
           type: integer
         requests_waiting:
+          description: Omitted when queue depth is unavailable; an explicit zero means a measured empty queue.
           format: int64
           type: integer
         slots_active:

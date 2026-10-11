@@ -74,6 +74,8 @@ func aggregateServingMinute(payloads []ServingPayload) ServingPayload {
 	var slotsCnt int
 	var kvSum float64
 	var kvCnt int
+	var streamKVSum float64
+	var streamKVCnt int
 	var prefixSum float64
 	var prefixCnt int
 	var ttftSum, e2eSum, itlSum float64
@@ -90,9 +92,12 @@ func aggregateServingMinute(payloads []ServingPayload) ServingPayload {
 			prefillSum += *p.PrefillTPS
 			prefillCnt++
 		}
-		if p.RequestsRunning > 0 || p.RequestsWaiting > 0 {
+		if p.RequestsRunning > 0 {
 			runSum += int64(p.RequestsRunning)
-			waitSum += int64(p.RequestsWaiting)
+		}
+		if p.RequestsWaiting != nil {
+			waitSum += int64(*p.RequestsWaiting)
+			waitCnt++
 		}
 		if p.SlotsActive > 0 || p.SlotsTotal > 0 {
 			slotsActiveSum += int64(p.SlotsActive)
@@ -102,6 +107,10 @@ func aggregateServingMinute(payloads []ServingPayload) ServingPayload {
 		if p.KVCacheUsageRatio != nil {
 			kvSum += *p.KVCacheUsageRatio
 			kvCnt++
+		}
+		if p.KVCacheMaxStreamUsageRatio != nil {
+			streamKVSum += *p.KVCacheMaxStreamUsageRatio
+			streamKVCnt++
 		}
 		if p.PrefixCacheHitRatio != nil {
 			prefixSum += *p.PrefixCacheHitRatio
@@ -151,15 +160,21 @@ func aggregateServingMinute(payloads []ServingPayload) ServingPayload {
 			// all zeros: leave integer defaults
 		} else if runCnt > 0 {
 			out.RequestsRunning = int32(runSum / int64(runCnt))
-			out.RequestsWaiting = int32(waitSum / int64(waitCnt))
 		}
 		if slotsCnt > 0 {
 			out.SlotsActive = int32(slotsActiveSum / int64(slotsCnt))
 			out.SlotsTotal = int32(slotsTotalSum / int64(slotsCnt))
 		}
 	}
+	if waitCnt > 0 {
+		value := int32(waitSum / int64(waitCnt))
+		out.RequestsWaiting = &value
+	}
 	if kvCnt > 0 {
 		out.KVCacheUsageRatio = &[]float64{kvSum / float64(kvCnt)}[0]
+	}
+	if streamKVCnt > 0 {
+		out.KVCacheMaxStreamUsageRatio = new(streamKVSum / float64(streamKVCnt))
 	}
 	if prefixCnt > 0 {
 		out.PrefixCacheHitRatio = &[]float64{prefixSum / float64(prefixCnt)}[0]
@@ -253,10 +268,13 @@ func (s *Service) servingPrometheusLines(ctx context.Context) []string {
 		gauge("lmw_serving_generation_tps", p.GenerationTPS)
 		gauge("lmw_serving_prefill_tps", p.PrefillTPS)
 		lines = append(lines, fmtServing("lmw_serving_requests_running", id, float64(p.RequestsRunning)))
-		lines = append(lines, fmtServing("lmw_serving_requests_waiting", id, float64(p.RequestsWaiting)))
+		if p.RequestsWaiting != nil {
+			lines = append(lines, fmtServing("lmw_serving_requests_waiting", id, float64(*p.RequestsWaiting)))
+		}
 		lines = append(lines, fmtServing("lmw_serving_slots_active", id, float64(p.SlotsActive)))
 		lines = append(lines, fmtServing("lmw_serving_slots_total", id, float64(p.SlotsTotal)))
 		gauge("lmw_serving_kv_cache_usage_ratio", p.KVCacheUsageRatio)
+		gauge("lmw_serving_kv_cache_max_stream_usage_ratio", p.KVCacheMaxStreamUsageRatio)
 		gauge("lmw_serving_prefix_cache_hit_ratio", p.PrefixCacheHitRatio)
 		gauge("lmw_serving_ttft_p95_seconds", p.TTFTP95Seconds)
 		gauge("lmw_serving_e2e_p95_seconds", p.E2EP95Seconds)

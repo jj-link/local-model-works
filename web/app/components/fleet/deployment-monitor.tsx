@@ -112,9 +112,28 @@ function RankZeroPanel({
   const samples = useServingTelemetry(deploymentId, range);
   const latest = latestQuery.data?.find((s) => s.deployment_id === deploymentId);
   const p = latest?.payload;
-  const tensorFold = (p?.backend ?? samples.data?.at(-1)?.payload.backend) === "tensorfold";
+  let backend = p?.available ? p.backend : undefined;
+  let kvSample = p;
+  let hasKV = p?.kv_cache_usage_ratio != null || p?.kv_cache_max_stream_usage_ratio != null;
+  if (samples.data && (!backend || !hasKV)) {
+    for (let i = samples.data.length - 1; i >= 0; i--) {
+      const historical = samples.data[i].payload;
+      if (!historical.available) continue;
+      backend ??= historical.backend;
+      if (!hasKV && (historical.kv_cache_usage_ratio != null || historical.kv_cache_max_stream_usage_ratio != null)) {
+        kvSample = historical;
+        hasKV = true;
+      }
+      if (backend && hasKV) break;
+    }
+  }
+  const tensorFold = backend === "tensorfold";
   const promptLabel = tensorFold ? "prompt accounting rate" : "prefill";
   const acceptanceLabel = tensorFold ? "draft acceptance (completed requests)" : "draft acceptance";
+  const streamKV = kvSample?.kv_cache_usage_ratio == null && kvSample?.kv_cache_max_stream_usage_ratio != null;
+  const kvLabel = streamKV ? "KV context (busiest stream)" : "KV cache usage";
+  const kvDescription = streamKV ? "Native active-stream context/window usage. Includes the full prompt during prefill; excludes idle retained prefixes. Not GPU-memory utilization." : undefined;
+  const kvValue = p?.kv_cache_usage_ratio ?? p?.kv_cache_max_stream_usage_ratio;
   const fresh = latest != null && isFreshSample(latest.ts, observedState === "healthy" || observedState === "degraded");
   return (
     <div className="rounded border border-hairline p-3">
@@ -150,7 +169,7 @@ function RankZeroPanel({
             <Metric label={promptLabel} value={num(p.prefill_tps, "tok/s")} />
             <Metric label="requests running / waiting" value={`${count(reportedCount(p, "requests_running"))} / ${count(reportedCount(p, "requests_waiting"))}`} />
             <Metric label="slots active / total" value={`${count(reportedCount(p, "slots_active"))} / ${count(reportedCount(p, "slots_total"))}`} />
-            <Metric label="kv cache" value={ratio(p.kv_cache_usage_ratio)} />
+            <Metric label={kvLabel} value={kvValue == null ? "not reported" : ratio(kvValue)} title={kvDescription} />
             <Metric label="prefix hit" value={ratio(p.prefix_cache_hit_ratio)} />
             <Metric label="ttft/e2e/itl p95" value={`${sec(p.ttft_p95_seconds)} / ${sec(p.e2e_p95_seconds)} / ${sec(p.itl_p95_seconds)}`} />
             <Metric label="preemptions" value={count(reportedCount(p, "preemptions_total"))} />
@@ -195,13 +214,13 @@ function RankZeroPanel({
             />
           </figure>
           <figure>
-            <figcaption className="lmw-label mb-2">KV cache usage</figcaption>
+            <figcaption className="lmw-label mb-2" title={kvDescription}>{kvLabel}</figcaption>
             <TrendChart
-              series={histSeries(samples.data, (x) => x.kv_cache_usage_ratio).map((s) => ({ ...s, label: "KV cache usage", color: TEAL }))}
+              series={histSeries(samples.data, (x) => streamKV ? x.kv_cache_max_stream_usage_ratio : x.kv_cache_usage_ratio).map((s) => ({ ...s, label: kvLabel, color: TEAL }))}
               yLabel="ratio"
               yFixed={[0, 1]}
               valueFormat={formatPercent}
-              ariaLabel="KV cache usage"
+              ariaLabel={kvLabel}
             />
           </figure>
           <figure>
@@ -222,9 +241,9 @@ function RankZeroPanel({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <span className="flex items-baseline justify-between gap-2">
+    <span className="flex items-baseline justify-between gap-2" title={title}>
       <span className="lmw-label">{label}</span>
       <span className="tnum text-foreground">{value}</span>
     </span>
@@ -247,8 +266,8 @@ function count(v: number | null | undefined): string {
 function reportedCount(p: ServingTelemetrySample["payload"], key: "requests_running" | "requests_waiting" | "slots_active" | "slots_total" | "preemptions_total"): number | null {
   if (!p.available) return null;
   if (p[key] != null) return p[key];
-  if (key === "requests_running" && ["vllm", "sglang", "tensorfold"].includes(p.backend ?? "")) return 0;
-  if ((key === "requests_waiting" || key === "preemptions_total") && p.backend === "vllm") return 0;
+  if (key === "requests_running" && ["vllm", "sglang", "llamacpp", "tensorfold"].includes(p.backend ?? "")) return 0;
+  if (key === "preemptions_total" && p.backend === "vllm") return 0;
   if (key === "slots_active" && (["vllm", "sglang", "llamacpp"].includes(p.backend ?? "") || (p.slots_total ?? 0) > 0)) return 0;
   if (key === "slots_total" && p.backend === "llamacpp") return 0;
   return null;

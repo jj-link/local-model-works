@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/nodes"
+	"github.com/jj-link/local-model-works/internal/runs"
 	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 	agentv1connect "github.com/jj-link/local-model-works/proto/agent/v1/agentv1connect"
@@ -285,15 +285,6 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 	}
 	s.bus.Publish(ctx, "node.online", nodeID, mustJSON(map[string]any{"status": status}))
 
-	// Reconcile: tell the agent which active deployments it must host,
-	// then re-drive dispatch from persisted phases (idempotent).
-	if refs := s.reconcileDeployments(ctx, nodeID); len(refs) > 0 {
-		conn.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_ReconcileRequest{
-			ReconcileRequest: &agentv1.ReconcileRequest{Deployments: refs, Reason: "reconnect"},
-		}})
-	}
-	s.deploys.Converge(ctx, nodeID)
-
 	// Writer pump: outbound messages until the stream or the conn closes.
 	writerDone := make(chan struct{})
 	go func() {
@@ -315,7 +306,16 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 		// still be using it at that point.
 		<-writerDone
 	}()
+	// Reconcile: tell the agent which active deployments it must host,
+	// then re-drive dispatch from persisted phases (idempotent).
+	if refs := s.reconcileDeployments(ctx, nodeID); len(refs) > 0 {
+		conn.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_ReconcileRequest{
+			ReconcileRequest: &agentv1.ReconcileRequest{Deployments: refs, Reason: "reconnect"},
+		}})
+	}
+	s.deploys.Converge(ctx, nodeID)
 	go s.env.Downloads.OnReconnect(ctx, nodeID)
+	go s.replayDeploymentLogs(ctx, conn)
 
 	// Watchdog: a silent-but-open connection goes offline after the
 	// heartbeat timeout.
@@ -344,6 +344,10 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 			}
 		}
 	}()
+
+	// One replay request covers the missing prefix through the first gap.
+	// Later live chunks may race it, but must not flood the outbound queue.
+	logReplays := make(map[string]logReplay)
 
 	for {
 		msg, err := stream.Receive()
@@ -405,7 +409,9 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 		case *agentv1.AgentMessage_StateUpdate:
 			s.applyStateUpdate(ctx, nodeID, body.StateUpdate)
 		case *agentv1.AgentMessage_LogChunk:
-			s.appendLog(nodeID, body.LogChunk)
+			if err := s.receiveLog(conn, body.LogChunk, logReplays); err != nil {
+				return connect.NewError(connect.CodeInternal, err)
+			}
 		case *agentv1.AgentMessage_PlacementReport:
 			s.applyPlacementReport(ctx, nodeID, body.PlacementReport)
 		case *agentv1.AgentMessage_TransferProgress:
@@ -451,10 +457,7 @@ func (s *Server) reconcileDeployments(ctx context.Context, nodeID string) []*age
 	}
 	var refs []*agentv1.DeploymentRef
 	for _, d := range deps {
-		if d.DesiredState != "running" && d.DesiredState != "stopped" {
-			continue
-		}
-		if d.DesiredState == "stopped" && d.ObservedState == "stopped" {
+		if !deploymentNeedsReconcile(d.DesiredState, d.ObservedState) {
 			continue
 		}
 		ps := deploy.ParsePlacementSet(d.Placement)
@@ -469,39 +472,121 @@ func (s *Server) reconcileDeployments(ctx context.Context, nodeID string) []*age
 	return refs
 }
 
+func deploymentNeedsReconcile(desired, observed string) bool {
+	return desired == "running" || (desired == "stopped" && observed != "stopped")
+}
+
 // applyStateUpdate delegates container-state handling to the deploy
 // service (observed state, run failure, stop confirmation).
 func (s *Server) applyStateUpdate(ctx context.Context, nodeID string, su *agentv1.StateUpdate) {
 	s.deploys.OnStateUpdate(ctx, nodeID, su)
 }
 
-func (s *Server) appendLog(nodeID string, lc *agentv1.LogChunk) {
+type logReplay struct {
+	through uint64
+	target  uint64
+	end     uint64
+	final   bool
+}
+
+func (s *Server) receiveLog(conn *nodes.Conn, lc *agentv1.LogChunk, pending map[string]logReplay) error {
+	next, err := s.appendLog(lc)
+	gap := errors.Is(err, runs.ErrLogGap)
+	if err != nil && !gap {
+		return err
+	}
+	key := s.runs.LogPath(lc.GetRunId(), lc.GetDeploymentId(), lc.GetRank(), lc.GetStream())
+	replay, exists := pending[key]
+	if gap {
+		target := lc.GetOffset() + uint64(len(lc.GetData()))
+		if lc.GetFinal() {
+			target = lc.GetEndOffset()
+			replay.end = max(replay.end, target)
+			replay.final = true
+		}
+		replay.target = max(replay.target, target)
+	}
+	if next >= replay.target {
+		if replay.final {
+			s.runs.MarkLogEnd(lc.GetRunId(), lc.GetDeploymentId(), lc.GetRank(), lc.GetStream(), replay.end)
+		}
+		delete(pending, key)
+		return nil
+	}
+	if !exists || next >= replay.through {
+		// A live chunk may overtake an in-flight replay. Once that replay
+		// reaches its original frontier, fetch any later gap as well.
+		replay.through = replay.target
+		s.requestLogReplay(conn, lc.GetRunId(), lc.GetDeploymentId(), lc.GetRank(), lc.GetStream(), next)
+	}
+	pending[key] = replay
+	return nil
+}
+
+func (s *Server) appendLog(lc *agentv1.LogChunk) (uint64, error) {
 	runID := lc.GetRunId()
 	if runID == "" {
-		return
+		return 0, nil
 	}
-	// Terminal marker: the agent's tailer fully drained this stream; record
-	// the deterministic EOF so log consumers can wait for it.
+	if lc.GetDeploymentId() == "" {
+		// One-shot stdout also contains controller job/cleanup messages.
+		// Its merged file cursor is not the agent's source cursor; preserve
+		// that existing append contract rather than dropping remote output.
+		if !lc.GetFinal() {
+			return 0, s.runs.AppendLog(runID, "", lc.GetRank(), lc.GetStream(), lc.GetData())
+		}
+		size, err := s.runs.LogSize(runID, "", lc.GetRank(), lc.GetStream())
+		if err == nil {
+			s.runs.MarkLogEnd(runID, "", lc.GetRank(), lc.GetStream(), size)
+		}
+		return size, err
+	}
 	if lc.GetFinal() {
+		size, err := s.runs.LogSize(runID, lc.GetDeploymentId(), lc.GetRank(), lc.GetStream())
+		if err != nil {
+			return 0, err
+		}
+		if size < lc.GetEndOffset() {
+			return size, runs.ErrLogGap
+		}
+		// EOF is observable by stream consumers and benchmark waiters only
+		// after the entire source prefix is stored.
 		s.runs.MarkLogEnd(runID, lc.GetDeploymentId(), lc.GetRank(), lc.GetStream(), lc.GetEndOffset())
-		return
+		return size, nil
 	}
-	if err := s.ensureRunRoot(); err != nil {
-		return
-	}
-	path := s.runLogPath(runID, lc.GetDeploymentId(), lc.GetRank(), lc.GetStream())
-	if path == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	return s.runs.AppendLogAt(runID, lc.GetDeploymentId(), lc.GetRank(), lc.GetStream(), lc.GetOffset(), lc.GetData())
+}
+
+func (s *Server) requestLogReplay(conn *nodes.Conn, runID, deploymentID string, rank int32, stream string, from uint64) {
+	conn.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_LogRequest{
+		LogRequest: &agentv1.LogRequest{
+			RunId: runID, DeploymentId: deploymentID, Rank: rank, Stream: stream, FromOffset: from,
+		},
+	}})
+}
+
+// Reconnect must recover even a quiet stream whose last send was lost. This
+// runs after the writer starts and alongside Receive, so large replays cannot
+// fill both sides' queues before either side is allowed to drain them.
+func (s *Server) replayDeploymentLogs(ctx context.Context, conn *nodes.Conn) {
+	deps, err := s.q.ListDeployments(ctx)
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	_, _ = f.Write(lc.GetData())
+	for _, dep := range deps {
+		if !deploymentNeedsReconcile(dep.DesiredState, dep.ObservedState) || !dep.RunID.Valid || dep.RunID.String == "" {
+			continue
+		}
+		placement := deploy.ParsePlacementSet(dep.Placement)
+		for _, rank := range placement.RanksOnNode(conn.NodeID) {
+			for _, stream := range []string{"stdout", "stderr"} {
+				size, err := s.runs.LogSize(dep.RunID.String, dep.ID, rank, stream)
+				if err == nil {
+					s.requestLogReplay(conn, dep.RunID.String, dep.ID, rank, stream, size)
+				}
+			}
+		}
+	}
 }
 
 // applyPlacementReport records one node placement report. Agents carry the

@@ -835,20 +835,25 @@ type ResolvedSourceConfiguration struct {
 
 // ServingPayload defines model for ServingPayload.
 type ServingPayload struct {
-	Available           *bool    `json:"available,omitempty"`
-	Backend             *string  `json:"backend,omitempty"`
-	ContextLength       *int64   `json:"context_length,omitempty"`
-	E2eP95Seconds       *float64 `json:"e2e_p95_seconds,omitempty"`
-	Error               *string  `json:"error,omitempty"`
-	ErrorCode           *string  `json:"error_code,omitempty"`
-	GenerationTps       *float64 `json:"generation_tps,omitempty"`
-	ItlP95Seconds       *float64 `json:"itl_p95_seconds,omitempty"`
-	KvCacheUsageRatio   *float64 `json:"kv_cache_usage_ratio,omitempty"`
-	ModelId             *string  `json:"model_id,omitempty"`
-	PreemptionsTotal    *int64   `json:"preemptions_total,omitempty"`
-	PrefillTps          *float64 `json:"prefill_tps,omitempty"`
-	PrefixCacheHitRatio *float64 `json:"prefix_cache_hit_ratio,omitempty"`
-	RequestsRunning     *int64   `json:"requests_running,omitempty"`
+	Available     *bool    `json:"available,omitempty"`
+	Backend       *string  `json:"backend,omitempty"`
+	ContextLength *int64   `json:"context_length,omitempty"`
+	E2eP95Seconds *float64 `json:"e2e_p95_seconds,omitempty"`
+	Error         *string  `json:"error,omitempty"`
+	ErrorCode     *string  `json:"error_code,omitempty"`
+	GenerationTps *float64 `json:"generation_tps,omitempty"`
+	ItlP95Seconds *float64 `json:"itl_p95_seconds,omitempty"`
+
+	// KvCacheMaxStreamUsageRatio Largest native active-stream context/window ratio; includes planned prefill tokens and excludes idle retained prefixes. Not physical GPU-memory or shared-pool utilization.
+	KvCacheMaxStreamUsageRatio *float64 `json:"kv_cache_max_stream_usage_ratio,omitempty"`
+	KvCacheUsageRatio          *float64 `json:"kv_cache_usage_ratio,omitempty"`
+	ModelId                    *string  `json:"model_id,omitempty"`
+	PreemptionsTotal           *int64   `json:"preemptions_total,omitempty"`
+	PrefillTps                 *float64 `json:"prefill_tps,omitempty"`
+	PrefixCacheHitRatio        *float64 `json:"prefix_cache_hit_ratio,omitempty"`
+	RequestsRunning            *int64   `json:"requests_running,omitempty"`
+
+	// RequestsWaiting Omitted when queue depth is unavailable; an explicit zero means a measured empty queue.
 	RequestsWaiting     *int64   `json:"requests_waiting,omitempty"`
 	SlotsActive         *int64   `json:"slots_active,omitempty"`
 	SlotsTotal          *int64   `json:"slots_total,omitempty"`

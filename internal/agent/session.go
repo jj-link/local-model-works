@@ -58,16 +58,33 @@ func (a *Agent) session(ctx context.Context) error {
 	a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Inventory{
 		Inventory: a.probeInventory(),
 	}})
-	a.reportPlacements(ctx)
 	if a.certRemaining() < RotationThreshold {
 		a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_RotateCertificate{
 			RotateCertificate: &agentv1.RotateCertificateRequest{CurrentSerial: a.currentSerial()},
 		}})
 	}
-	a.reconcile(ctx, nil)
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- a.sendLoop(ctx, stream) }()
+	go func() {
+		err := a.sendLoop(ctx, stream)
+		errCh <- err
+		// A failed Send must also interrupt a Receive blocked on an idle
+		// controller; otherwise no reconnect ever replaces the old tailers.
+		cancel()
+	}()
+	a.reconcile(ctx, nil)
+
+	// Cache validation can read hundreds of gigabytes. It must not delay
+	// live logs, heartbeats, or controller commands after a reconnect.
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		a.reportPlacements(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-scanDone
+	}()
 
 	for {
 		select {
@@ -92,7 +109,7 @@ func (a *Agent) session(ctx context.Context) error {
 		case *agentv1.ServerMessage_WorkloadCommand:
 			go a.handleWorkload(ctx, b.WorkloadCommand)
 		case *agentv1.ServerMessage_LogRequest:
-			a.handleLogRequest(ctx, b.LogRequest)
+			go a.handleLogRequest(ctx, b.LogRequest)
 		case *agentv1.ServerMessage_TransferCommand:
 			go a.handleTransfer(ctx, b.TransferCommand)
 		case *agentv1.ServerMessage_ArtifactCommand:

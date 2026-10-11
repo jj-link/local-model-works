@@ -170,25 +170,26 @@ func (p *NodePayload) stripCurrentOnly() {
 // representable when a metric is unsupported (null) rather than a valid zero.
 // Cumulative counters and context length stay integers.
 type ServingPayload struct {
-	Available           bool     `json:"available"`
-	Backend             string   `json:"backend"`
-	ModelID             string   `json:"model_id,omitempty"`
-	GenerationTPS       *float64 `json:"generation_tps"`
-	PrefillTPS          *float64 `json:"prefill_tps"`
-	RequestsRunning     int32    `json:"requests_running,omitempty"`
-	RequestsWaiting     int32    `json:"requests_waiting,omitempty"`
-	SlotsActive         int32    `json:"slots_active,omitempty"`
-	SlotsTotal          int32    `json:"slots_total,omitempty"`
-	KVCacheUsageRatio   *float64 `json:"kv_cache_usage_ratio"`
-	PrefixCacheHitRatio *float64 `json:"prefix_cache_hit_ratio"`
-	TTFTP95Seconds      *float64 `json:"ttft_p95_seconds"`
-	E2EP95Seconds       *float64 `json:"e2e_p95_seconds"`
-	ITLP95Seconds       *float64 `json:"itl_p95_seconds"`
-	PreemptionsTotal    int64    `json:"preemptions_total,omitempty"`
-	SpecAcceptanceRatio *float64 `json:"spec_acceptance_ratio"`
-	ContextLength       int32    `json:"context_length,omitempty"`
-	ErrorCode           *string  `json:"error_code"`
-	Error               *string  `json:"error"`
+	Available                  bool     `json:"available"`
+	Backend                    string   `json:"backend"`
+	ModelID                    string   `json:"model_id,omitempty"`
+	GenerationTPS              *float64 `json:"generation_tps"`
+	PrefillTPS                 *float64 `json:"prefill_tps"`
+	RequestsRunning            int32    `json:"requests_running,omitempty"`
+	RequestsWaiting            *int32   `json:"requests_waiting,omitempty"`
+	SlotsActive                int32    `json:"slots_active,omitempty"`
+	SlotsTotal                 int32    `json:"slots_total,omitempty"`
+	KVCacheUsageRatio          *float64 `json:"kv_cache_usage_ratio"`
+	KVCacheMaxStreamUsageRatio *float64 `json:"kv_cache_max_stream_usage_ratio"`
+	PrefixCacheHitRatio        *float64 `json:"prefix_cache_hit_ratio"`
+	TTFTP95Seconds             *float64 `json:"ttft_p95_seconds"`
+	E2EP95Seconds              *float64 `json:"e2e_p95_seconds"`
+	ITLP95Seconds              *float64 `json:"itl_p95_seconds"`
+	PreemptionsTotal           int64    `json:"preemptions_total,omitempty"`
+	SpecAcceptanceRatio        *float64 `json:"spec_acceptance_ratio"`
+	ContextLength              int32    `json:"context_length,omitempty"`
+	ErrorCode                  *string  `json:"error_code"`
+	Error                      *string  `json:"error"`
 }
 
 // ServingSample is one persisted serving sample.

@@ -39,9 +39,10 @@ const (
 )
 
 const (
-	detectionTTL    = 60 * time.Second
-	maxBodyBytes    = 1 << 20
-	rateStaleWindow = 15 * time.Second
+	detectionTTL       = 60 * time.Second
+	maxBodyBytes       = 1 << 20
+	rateStaleWindow    = 15 * time.Second
+	errEndpointMissing = "endpoint_missing"
 )
 
 // Prober owns per-deployment detection and counter state. One Prober serves
@@ -67,8 +68,10 @@ type depState struct {
 	iter    float64
 	ttftSum float64
 
-	llamaGen    map[int]float64
-	llamaPrompt map[int]float64
+	llamaSlots     map[int]llamaSlotCounters
+	llamaCompleted float64
+	llamaGenSet    bool
+	llamaPromptSet bool
 
 	sglangSticky    float64
 	sglangStickySet bool
@@ -88,7 +91,7 @@ func NewProber(client *http.Client) *Prober {
 func (p *Prober) Probe(ctx context.Context, dep deploy.MonitorTarget) telemetry.ServingPayload {
 	st := p.states[dep.ID]
 	if st == nil {
-		st = &depState{llamaGen: map[int]float64{}, llamaPrompt: map[int]float64{}}
+		st = &depState{}
 		p.states[dep.ID] = st
 	}
 	base := fmt.Sprintf("http://%s:%d", dep.Endpoint.Host, dep.Endpoint.Port)
@@ -124,6 +127,8 @@ func (p *Prober) fail(st *depState, err error) telemetry.ServingPayload {
 		st.sglangSticky, st.sglangStickySet = 0, false
 		st.last = time.Time{}
 		st.tensorfold = tensorFoldCounters{}
+		st.llamaSlots = nil
+		st.llamaGenSet, st.llamaPromptSet = false, false
 	}
 	code := monitorCode(err)
 	msg := err.Error()
@@ -173,6 +178,12 @@ func (p *Prober) getBody(ctx context.Context, url string) (string, error) {
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", fmt.Errorf("%s", ErrUnauthorized)
 	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
+		return "", fmt.Errorf("%s", errEndpointMissing)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("http status %d", resp.StatusCode)
+	}
 	if resp.ContentLength > maxBodyBytes {
 		return "", fmt.Errorf("oversized response")
 	}
@@ -195,7 +206,9 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 	// unauthorized, oversized) is surfaced as monitor status rather than
 	// treated as "no matching backend".
 	if body, err := p.getBody(ctx, base+"/metrics"); err != nil {
-		return err
+		if err.Error() != errEndpointMissing {
+			return err
+		}
 	} else if strings.Contains(body, "vllm:") {
 		st.backend = BackendVLLM
 		st.backendAt = now
@@ -204,9 +217,13 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 		st.backend = BackendSGLang
 		st.backendAt = now
 		return nil
+	} else if _, ok := promSum(body, "llamacpp:tokens_predicted_total"); ok {
+		st.backend = BackendLlamaCPP
+		st.backendAt = now
+		return nil
 	}
 	// TensorFold's CUDA health document identifies its backend explicitly.
-	// Check it before the permissive legacy server-info JSON classifier.
+	// Check it before the legacy server-info classifier.
 	body, healthErr := p.getBody(ctx, base+"/health")
 	if healthErr == nil {
 		var identity struct {
@@ -221,26 +238,51 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 			return nil
 		}
 	}
-	if body, err := p.getBody(ctx, base+"/get_server_info"); err == nil && isJSON(body) {
+	if body, err := p.getBody(ctx, base+"/get_server_info"); err == nil && isSGLangInfo(body) {
 		st.backend = BackendSGLang
 		st.backendAt = now
 		return nil
 	}
-	if body, err := p.getBody(ctx, base+"/slots"); err == nil && strings.HasPrefix(strings.TrimSpace(body), "[") {
+	if body, err := p.getBody(ctx, base+"/slots"); err == nil && isLlamaSlots(body) {
 		st.backend = BackendLlamaCPP
 		st.backendAt = now
 		return nil
 	}
 	// A health failure must not prevent classification of legacy engines.
-	if healthErr != nil {
+	if healthErr != nil && healthErr.Error() != errEndpointMissing {
 		return healthErr
 	}
 	st.backend = BackendUnknown
 	return fmt.Errorf("%s", ErrUnsupported)
 }
 
-func isJSON(s string) bool {
-	return json.Valid([]byte(s))
+func isSGLangInfo(body string) bool {
+	var info map[string]json.RawMessage
+	if json.Unmarshal([]byte(body), &info) != nil || info["error"] != nil {
+		return false
+	}
+	for _, key := range []string{"internal_states", "last_gen_throughput", "total_input_tokens", "total_output_tokens", "max_running_requests"} {
+		if info[key] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isLlamaSlots(body string) bool {
+	var slots []map[string]any
+	if json.Unmarshal([]byte(body), &slots) != nil || slots == nil {
+		return false
+	}
+	for _, slot := range slots {
+		if _, ok := slot["id"]; !ok {
+			return false
+		}
+		if _, ok := slot["is_processing"]; !ok && strField(slot, "state") == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // --------------------------------------------------------------------------
@@ -258,7 +300,7 @@ func (p *Prober) probeVLLM(ctx context.Context, st *depState, base string, now t
 	iter, _ := promSum(body, "vllm:iteration_tokens_total_sum")
 	ttftSum, _ := promSum(body, "vllm:time_to_first_token_seconds_sum")
 	running, _ := promSum(body, "vllm:num_requests_running")
-	waiting, _ := promSum(body, "vllm:num_requests_waiting")
+	waiting, waitingSet := promSum(body, "vllm:num_requests_waiting")
 	kv, _ := promSum(body, "vllm:kv_cache_usage_perc")
 	preempts, _ := promSum(body, "vllm:num_preemptions_total")
 	prefixHits, _ := promSum(body, "vllm:prefix_cache_hits_total")
@@ -297,7 +339,10 @@ func (p *Prober) probeVLLM(ctx context.Context, st *depState, base string, now t
 	out.GenerationTPS = &genRate
 	out.PrefillTPS = &prefillRate
 	out.RequestsRunning = int32(running)
-	out.RequestsWaiting = int32(waiting)
+	if waitingSet && waiting >= 0 {
+		value := int32(waiting)
+		out.RequestsWaiting = &value
+	}
 	out.SlotsActive = int32(running)
 	if kv > 0 {
 		r := kv / 100
@@ -430,43 +475,183 @@ func (p *Prober) sglangSticky(st *depState, raw float64, now time.Time) float64 
 // llama.cpp
 // --------------------------------------------------------------------------
 
+type llamaSlotCounters struct {
+	task       float64
+	processing bool
+	generation float64
+	prompt     float64
+	genSet     bool
+	promptSet  bool
+}
+
+func llamaCounters(slot map[string]any) llamaSlotCounters {
+	_, genSet := slot["n_decoded"]
+	if next, ok := slot["next_token"].([]any); !genSet && ok && len(next) > 0 {
+		if token, ok := next[0].(map[string]any); ok {
+			_, genSet = token["n_decoded"]
+		}
+	}
+	_, promptSet := slot["n_prompt_tokens_processed"]
+	return llamaSlotCounters{
+		task:       numField(slot, "id_task"),
+		processing: isProcessing(slot),
+		generation: slotDecoded(slot),
+		prompt:     numField(slot, "n_prompt_tokens_processed"),
+		genSet:     genSet,
+		promptSet:  promptSet,
+	}
+}
+
 func (p *Prober) probeLlamaCPP(ctx context.Context, st *depState, base string, now time.Time) telemetry.ServingPayload {
 	body, err := p.getBody(ctx, base+"/slots")
 	if err != nil {
 		return p.fail(st, err)
 	}
 	var slots []map[string]any
-	if err := json.Unmarshal([]byte(body), &slots); err != nil {
+	if err := json.Unmarshal([]byte(body), &slots); err != nil || slots == nil {
 		return p.fail(st, fmt.Errorf("%s", ErrInvalidResponse))
 	}
+	metrics, _ := p.getBody(ctx, base+"/metrics")
+	completed, completedSet := promSum(metrics, "llamacpp:tokens_predicted_total")
+	prompt, promptSet := promSum(metrics, "llamacpp:prompt_tokens_total")
+
+	// These endpoints are not an atomic snapshot. Bracket completion counters
+	// with slot reads: a release/replacement during collection would otherwise
+	// count the same generation in both the completed and active totals.
+	coherent := true
+	if completedSet {
+		body, err = p.getBody(ctx, base+"/slots")
+		var after []map[string]any
+		if err != nil || json.Unmarshal([]byte(body), &after) != nil || after == nil {
+			coherent = false
+		} else {
+			coherent = len(slots) == len(after)
+			if coherent {
+				for i, slot := range slots {
+					next := after[i]
+					if numField(slot, "id") != numField(next, "id") ||
+						numField(slot, "id_task") != numField(next, "id_task") ||
+						isProcessing(slot) != isProcessing(next) {
+						coherent = false
+						break
+					}
+				}
+			}
+			slots = after
+		}
+	}
+
 	out := telemetry.ServingPayload{Available: true, Backend: string(BackendLlamaCPP)}
 	out.SlotsTotal = int32(len(slots))
-
-	var totalGen, totalPrompt float64
-	var live int
-	for _, raw := range slots {
-		totalGen += slotDecoded(raw)
-		totalPrompt += slotPrompts(raw)
-		if isProcessing(raw) {
-			live++
+	dt := now.Sub(st.last)
+	fresh := !st.last.IsZero() && dt > 0 && dt < rateStaleWindow
+	genDelta, promptDelta, activeGen := 0.0, 0.0, 0.0
+	genValid, promptValid := len(st.llamaSlots) == len(slots), len(st.llamaSlots) == len(slots)
+	activeGenSet := true
+	regressed := false
+	if st.llamaSlots == nil {
+		st.llamaSlots = make(map[int]llamaSlotCounters, len(slots))
+	}
+	for _, slot := range slots {
+		id := int(numField(slot, "id"))
+		current := llamaCounters(slot)
+		previous, exists := st.llamaSlots[id]
+		if current.processing {
+			out.SlotsActive++
+			activeGen += current.generation
+			activeGenSet = activeGenSet && current.genSet && current.generation >= 0
+		}
+		if ctx := int32(numField(slot, "n_ctx")); ctx > out.ContextLength {
+			out.ContextLength = ctx
+		}
+		sameTask := exists && current.task == previous.task && current.processing == previous.processing
+		if !sameTask {
+			genValid, promptValid = false, false
+		} else if current.processing {
+			if !current.genSet || !previous.genSet || current.generation < previous.generation {
+				genValid = false
+				regressed = true
+			} else {
+				genDelta += current.generation - previous.generation
+			}
+			if !current.promptSet || !previous.promptSet || current.prompt < previous.prompt {
+				promptValid = false
+			} else {
+				promptDelta += current.prompt - previous.prompt
+			}
+		}
+		st.llamaSlots[id] = current
+	}
+	// Forget removed slots so reappearing IDs cannot inherit stale tasks.
+	for id := range st.llamaSlots {
+		found := false
+		for _, slot := range slots {
+			if int(numField(slot, "id")) == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(st.llamaSlots, id)
 		}
 	}
-	out.SlotsActive = int32(live)
+	out.RequestsRunning = out.SlotsActive
+	if running, ok := promSum(metrics, "llamacpp:requests_processing"); ok && running >= 0 {
+		coherent = coherent && running == float64(out.SlotsActive)
+		out.RequestsRunning = int32(running)
+	}
+	if waiting, ok := promSum(metrics, "llamacpp:requests_deferred"); ok && waiting >= 0 {
+		value := int32(waiting)
+		out.RequestsWaiting = &value
+	}
 
-	genRate, prefillRate := 0.0, 0.0
-	if dt := now.Sub(st.last).Seconds(); dt > 0 && dt < rateStaleWindow.Seconds() {
-		if st.gen > 0 && totalGen >= st.gen {
-			genRate = (totalGen - st.gen) / dt
+	// llama.cpp commits generated tokens on slot release. Adding only active
+	// tokens gives a continuous total, including the final unsampled tail on
+	// completion, without charging the whole request a second time.
+	totalGen := completed + activeGen
+	if fresh {
+		if completedSet {
+			if coherent && activeGenSet && !regressed && st.llamaGenSet &&
+				completed >= st.llamaCompleted && totalGen >= st.gen {
+				rate := (totalGen - st.gen) / dt.Seconds()
+				out.GenerationTPS = &rate
+			}
+		} else if genValid {
+			rate := genDelta / dt.Seconds()
+			out.GenerationTPS = &rate
 		}
-		if st.prompt > 0 && totalPrompt >= st.prompt {
-			prefillRate = (totalPrompt - st.prompt) / dt
+		// Prompt counters are updated per decoded prefill batch, not at
+		// request completion. Do not add active prompt tokens to them.
+		if promptSet {
+			if st.llamaPromptSet && prompt >= st.prompt {
+				rate := (prompt - st.prompt) / dt.Seconds()
+				out.PrefillTPS = &rate
+			}
+		} else if promptValid {
+			rate := promptDelta / dt.Seconds()
+			out.PrefillTPS = &rate
 		}
 	}
-	st.gen, st.prompt = totalGen, totalPrompt
+	st.gen, st.prompt, st.llamaCompleted = totalGen, prompt, completed
+	st.llamaGenSet = completedSet && coherent && activeGenSet
+	st.llamaPromptSet = promptSet && prompt >= 0
 	st.last = now
+	st.failCount = 0
 
-	out.GenerationTPS = &genRate
-	out.PrefillTPS = &prefillRate
+	if cached, ok := promSum(metrics, "llamacpp:prompt_tokens_cached_total"); ok &&
+		promptSet && cached >= 0 && prompt >= 0 && cached+prompt > 0 {
+		ratio := cached / (cached + prompt)
+		out.PrefixCacheHitRatio = &ratio
+	}
+	drafted, draftedSet := promSum(metrics, "llamacpp:spec_decode_num_draft_tokens_total")
+	accepted, acceptedSet := promSum(metrics, "llamacpp:spec_decode_num_accepted_tokens_total")
+	if draftedSet && acceptedSet && drafted > 0 && accepted >= 0 && accepted <= drafted {
+		ratio := accepted / drafted
+		out.SpecAcceptanceRatio = &ratio
+	}
+	// n_tokens_max is a historical high-water mark, not live KV occupancy.
+	// Neither these endpoints nor allocated GPU memory provide a KV fraction
+	// or latency quantiles; leave those optional metrics unavailable.
 	if body, err := p.getBody(ctx, base+"/props"); err == nil {
 		var props map[string]any
 		if json.Unmarshal([]byte(body), &props) == nil {
@@ -475,15 +660,25 @@ func (p *Prober) probeLlamaCPP(ctx context.Context, st *depState, base string, n
 			} else if m := strField(props, "model_path"); m != "" {
 				out.ModelID = m
 			}
-			out.ContextLength = int32(numField(props, "total_context_length"))
+			if total := int32(numField(props, "total_slots")); total > 0 {
+				out.SlotsTotal = total
+			}
+			if settings, ok := props["default_generation_settings"].(map[string]any); ok {
+				if ctx := int32(numField(settings, "n_ctx")); ctx > 0 {
+					out.ContextLength = ctx
+				}
+			}
+			if out.ContextLength == 0 {
+				out.ContextLength = int32(numField(props, "total_context_length"))
+			}
 		}
 	}
 	return out
 }
 
 func slotDecoded(s map[string]any) float64 {
-	if v := numField(s, "n_decoded"); v != 0 {
-		return v
+	if _, ok := s["n_decoded"]; ok {
+		return numField(s, "n_decoded")
 	}
 	if a, ok := s["next_token"].([]any); ok && len(a) > 0 {
 		if m, ok := a[0].(map[string]any); ok {
@@ -493,13 +688,6 @@ func slotDecoded(s map[string]any) float64 {
 		}
 	}
 	return 0
-}
-
-func slotPrompts(s map[string]any) float64 {
-	if v := numField(s, "n_prompt_tokens_processed"); v > 0 {
-		return v
-	}
-	return numField(s, "n_prompt_tokens")
 }
 
 func isProcessing(s map[string]any) bool {

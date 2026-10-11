@@ -499,13 +499,20 @@ func TestV5_LogCursorResume(t *testing.T) {
 
 	batch1 := []byte("alpha 0123456789abcdef\nbeta 0123456789abcdef\ngamma 0123456789abcdef\n")
 	batch2 := []byte("delta 0123456789abcdef\nepsilon 0123456789abcdef\n")
+	stderr1 := []byte("worker loading\n")
+	stderr2 := []byte("worker ready\n")
 	a1.RT.WriteLog(c.Name, "stdout", batch1)
+	a1.RT.WriteLog(c.Name, "stderr", stderr1)
 
 	// Wait for the controller's log file to carry exactly batch1.
 	Deadline(t, 15*time.Second, func() bool {
 		_, _, sz, err := s.Srv.Runs().ReadLog(dep.RunID, dep.ID, 0, "stdout", 0, 0)
 		return err == nil && sz == uint64(len(batch1))
 	}, "controller log to carry batch1")
+	Deadline(t, 15*time.Second, func() bool {
+		_, _, sz, err := s.Srv.Runs().ReadLog(dep.RunID, dep.ID, 0, "stderr", 0, 0)
+		return err == nil && sz == uint64(len(stderr1))
+	}, "controller stderr to carry first batch")
 
 	chunk, next, _, err := s.Srv.Runs().ReadLog(dep.RunID, dep.ID, 0, "stdout", 0, 0)
 	if err != nil {
@@ -515,26 +522,30 @@ func TestV5_LogCursorResume(t *testing.T) {
 		t.Fatalf("read log = %q (next %d), want exactly batch1", chunk, next)
 	}
 
-	// Open the real SSE stream resumed from Last-Event-ID = len(batch1),
-	// then append batch2: the stream must deliver exactly the new bytes.
+	// Resume both files at their first-batch byte offsets, then append:
+	// the stream must deliver exactly the new bytes from each file.
 	// The server replays from Last-Event-ID on the first poll, so the
 	// write may land before the stream opens.
 	a1.RT.WriteLog(c.Name, "stdout", batch2)
+	a1.RT.WriteLog(c.Name, "stderr", stderr2)
 	client := login(t, s)
-	N := fmt.Sprintf("%d", len(batch1))
-	var got []byte
+	N := fmt.Sprintf("%d:%d", len(batch1), len(stderr1))
+	got := map[string][]byte{"stdout": nil, "stderr": nil}
 	readSSE(t, client, s, dep.ID, 0, N, 20*time.Second, func(ev sseEvent) bool {
 		if ev.kind == "" {
-			var payload string
+			var payload struct {
+				Stream string `json:"stream"`
+				Data   string `json:"data"`
+			}
 			if err := json.Unmarshal([]byte(ev.data), &payload); err != nil {
 				t.Fatalf("sse payload %q: %v", ev.data, err)
 			}
-			got = append(got, payload...)
+			got[payload.Stream] = append(got[payload.Stream], payload.Data...)
 		}
-		return len(got) >= len(batch2)
+		return len(got["stdout"]) >= len(batch2) && len(got["stderr"]) >= len(stderr2)
 	})
-	if !bytes.Equal(got, batch2) {
-		t.Fatalf("sse resumed stream = %q, want exactly %q (no duplicates, no gaps)", got, batch2)
+	if !bytes.Equal(got["stdout"], batch2) || !bytes.Equal(got["stderr"], stderr2) {
+		t.Fatalf("sse resumed streams = %q, want stdout %q and stderr %q (no duplicates, no gaps)", got, batch2, stderr2)
 	}
 	if chunk, _, _, err := s.Srv.Runs().ReadLog(dep.RunID, dep.ID, 0, "stdout", uint64(len(batch1)+len(batch2)), 0); err != nil || len(chunk) != 0 {
 		t.Fatalf("read log at end offset = %q (err %v), want empty", chunk, err)

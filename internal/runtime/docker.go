@@ -510,13 +510,10 @@ func (r *dockerRuntime) LogsFollow(ctx context.Context, id string, fromStdout, f
 	if err != nil {
 		return nil, fmt.Errorf("logs %s: %w", id, err)
 	}
-	pr, pw := io.Pipe()
-	go func() {
-		defer rc.Close()
-		defer pw.Close()
-		_, _ = stdcopy.StdCopy(pw, pw, rc)
-	}()
-	return pr, nil
+	stdout, stderr := dockerLogPipes(ctx, rc, false)
+	// The merged reader owns the shared source; the unused pipe has no writer.
+	_ = stderr.(*dockerLogReader).PipeReader.Close()
+	return stdout, nil
 }
 
 // LogsStreams streams container output with stdout and stderr separated
@@ -530,15 +527,8 @@ func (r *dockerRuntime) LogsStreams(ctx context.Context, id string) (stdout, std
 	if err != nil {
 		return nil, nil, fmt.Errorf("logs %s: %w", id, err)
 	}
-	prOut, pwOut := io.Pipe()
-	prErr, pwErr := io.Pipe()
-	go func() {
-		defer rc.Close()
-		defer pwOut.Close()
-		defer pwErr.Close()
-		_, _ = stdcopy.StdCopy(pwOut, pwErr, rc)
-	}()
-	return prOut, prErr, nil
+	stdout, stderr = dockerLogPipes(ctx, rc, true)
+	return stdout, stderr, nil
 }
 
 // IsSHA256Digest reports whether value is a complete lowercase SHA-256 digest.

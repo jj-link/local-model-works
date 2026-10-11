@@ -78,6 +78,16 @@ func (r *ownershipRuntime) LogsStreams(context.Context, string) (io.ReadCloser, 
 	return io.NopCloser(strings.NewReader("")), io.NopCloser(strings.NewReader("")), nil
 }
 
+func (r *ownershipRuntime) CaptureLogs(context.Context, string, func(string) runtime.LogCursor, func(runtime.LogRecord) error) error {
+	r.calls = append(r.calls, "logs-capture")
+	return r.logsErr
+}
+
+func (r *ownershipRuntime) CaptureLogSnapshot(context.Context, string, func(string) runtime.LogCursor, func(runtime.LogRecord) error) error {
+	r.calls = append(r.calls, "logs-snapshot")
+	return r.logsErr
+}
+
 func testWorkloadCommand(op agentv1.WorkloadOp, spec []byte) *agentv1.WorkloadCommand {
 	return &agentv1.WorkloadCommand{
 		CommandId:     "command",
@@ -372,7 +382,10 @@ func TestLogUnavailableRetainsTailerRunAfterRestart(t *testing.T) {
 	})
 	<-a.sendQ
 
-	oldTailer.run(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { oldTailer.run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
 
 	select {
 	case message := <-a.sendQ:
@@ -382,7 +395,7 @@ func TestLogUnavailableRetainsTailerRunAfterRestart(t *testing.T) {
 			update.GetDiagnosticCode() != "logs.unavailable" {
 			t.Fatalf("log failure report = %+v, want old run diagnostic", update)
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("missing log failure report")
 	}
 }

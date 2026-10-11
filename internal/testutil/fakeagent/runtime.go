@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jj-link/local-model-works/internal/runtime"
 )
@@ -81,7 +82,7 @@ func (b *logBuf) ReadFrom(offset int) (out []byte, ok bool) {
 	}
 }
 
-// logReader adapts a logBuf to io.Reader for the tailer's bufio.Scanner.
+// logReader adapts a retained log buffer to io.Reader.
 type logReader struct {
 	buf    *logBuf
 	offset int
@@ -458,7 +459,7 @@ func (rt *FakeRuntime) ExitExternally(name string, exitCode int, oomKilled bool,
 // ---------------------------------------------------------------------------
 
 // LogsFollow streams container output (interleaved when both streams are
-// requested; the tailer path uses LogsStreams).
+// requested).
 func (rt *FakeRuntime) LogsFollow(ctx context.Context, id string, fromStdout, fromStderr bool) (io.ReadCloser, error) {
 	rt.mu.Lock()
 	c := rt.get(id)
@@ -489,6 +490,54 @@ func (rt *FakeRuntime) LogsStreams(ctx context.Context, id string) (io.ReadClose
 	so, se := c.logs["stdout"], c.logs["stderr"]
 	rt.mu.Unlock()
 	return &readCloser{r: &logReader{buf: so}}, &readCloser{r: &logReader{buf: se}}, nil
+}
+
+func (rt *FakeRuntime) CaptureLogs(ctx context.Context, id string, cursor func(string) runtime.LogCursor, emit func(runtime.LogRecord) error) error {
+	return rt.captureLogs(ctx, id, true, cursor, emit)
+}
+
+func (rt *FakeRuntime) CaptureLogSnapshot(ctx context.Context, id string, cursor func(string) runtime.LogCursor, emit func(runtime.LogRecord) error) error {
+	return rt.captureLogs(ctx, id, false, cursor, emit)
+}
+
+func (rt *FakeRuntime) captureLogs(ctx context.Context, id string, follow bool, cursor func(string) runtime.LogCursor, emit func(runtime.LogRecord) error) error {
+	rt.mu.Lock()
+	c := rt.get(id)
+	if c == nil {
+		rt.mu.Unlock()
+		return fmt.Errorf("no such container: %s", id)
+	}
+	id = c.ID
+	logs := c.logs
+	rt.mu.Unlock()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		drained := true
+		for _, name := range []string{"stdout", "stderr"} {
+			source := "fake:" + id + ":" + name
+			position := cursor(source)
+			buf := logs[name]
+			buf.mu.Lock()
+			end := len(buf.data)
+			data := append([]byte(nil), buf.data[int(position.Offset):]...)
+			drained = drained && buf.closed
+			buf.mu.Unlock()
+			if len(data) > 0 {
+				if err := emit(runtime.LogRecord{Source: source, Stream: name, Data: data, Cursor: runtime.LogCursor{Offset: int64(end)}}); err != nil {
+					return err
+				}
+			}
+		}
+		if drained || !follow {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 type readCloser struct{ r io.Reader }

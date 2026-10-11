@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -302,12 +303,9 @@ func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, dep)
 }
 
-// logs — GET /deployments/{id}/logs: SSE byte-cursor stream of one rank's
-// workload stdout. The query `rank` selects the rank (default 0); the log
-// files are keyed by the deployment's run. Last-Event-ID carries the byte
-// offset to resume from. The stream ends with an "end" event once the run
-// is terminal and the rank log is fully drained (the agent's final marker
-// recorded the EOF).
+// logs streams both output files for one workload rank. Every event carries
+// both byte cursors, so reconnecting between streams neither skips nor replays
+// bytes. The initial bounded snapshot is atomic across the two streams.
 func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 	depID := chi.URLParam(r, "id")
 	dep, err := m.env.Deploy.Get(r.Context(), depID)
@@ -330,55 +328,132 @@ func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 		}
 		rank = int32(n)
 	}
-	// The runs service owns the log path layout; the pre-stream check keeps
-	// the path-escape validation in effect for any component before the
-	// stream opens (a bad id is a 404, not a broken stream).
-	if m.env.Runs.LogPath(dep.RunID, depID, rank, "stdout") == "" {
-		httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", "invalid log path")
-		return
+	// Validate both paths before opening the response stream.
+	streams := [2]string{"stdout", "stderr"}
+	for _, stream := range streams {
+		if m.env.Runs.LogPath(dep.RunID, depID, rank, stream) == "" {
+			httpx.WriteErr(w, http.StatusNotFound, "resource.not_found", "invalid log path")
+			return
+		}
 	}
 	if _, err := m.env.Runs.Get(r.Context(), dep.RunID); err != nil {
 		httpx.HandleErr(w, err)
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		httpx.WriteErr(w, http.StatusInternalServerError, "internal", "streaming unsupported")
 		return
 	}
-	var offset uint64
+	var offsets [2]uint64
+	resume := false
 	if id := r.Header.Get("Last-Event-ID"); id != "" {
-		if n, err := strconv.ParseUint(id, 10, 64); err == nil {
-			offset = n
+		resume = true
+		if id != "0" {
+			stdout, stderr, valid := strings.Cut(id, ":")
+			if !valid {
+				httpx.WriteErr(w, http.StatusBadRequest, "invalid.cursor", "log cursor must be stdout:stderr byte offsets or 0")
+				return
+			}
+			for i, part := range [2]string{stdout, stderr} {
+				offsets[i], err = strconv.ParseUint(part, 10, 64)
+				if err != nil {
+					httpx.WriteErr(w, http.StatusBadRequest, "invalid.cursor", "log cursor must be stdout:stderr byte offsets or 0")
+					return
+				}
+			}
+		}
+	}
+	var snapshot [2]string
+	if !resume {
+		for i, stream := range streams {
+			var chunk []byte
+			chunk, offsets[i], err = m.env.Runs.ReadLogTail(dep.RunID, depID, rank, stream)
+			if err != nil {
+				httpx.HandleErr(w, err)
+				return
+			}
+			snapshot[i] = string(chunk)
 		}
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	response := http.NewResponseController(w)
+	writeSnapshot := func() error {
+		payload, _ := json.Marshal(struct {
+			Stdout string `json:"stdout"`
+			Stderr string `json:"stderr"`
+		}{snapshot[0], snapshot[1]})
+		if _, err := fmt.Fprintf(w, "id: %d:%d\nevent: snapshot\ndata: %s\n\n", offsets[0], offsets[1], payload); err != nil {
+			return err
+		}
+		return response.Flush()
+	}
+	if err := response.Flush(); err != nil {
+		return
+	}
+	if !resume {
+		if err := writeSnapshot(); err != nil {
+			return
+		}
+	}
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
+pollLoop:
 	for {
-		chunk, next, size, rerr := m.env.Runs.ReadLog(dep.RunID, depID, rank, "stdout", offset, 0)
-		if rerr != nil {
-			return
+		drained := true
+		for i, stream := range streams {
+			chunk, next, size, rerr := m.env.Runs.ReadLogText(dep.RunID, depID, rank, stream, offsets[i])
+			if rerr != nil {
+				return
+			}
+			if offsets[i] > size {
+				// A retained cursor can outlive its file (restored logs, or a
+				// replaced run). Reset both UI buffers and cursors together;
+				// clamping silently would skip all future bytes below the old ID.
+				for j, name := range streams {
+					tail, next, err := m.env.Runs.ReadLogTail(dep.RunID, depID, rank, name)
+					if err != nil {
+						return
+					}
+					snapshot[j], offsets[j] = string(tail), next
+				}
+				if err := writeSnapshot(); err != nil {
+					return
+				}
+				continue pollLoop
+			}
+			if len(chunk) > 0 {
+				payload, _ := json.Marshal(struct {
+					Stream string `json:"stream"`
+					Data   string `json:"data"`
+				}{stream, string(chunk)})
+				offsets[i] = next
+				if _, err := fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", offsets[0], offsets[1], payload); err != nil {
+					return
+				}
+				if err := response.Flush(); err != nil {
+					return
+				}
+			}
+			end, done := m.env.Runs.LogEnded(dep.RunID, depID, rank, stream)
+			if !done || offsets[i] < size || offsets[i] < end {
+				drained = false
+			}
 		}
-		if len(chunk) > 0 {
-			payload, _ := json.Marshal(string(chunk))
-			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", next, payload)
-			offset = next
-			flusher.Flush()
-		}
-		// Terminate when the run is terminal and the fully drained log is
-		// fully delivered (the agent's final marker recorded the EOF).
-		if end, done := m.env.Runs.LogEnded(dep.RunID, depID, rank, "stdout"); done && offset >= size {
+		// Neither a silent stream nor an early EOF may hide the other's tail.
+		if drained {
 			cur, gerr := m.env.Runs.Get(r.Context(), dep.RunID)
 			if gerr == nil && runs.State(cur.State).Terminal() {
-				fmt.Fprintf(w, "id: %d\nevent: end\ndata: {\"size\":%d}\n\n", end, size)
-				flusher.Flush()
+				if _, err := fmt.Fprintf(w, "id: %d:%d\nevent: end\ndata: {\"stdout\":%d,\"stderr\":%d}\n\n",
+					offsets[0], offsets[1], offsets[0], offsets[1]); err != nil {
+					return
+				}
+				_ = response.Flush()
 				return
 			}
 		}
@@ -386,8 +461,12 @@ func (m *Module) logs(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-keepalive.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if err := response.Flush(); err != nil {
+				return
+			}
 		case <-poll.C:
 		}
 	}

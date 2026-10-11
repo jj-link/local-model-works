@@ -365,7 +365,7 @@ const (
 
 func (w *workloads) startMonitor(ctx context.Context) {
 	w.mu.Lock()
-	if w.monitorCtx != nil {
+	if w.monitorCtx != nil && w.monitorCtx.Err() == nil {
 		w.mu.Unlock()
 		return
 	}
@@ -379,8 +379,10 @@ func (w *workloads) startMonitor(ctx context.Context) {
 func (w *workloads) monitorLoop(ctx context.Context) {
 	defer func() {
 		w.mu.Lock()
-		w.monitorCtx = nil
-		w.monitorCancel = nil
+		if w.monitorCtx == ctx {
+			w.monitorCtx = nil
+			w.monitorCancel = nil
+		}
 		w.mu.Unlock()
 	}()
 	t := time.NewTicker(monitorPeriod)
@@ -390,7 +392,7 @@ func (w *workloads) monitorLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			w.tick(context.Background())
+			w.tick(ctx)
 		}
 	}
 }

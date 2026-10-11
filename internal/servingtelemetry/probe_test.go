@@ -95,7 +95,7 @@ vllm:time_to_first_token_seconds_count 1000
 	p := NewProber(srv.Client())
 	p.now = func() time.Time { return time.Unix(1_800_000_000, 0) }
 	out := p.Probe(context.Background(), dep("d1", portOf(srv.URL)))
-	if out.RequestsRunning != 2 || out.RequestsWaiting != 1 || out.SlotsActive != 2 {
+	if out.RequestsRunning != 2 || out.RequestsWaiting == nil || *out.RequestsWaiting != 1 || out.SlotsActive != 2 {
 		t.Fatalf("load wrong: %+v", out)
 	}
 	if out.KVCacheUsageRatio == nil || *out.KVCacheUsageRatio != 0.42 {

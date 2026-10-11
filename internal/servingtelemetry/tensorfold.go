@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/telemetry"
@@ -96,6 +98,11 @@ func (p *Prober) probeTensorFold(ctx context.Context, st *depState, base string,
 		ratio := float64(*health.PoolTokens-*health.PoolFreeTokens) / float64(*health.PoolTokens)
 		out.KVCacheUsageRatio = &ratio
 	}
+	if out.KVCacheUsageRatio == nil {
+		if metrics, err := p.getBody(ctx, base+"/metrics"); err == nil {
+			out.KVCacheMaxStreamUsageRatio = tensorFoldMaxStreamKV(metrics)
+		}
+	}
 	if health.Drafted != nil && health.Accepted != nil &&
 		*health.Drafted > 0 && *health.Accepted <= *health.Drafted {
 		ratio := *health.Accepted / *health.Drafted
@@ -130,4 +137,39 @@ func (p *Prober) probeTensorFold(ctx context.Context, st *depState, base string,
 	}
 	counters.last = now
 	return out
+}
+
+// TensorFold exports one logical context/window ratio per active stream.
+// Keep its maximum separate from shared-pool occupancy: adding the ratios
+// can exceed one, and idle retained prefixes are absent from these gauges.
+func tensorFoldMaxStreamKV(body string) *float64 {
+	const name = "tensorfold:kv_cache_usage_ratio"
+	var highest float64
+	found := false
+	for line := range strings.SplitSeq(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, name) {
+			continue
+		}
+		suffix := line[len(name):]
+		if suffix != "" && suffix[0] != '{' && suffix[0] != ' ' && suffix[0] != '\t' {
+			continue
+		}
+		match := seriesRe.FindStringSubmatch(line)
+		if match == nil {
+			return nil
+		}
+		value, err := strconv.ParseFloat(match[2], 64)
+		if err != nil || value < 0 || value > 1 {
+			return nil
+		}
+		if !found || value > highest {
+			highest = value
+		}
+		found = true
+	}
+	if !found {
+		return nil
+	}
+	return &highest
 }

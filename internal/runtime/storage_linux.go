@@ -36,3 +36,8 @@ func InspectStorage(destination string) (*ImageStorageInfo, error) {
 	}
 	return &ImageStorageInfo{Root: destination, Filesystem: fmt.Sprintf("dev:%d", st.Dev), TotalBytes: fs.Blocks * uint64(fs.Bsize), FreeBytes: fs.Bavail * uint64(fs.Bsize)}, nil
 }
+
+func logFileIdentity(info os.FileInfo) string {
+	stat := info.Sys().(*syscall.Stat_t)
+	return fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
+}

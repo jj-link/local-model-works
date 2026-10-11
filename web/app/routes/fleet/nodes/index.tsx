@@ -51,7 +51,7 @@ function DeploymentRow({ d, sample }: { d: NodeDeploymentRow; sample?: ServingTe
             <span className="ml-2">
               {typeof p?.generation_tps === "number" ? `${p.generation_tps.toFixed(1)} tok/s` : ""}
               {typeof p?.requests_running === "number" || typeof p?.requests_waiting === "number"
-                ? ` · r${p?.requests_running ?? 0}/w${p?.requests_waiting ?? 0}`
+                ? ` · r${p?.requests_running ?? 0}/w${p?.requests_waiting ?? "—"}`
                 : ""}
             </span>
           </span>

@@ -290,7 +290,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream workload logs (SSE); byte-cursor resume via Last-Event-ID */
+        /**
+         * Stream workload logs (SSE); byte-cursor resume via Last-Event-ID
+         * @description Streams both stdout and stderr for the selected rank. Without
+         *     Last-Event-ID, opens with one snapshot event whose JSON data is
+         *     {"stdout":"...","stderr":"..."}, containing up to 200 recent lines
+         *     within 64 KiB per stream. Subsequent message events carry JSON
+         *     {"stream":"stdout"|"stderr","data":"..."} byte-range fragments.
+         *     Every event id is "<stdout byte offset>:<stderr byte offset>";
+         *     Last-Event-ID resumes both files at those exact offsets. An explicit
+         *     value of 0 reads both retained files from the beginning. Other cursor
+         *     formats are rejected with 400. The end event carries final offsets
+         *     {"stdout":0,"stderr":0} and is sent only after both EOFs are delivered
+         *     and the run is terminal. Output order across files is delivery order,
+         *     not a reconstruction of container write order. Filtering in the console
+         *     never alters stored logs.
+         */
         get: operations["deploymentLogs"];
         put?: never;
         post?: never;
@@ -3069,6 +3084,11 @@ export interface components {
             generation_tps?: number | null;
             /** Format: double */
             itl_p95_seconds?: number | null;
+            /**
+             * Format: double
+             * @description Largest native active-stream context/window ratio; includes planned prefill tokens and excludes idle retained prefixes. Not physical GPU-memory or shared-pool utilization.
+             */
+            kv_cache_max_stream_usage_ratio?: number | null;
             /** Format: double */
             kv_cache_usage_ratio?: number | null;
             model_id?: string;
@@ -3080,7 +3100,10 @@ export interface components {
             prefix_cache_hit_ratio?: number | null;
             /** Format: int64 */
             requests_running?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Omitted when queue depth is unavailable; an explicit zero means a measured empty queue.
+             */
             requests_waiting?: number;
             /** Format: int64 */
             slots_active?: number;
@@ -3827,6 +3850,13 @@ export interface operations {
                 content: {
                     "text/event-stream": string;
                 };
+            };
+            /** @description Invalid rank or combined log cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];

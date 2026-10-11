@@ -61,9 +61,79 @@ func TestTensorFoldHealthMetrics(t *testing.T) {
 	assertTensorFoldRate(t, "draft acceptance", out.SpecAcceptanceRatio, &acceptance)
 	assertTensorFoldRate(t, "first generation", out.GenerationTPS, nil)
 	assertTensorFoldRate(t, "first prefill", out.PrefillTPS, nil)
-	if out.PrefixCacheHitRatio != nil || out.TTFTP95Seconds != nil || out.E2EP95Seconds != nil || out.ITLP95Seconds != nil || out.RequestsWaiting != 0 || out.PreemptionsTotal != 0 {
+	if out.PrefixCacheHitRatio != nil || out.TTFTP95Seconds != nil || out.E2EP95Seconds != nil || out.ITLP95Seconds != nil || out.RequestsWaiting != nil || out.PreemptionsTotal != 0 {
 		t.Fatalf("unsupported metrics fabricated: %+v", out)
 	}
+}
+
+func TestTensorFoldNativeStreamKV(t *testing.T) {
+	const health = `{"ok":true,"backend":"tensorfold","requests_running":3,"streams":{"decoding":3,"prefilling":0,"max":5},"context_length":262144}`
+	for _, tc := range []struct {
+		name, metrics string
+		want          *float64
+	}{
+		{"busiest stream not sum or mean", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 0.8\ntensorfold:kv_cache_usage_ratio{pool=\"2\"} 0.6\n", new(0.8)},
+		{"idle gauge preserves zero", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0\n", new(0.0)},
+		{"unsupported is unavailable", "tensorfold:requests_running 3\n", nil},
+		{"invalid member rejects partial peak", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 1.1\n", nil},
+		{"negative is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} -0.1\n", nil},
+		{"nan is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} NaN\n", nil},
+		{"overflow is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 1e999\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, health)
+				case "/metrics":
+					fmt.Fprint(w, tc.metrics)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
+			if !out.Available || out.KVCacheUsageRatio != nil {
+				t.Fatalf("stream contexts must not become shared-pool occupancy: %+v", out)
+			}
+			assertTensorFoldRate(t, "busiest stream KV", out.KVCacheMaxStreamUsageRatio, tc.want)
+		})
+	}
+}
+
+func TestTensorFoldKVPoolPrecedenceAndMetricsFailure(t *testing.T) {
+	var health, metrics atomic.Value
+	health.Store(tensorFoldFixture)
+	metrics.Store("tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.8\n")
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, health.Load().(string))
+		case "/metrics":
+			w.WriteHeader(int(status.Load()))
+			fmt.Fprint(w, metrics.Load().(string))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	p := NewProber(srv.Client())
+	d := dep("tf", portOf(srv.URL))
+	out := p.Probe(context.Background(), d)
+	pool := float64(2476032-2381824) / 2476032
+	assertTensorFoldRate(t, "shared pool", out.KVCacheUsageRatio, &pool)
+	assertTensorFoldRate(t, "pool takes precedence over streams", out.KVCacheMaxStreamUsageRatio, nil)
+	health.Store(tensorFoldCounterBody(10, 20))
+	out = p.Probe(context.Background(), d)
+	assertTensorFoldRate(t, "native streams", out.KVCacheMaxStreamUsageRatio, new(0.8))
+	status.Store(http.StatusServiceUnavailable)
+	out = p.Probe(context.Background(), d)
+	if !out.Available {
+		t.Fatalf("optional metrics failure discarded healthy counters: %+v", out)
+	}
+	assertTensorFoldRate(t, "unavailable gauge must not retain old value", out.KVCacheMaxStreamUsageRatio, nil)
 }
 
 func TestTensorFoldIntervalRates(t *testing.T) {

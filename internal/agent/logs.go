@@ -1,16 +1,15 @@
 package agent
 
 import (
-	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/artifactidentity"
@@ -23,10 +22,12 @@ import (
 // (byte-cursor source of truth on the node) and streams the chunks to the
 // controller.
 type tailer struct {
-	a    *Agent
-	key  tailKey
-	id   string // container ID
-	done chan struct{}
+	a      *Agent
+	key    tailKey
+	id     string // container or logical upstream installation ID
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{} // closed after capture producers and local files close
 }
 
 // logPath is <LogDir>/<run>/<deployment>/rank<N>-<stream>.log; an empty
@@ -56,134 +57,119 @@ func (w *workloads) startTailer(ctx context.Context, runID, deploymentID string,
 
 	key := tailKey{runID: runID, deploymentID: deploymentID, rank: rank}
 	w.mu.Lock()
-	if t, ok := w.tailers[key]; ok {
-		if t.id == containerID {
+	previous := w.tailers[key]
+	if previous != nil {
+		if previous.id == containerID && previous.ctx.Err() == nil {
 			w.mu.Unlock()
 			return
 		}
-		// Container was recreated (new ID): restart the tail from the
-		// existing local files' offsets.
-		t.done <- struct{}{}
-		close(t.done)
-		delete(w.tailers, key)
+		previous.cancel()
 	}
-	t := &tailer{a: w.a, key: key, id: containerID, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	t := &tailer{a: w.a, key: key, id: containerID, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	w.tailers[key] = t
 	w.mu.Unlock()
-	go t.run(ctx)
+	go func() {
+		defer func() {
+			t.cancel()
+			w.mu.Lock()
+			if w.tailers[key] == t {
+				delete(w.tailers, key)
+			}
+			w.mu.Unlock()
+			close(t.done)
+		}()
+		// Reconnect may beat the old readers' shutdown. Never let two
+		// generations append to the same byte-cursor files concurrently.
+		if previous != nil {
+			<-previous.done
+		}
+		if ctx.Err() == nil {
+			t.run(ctx)
+		}
+	}()
 }
 
 // stopTailer stops the tailer for a run/deployment/rank, if present.
 func (w *workloads) stopTailer(runID, deploymentID string, rank int32) {
 	key := tailKey{runID: runID, deploymentID: deploymentID, rank: rank}
 	w.mu.Lock()
-	t, ok := w.tailers[key]
-	if ok {
-		delete(w.tailers, key)
+	if t := w.tailers[key]; t != nil {
+		t.cancel()
 	}
 	w.mu.Unlock()
-	if ok {
-		close(t.done)
+}
+
+// run retains one capture generation for the session. Transport EOF/errors
+// reopen from committed physical-source cursors, never from merged byte counts.
+func (t *tailer) run(ctx context.Context) {
+	for ctx.Err() == nil {
+		complete, err := t.capture(ctx)
+		if complete || ctx.Err() != nil {
+			return
+		}
+		t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_StateUpdate{
+			StateUpdate: &agentv1.StateUpdate{
+				DeploymentId: t.key.deploymentID, RunId: t.key.runID, ContainerId: t.id,
+				DiagnosticCode: "logs.unavailable", DiagnosticMessage: err.Error(),
+			},
+		}})
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
 }
 
-// run mirrors stdout and stderr until the container stream ends or the
-// tailer is stopped.
-func (t *tailer) run(ctx context.Context) {
-	stdout, stderr, err := t.a.rt.LogsStreams(ctx, t.id)
+func (t *tailer) capture(ctx context.Context) (bool, error) {
+	c, err := openLogCapture(t)
 	if err != nil {
-		t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_StateUpdate{
-			StateUpdate: &agentv1.StateUpdate{
-				DeploymentId:      t.key.deploymentID,
-				RunId:             t.key.runID,
-				ContainerId:       t.id,
-				DiagnosticCode:    "logs.unavailable",
-				DiagnosticMessage: err.Error(),
-			},
-		}})
-		return
+		return false, err
 	}
-	defer stdout.Close()
-	defer stderr.Close()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); t.stream(ctx, stdout, "stdout") }()
-	go func() { defer wg.Done(); t.stream(ctx, stderr, "stderr") }()
-
-	// Exit when the container is gone or the tailer is replaced.
-	ticker := time.NewTicker(time.Second)
+	defer c.close()
+	child, cancel := context.WithCancel(ctx)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- t.a.rt.CaptureLogs(child, t.id, c.cursor, c.emit) }()
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	var captureErr, flushErr error
+captureLoop:
 	for {
 		select {
-		case <-t.done:
-			wg.Wait()
-			return
+		case captureErr = <-finished:
+			break captureLoop
 		case <-ctx.Done():
-			wg.Wait()
-			return
+			cancel()
+			captureErr = <-finished
+			break captureLoop
 		case <-ticker.C:
-			info, err := t.a.rt.Inspect(ctx, t.id)
-			if err != nil || info.State != "running" {
-				wg.Wait()
-				return
+			if flushErr = c.flush(ctx, false); flushErr != nil {
+				cancel()
+				captureErr = <-finished
+				break captureLoop
 			}
 		}
 	}
-}
-
-// stream reads one output stream line-by-line, appends it to the local log
-// file, and sends the chunk with its file offset. On a clean drain (the
-// container's output fully read) it sends one terminal LogChunk with
-// final=true and the file's end offset, so the controller can wait for a
-// deterministic EOF instead of racing the container exit.
-func (t *tailer) stream(ctx context.Context, r io.Reader, name string) {
-	path := t.a.logPath(t.key, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
+	// Source EOF is independent of controller availability. In particular, a
+	// successful result already racing with cancellation must survive on disk.
+	complete := captureErr == nil
+	if err := c.flush(ctx, complete); err != nil {
+		return false, err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
+	if flushErr != nil && ctx.Err() == nil {
+		return false, flushErr
 	}
-	defer f.Close()
-	offset, _ := f.Seek(0, io.SeekEnd)
-
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := append(sc.Bytes(), '\n')
-		if _, err := f.Write(line); err != nil {
-			return
+	if complete {
+		for _, name := range []string{"stdout", "stderr"} {
+			_ = t.a.sendLog(ctx, &agentv1.LogChunk{
+				RunId: t.key.runID, DeploymentId: t.key.deploymentID, Rank: t.key.rank,
+				Stream: name, Final: true, EndOffset: uint64(c.state.Offsets[name]),
+			})
 		}
-		chunk := make([]byte, len(line))
-		copy(chunk, line)
-		t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_LogChunk{
-			LogChunk: &agentv1.LogChunk{
-				RunId:        t.key.runID,
-				DeploymentId: t.key.deploymentID,
-				Rank:         t.key.rank,
-				Stream:       name,
-				Offset:       uint64(offset),
-				Data:         chunk,
-			},
-		}})
-		offset += int64(len(line))
 	}
-	if sc.Err() != nil {
-		return
-	}
-	finalOffset, _ := f.Seek(0, io.SeekEnd)
-	t.a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_LogChunk{
-		LogChunk: &agentv1.LogChunk{
-			RunId:        t.key.runID,
-			DeploymentId: t.key.deploymentID,
-			Rank:         t.key.rank,
-			Stream:       name,
-			Final:        true,
-			EndOffset:    uint64(finalOffset),
-		},
-	}})
+	return complete, captureErr
 }
 
 // handleLogRequest replays a byte range of one local log stream to the
@@ -208,33 +194,31 @@ func (a *Agent) handleLogRequest(ctx context.Context, req *agentv1.LogRequest) {
 		return // nothing on disk for this stream yet
 	}
 	defer f.Close()
-	from := req.GetFromOffset()
-	if from > 0 {
-		if _, err := f.Seek(int64(from), io.SeekStart); err != nil {
-			return
-		}
+	stat, err := f.Stat()
+	if err != nil {
+		return
 	}
-	buf := make([]byte, 256*1024)
-	for {
-		n, rerr := f.Read(buf)
-		if n > 0 {
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			a.send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_LogChunk{
-				LogChunk: &agentv1.LogChunk{
-					RunId:        key.runID,
-					DeploymentId: key.deploymentID,
-					Rank:         key.rank,
-					Stream:       stream,
-					Offset:       from,
-					Data:         chunk,
-				},
-			}})
-			from += uint64(n)
-		}
-		if rerr != nil {
+	end := uint64(stat.Size())
+	complete := false
+	data, err := os.ReadFile(a.logCheckpointPath(key))
+	if err == nil {
+		var checkpoint logCheckpoint
+		if json.Unmarshal(data, &checkpoint) != nil || checkpoint.Offsets[stream] < 0 {
 			return
 		}
+		end = uint64(checkpoint.Offsets[stream])
+		complete = checkpoint.Completed
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := a.replayLogFile(ctx, key, stream, f, req.GetFromOffset(), end); err != nil {
+		return
+	}
+	if complete {
+		_ = a.sendLog(ctx, &agentv1.LogChunk{
+			RunId: key.runID, DeploymentId: key.deploymentID, Rank: key.rank,
+			Stream: stream, Final: true, EndOffset: end,
+		})
 	}
 }
 

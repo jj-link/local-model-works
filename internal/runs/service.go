@@ -116,6 +116,8 @@ type Service struct {
 	bus     *events.EventBus
 	runRoot string
 
+	logMu sync.Mutex
+
 	logEndMu sync.Mutex
 	logEnds  map[logEndKey]uint64
 	logEndCh map[logEndKey]chan struct{}
@@ -442,6 +444,8 @@ func (s *Service) LogPath(runID, deploymentID string, rank int32, stream string)
 
 // AppendLog appends one streamed chunk to the run log file.
 func (s *Service) AppendLog(runID, deploymentID string, rank int32, stream string, data []byte) error {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
 	path := s.LogPath(runID, deploymentID, rank, stream)
 	if path == "" {
 		return errors.New("run log path: unsafe id")
@@ -456,6 +460,58 @@ func (s *Service) AppendLog(runID, deploymentID string, rank int32, stream strin
 	defer f.Close()
 	_, err = f.Write(data)
 	return err
+}
+
+// ErrLogGap means a source chunk starts beyond the stored contiguous prefix.
+var ErrLogGap = errors.New("run log has a source gap")
+
+// AppendLogAt stores only new contiguous bytes. Replayed prefixes are ignored;
+// a gap returns the stored size so the caller can request the missing range.
+func (s *Service) AppendLogAt(runID, deploymentID string, rank int32, stream string, offset uint64, data []byte) (uint64, error) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	path := s.LogPath(runID, deploymentID, rank, stream)
+	if path == "" {
+		return 0, errors.New("run log path: unsafe id")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return 0, err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := uint64(st.Size())
+	if offset > size {
+		return size, ErrLogGap
+	}
+	overlap := size - offset
+	if overlap >= uint64(len(data)) {
+		return size, nil
+	}
+	n, err := f.Write(data[overlap:])
+	return size + uint64(n), err
+}
+
+// LogSize returns the stored contiguous byte count without reading history.
+func (s *Service) LogSize(runID, deploymentID string, rank int32, stream string) (uint64, error) {
+	path := s.LogPath(runID, deploymentID, rank, stream)
+	if path == "" {
+		return 0, errors.New("run log path: unsafe id")
+	}
+	st, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return uint64(st.Size()), nil
 }
 
 // MaxLogChunk bounds one read for cursor streaming.
@@ -499,10 +555,11 @@ func (s *Service) ReadLog(runID, deploymentID string, rank int32, stream string,
 	}
 	n := int(min(uint64(maxBytes), size-offset))
 	chunk = make([]byte, n)
-	if _, err := io.ReadFull(f, chunk); err != nil && err != io.ErrUnexpectedEOF {
+	n, err = io.ReadFull(f, chunk)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 		return nil, 0, size, err
 	}
-	return chunk, offset + uint64(len(chunk)), size, nil
+	return chunk[:n], offset + uint64(n), size, nil
 }
 
 // MarkLogEnd records that one log stream reached EOF at endOffset (the

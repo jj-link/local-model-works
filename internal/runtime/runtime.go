@@ -147,6 +147,33 @@ type Runtime interface {
 	// LogsStreams streams container output with stdout and stderr
 	// separated; the caller owns closing both.
 	LogsStreams(ctx context.Context, id string) (stdout, stderr io.ReadCloser, err error)
+	// CaptureLogs resumes each physical source independently. emit retains Data
+	// and Cursor atomically; callers must persist them before publishing data.
+	// Callbacks may run concurrently, and cursor includes accepted pending data.
+	// A nil return means the workload's sources have drained, not transport EOF.
+	CaptureLogs(ctx context.Context, id string, cursor func(string) LogCursor, emit func(LogRecord) error) error
+	// CaptureLogSnapshot drains one physical container's retained output. It
+	// never follows new output, and is used to retire previously owned sources.
+	CaptureLogSnapshot(ctx context.Context, id string, cursor func(string) LogCursor, emit func(LogRecord) error) error
+}
+
+// LogCursor identifies committed output within one physical source. Files use
+// identity, offset and a trailing content anchor; Docker uses its inclusive
+// timestamp boundary and the number of records consumed at that timestamp.
+type LogCursor struct {
+	FileID           string `json:"file_id,omitempty"`
+	Offset           int64  `json:"offset,omitempty"`
+	Anchor           string `json:"anchor,omitempty"`
+	Timestamp        string `json:"timestamp,omitempty"`
+	Count            uint64 `json:"count,omitempty"`
+	SnapshotComplete bool   `json:"snapshot_complete,omitempty"`
+}
+
+type LogRecord struct {
+	Source string
+	Stream string
+	Data   []byte
+	Cursor LogCursor
 }
 
 // PullSpec identifies an image pull.
