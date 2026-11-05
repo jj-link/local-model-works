@@ -35,6 +35,7 @@ const (
 	EnvAgentTeleInt           = "LMW_AGENT_TELEMETRY_INTERVAL"
 	EnvAgentUpstreamExecution = "LMW_AGENT_UPSTREAM_EXECUTION"
 	EnvAgentAdvertiseAddress  = "LMW_AGENT_ADVERTISE_ADDRESS"
+	EnvAgentAdvertiseIface    = "LMW_AGENT_ADVERTISE_INTERFACE"
 )
 
 // Server holds controller-plane settings.
@@ -60,6 +61,7 @@ type Agent struct {
 	PeerAddr          string        // peer-transfer listener, default :9444
 	PeerAdvertise     string        // routable peer host:port; "" = derive from PeerAddr
 	AdvertiseAddress  string        // explicit serving IP; empty uses inventory address selection
+	AdvertiseIface    string        // interface whose current IPv4 is the serving IP; AdvertiseAddress wins
 	StateRoot         string        // default /var/lib/local-model-works-agent
 	DockerSocket      string        // default /var/run/docker.sock
 	Workspace         string        // default <StateRoot>/workspace
@@ -149,6 +151,7 @@ func LoadAgent() (Agent, error) {
 		PeerAddr:         envStr(EnvPeerAddr, ":9444"),
 		PeerAdvertise:    envStr(EnvPeerAdvertise, ""),
 		AdvertiseAddress: envStr(EnvAgentAdvertiseAddress, ""),
+		AdvertiseIface:   envStr(EnvAgentAdvertiseIface, ""),
 		StateRoot:        envStr(EnvAgentStateRoot, "/var/lib/local-model-works-agent"),
 		DockerSocket:     envStr(EnvAgentDockerSock, "/var/run/docker.sock"),
 		Workspace:        envStr(EnvAgentWorkspace, ""),

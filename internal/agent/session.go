@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -229,6 +230,12 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 	}
 	out := toProtoInventory(inv)
 	out.AdvertiseAddress = a.cfg.AdvertiseAddress
+	if out.AdvertiseAddress == "" && a.cfg.AdvertiseIface != "" {
+		out.AdvertiseAddress = interfaceIPv4(inv.Interfaces, a.cfg.AdvertiseIface)
+		if out.AdvertiseAddress == "" {
+			log.Printf("agent: advertise interface %s has no usable IPv4 address", a.cfg.AdvertiseIface)
+		}
+	}
 	// Resolve the account by ID as well: pure-Go user.Current can fall back
 	// to environment values when the process UID has no account entry.
 	if current, err := user.Current(); err == nil {
@@ -257,6 +264,23 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 		out.DownloadRoots.ImageRoot = storage.Root
 	}
 	return out
+}
+
+// interfaceIPv4 returns the first global unicast IPv4 address of the named
+// interface, read at probe time so an address change follows the interface.
+func interfaceIPv4(list []hardware.NetworkInterface, name string) string {
+	for _, i := range list {
+		if i.Name != name {
+			continue
+		}
+		for _, address := range i.Addresses {
+			ip := net.ParseIP(address)
+			if ip != nil && ip.To4() != nil && ip.IsGlobalUnicast() {
+				return address
+			}
+		}
+	}
+	return ""
 }
 
 func interfaceByName(list []hardware.NetworkInterface, name string) bool {
