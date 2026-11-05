@@ -26,12 +26,12 @@ import {
 import { StatusDot } from "~/components/status-dot";
 import { EmptyState } from "~/components/empty-state";
 import { DiagnosticsList } from "~/components/diagnostics-list";
-import { DeploymentLiveStats } from "~/components/fleet/deployment-monitor";
 import { LogPane } from "~/components/log-pane";
 import { CopyButton } from "~/components/copy-button";
 import { ConfirmDialog } from "~/components/dialogs/confirm-dialog";
+import { DeploymentLiveStats } from "~/components/fleet/deployment-monitor";
 import { deploymentLogsUrl } from "~/lib/api";
-import { bytes, endpointUrl, relativeTime, shortId } from "~/lib/format";
+import { bytes, endpointUrl, shortId } from "~/lib/format";
 
 function Section({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
   return (
@@ -87,7 +87,7 @@ function rankProgress(value: unknown): RankProgress[] {
   return Array.isArray(rows) ? rows.filter((row): row is RankProgress => Boolean(row && typeof row === "object")) : [];
 }
 
-/** Deployment detail: placements, endpoint, live logs, diagnostics, metadata. */
+/** Deployment detail: placements, endpoint, live logs and diagnostics. */
 export default function DeploymentDetailRoute() {
   const id = useTailPathParam();
   const navigate = useNavigate();
@@ -232,7 +232,7 @@ export default function DeploymentDetailRoute() {
           </div>
         </header>
 
-        <div className="grid gap-4 p-3 lg:grid-cols-2">
+        <div className="p-3">
           <div className="min-w-0">
             <p className="lmw-label mb-2">endpoint</p>
             {d.endpoint ? (
@@ -265,39 +265,6 @@ export default function DeploymentDetailRoute() {
             ) : (
               <p className="font-mono text-xs text-faint">no endpoint reported</p>
             )}
-          </div>
-
-          <div>
-            <p className="lmw-label mb-2">metadata</p>
-            <div className="grid gap-1 font-mono text-xs">
-              <p>
-                <span className="text-muted">recipe</span>{" "}
-                <span>{shortId(d.recipe_digest)}</span>
-              </p>
-              <p>
-                <span className="text-muted">id</span> <span>{d.id}</span>
-              </p>
-              {d.fabric ? (
-                <p>
-                  <span className="text-muted">fabric</span>{" "}
-                  <Link to={`/fleet/fabrics/${d.fabric}`} className="control hover:text-foreground">
-                    {shortId(d.fabric)}
-                  </Link>
-                </p>
-              ) : null}
-              {d.run_id ? (
-                <p>
-                  <span className="text-muted">run</span>{" "}
-                  <Link to={`/runs/${d.run_id}`} className="control hover:text-foreground">
-                    {shortId(d.run_id)}
-                  </Link>
-                </p>
-              ) : null}
-              <p>
-                <span className="text-muted">created</span>{" "}
-                <span>{d.created_at ? relativeTime(d.created_at) : "—"}</span>
-              </p>
-            </div>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-flash-next-spark-tp1
-  version: 2.2.0
+  version: 2.3.0
   model: qwen3.8-flash-next
   engine: vllm
   description: >-
@@ -20,7 +20,7 @@ metadata:
   license: AGPL-3.0-or-later AND Apache-2.0
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark
-    revision: "78b0675e4469a19befaa9c84a41662b671d4185e"
+    revision: "b7c5da1a9e7448a14b480deee66eda3799b1eb43"
     path: .
 compatibility:
   nodeCount: 1
@@ -43,14 +43,16 @@ workloads:
       envTemplate: .env.sample
       envFormat: shell
       logFile: logs/memwatch-vllm-fn-tp1.log
+    env:
+      PORT: "8000"
     permissions: [host.upstream-exec]
     ports:
-      - container: 8888
-        host: 8888
+      - container: 8000
+        host: 8000
         protocol: tcp
     readiness:
       httpGet:
         method: GET
         path: /health
-        port: 8888
+        port: 8000
       timeoutSeconds: 5

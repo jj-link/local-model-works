@@ -1,0 +1,9 @@
+--- tensorfold/cuda/http.py
++++ tensorfold/cuda/http.py
+@@ -72,3 +72,5 @@
+             if self.path.rstrip("/") in ("/v1/models", "/models"):
+-                self._json(200, {"object": "list", "data": [{"id": model_id, "object": "model", "owned_by": "tensorfold"}
++                window = app.effective_context_window
++                metadata = {"max_model_len": window} if window is not None else {}
++                self._json(200, {"object": "list", "data": [{"id": model_id, "object": "model", "owned_by": "tensorfold", **metadata}
+                                                             for model_id in app.model_ids]})

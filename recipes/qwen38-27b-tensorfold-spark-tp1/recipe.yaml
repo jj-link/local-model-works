@@ -1,0 +1,69 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: qwen38-27b-tensorfold-spark-tp1
+  version: 1.0.0
+  model: Qwen3.8-27B
+  engine: tensorfold
+  description: >-
+    Runs the original pinned TensorFold preparation, start.sh and stop.sh on
+    one 128 GB GB10 DGX Spark. Patched TensorFold v0.6.0 serves
+    Vontra/Qwen3.8-27B-MLX-4bit with the z-lab DFlash2 drafter, eight
+    concurrent streams, a 262,144-token context, FP8 KV, FP8 prefill and
+    image/video input by default. The KV pool is pinned at startup (auto: free
+    memory minus ~31 GiB, at most 78 GiB), so the server holds roughly 97 GiB
+    for its lifetime. Optional settings retain the original defaults until
+    explicitly selected. Requires Docker with the NVIDIA runtime, curl,
+    Python 3 and flock. Preparation downloads roughly 19 GB of checkpoints and
+    pulls a matching image or builds it with upstream patches (25-35 GB).
+    Shared Hugging Face and kernel caches persist outside the checkout. First
+    launch compiles CUDA kernels. This binding fixes the listener to
+    0.0.0.0:8000, the model alias to Qwen3.8-27B, the default reply limit (when a
+    request omits max_tokens) to 131,072 tokens instead of
+    TensorFold's 4,096, and the observed container to
+    qwen38-27b-tf. Stop interrupts active requests and removes that container.
+    Source pinning does not freeze remote model snapshots or fallback-build
+    dependencies and does not roll back host, Docker or cache changes. Model
+    weights use Qwen Community License 1.0, separately from the Apache-2.0
+    recipe. Port 8000 conflicts with other single-Spark servers.
+  # Original scripts and TensorFold patches: Apache-2.0, Copyright 2026
+  # MiaAI-Lab; MIT-licensed parts keep their notices (retained NOTICE).
+  license: Apache-2.0
+  source:
+    url: https://github.com/MiaAI-Lab/Qwen3.8-27B-DGX-Spark-TensorFold
+    revision: "c11ff138871cf43d12898d79dbfa4dc952d17ca4"
+    path: .
+compatibility:
+  nodeCount: 1
+  accelerator:
+    vendor: nvidia
+    architectures: [sm_121]
+    count: 1
+artifacts: []
+parameters: []
+workloads:
+  - ranks: [0]
+    upstream:
+      install:
+        - ["./scripts/prepare.sh"]
+      start: ["./start.sh", "--max-tokens", "131072"]
+      stop: ["./stop.sh"]
+      containers: [qwen38-27b-tf]
+      envFile: .env
+      envFormat: literal
+    env:
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      CONTAINER_NAME: qwen38-27b-tf
+      SERVED_NAME: Qwen3.8-27B
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8000
+        host: 8000
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8000
+      timeoutSeconds: 5

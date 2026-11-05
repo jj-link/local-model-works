@@ -17,17 +17,24 @@ import (
 // generated Bash/SSH command bodies; it never evaluates source or substitutions.
 // Unknown expressions cannot establish a container identity or source path.
 type lifecycleEvidence struct {
-	launch     map[string]bool
-	stop       map[string]bool
-	inputs     map[string]bool
-	clobbered  map[string]bool
-	shellEnv   map[string]bool
-	literalEnv map[string]bool
-	readSource func(string) ([]byte, error)
-	active     map[string]bool
-	startPath  string
-	vllmArray  bool
-	vllm       bool
+	launch           map[string]bool
+	stop             map[string]bool
+	inputs           map[string]bool
+	clobbered        map[string]bool
+	shellEnv         map[string]bool
+	literalEnv       map[string]bool
+	readSource       func(string) ([]byte, error)
+	active           map[string]bool
+	startPath        string
+	vllmArray        bool
+	vllm             bool
+	functions        map[string]lifecycleFunction
+	tensorfoldArrays map[string][]*syntax.Word
+	remoteLaunch     map[string]bool
+	remoteStop       map[string]bool
+	localLaunch      map[string]bool
+	localStop        map[string]bool
+	literalParser    map[string]bool
 }
 
 func verifyLifecycle(manifest *recipe.Manifest, readSource func(string) ([]byte, error)) error {
@@ -77,20 +84,37 @@ func verifyLifecycle(manifest *recipe.Manifest, readSource func(string) ([]byte,
 				return layoutError(u.EnvTemplate, fmt.Errorf("environment template has no authored assignments"))
 			}
 		}
+		startArgv := u.Start
+		singleTensorFold := manifest.Metadata.Engine == "tensorfold" && manifest.Compatibility.NodeCount == 1
+		if singleTensorFold {
+			// Serving options after the entrypoint are forwarded to tensorfold
+			// serve, not dispatched by the script; verifySingleTensorFoldLaunch
+			// proves that forwarding.
+			if err := verifyTensorFoldServeArguments(u.Start[0], u.Start[1:]); err != nil {
+				return err
+			}
+			startArgv = u.Start[:1]
+		}
 		start := newLifecycleEvidence(readSource, u.Start[0])
-		if err := start.script(u.Start, 0); err != nil {
+		if err := start.script(startArgv, 0); err != nil {
 			return err
 		}
 		if manifest.Metadata.Engine == "vllm" && !start.vllm {
 			return layoutError(u.Start[0], fmt.Errorf("authored lifecycle no longer reaches a supported vLLM serving command"))
 		}
+		if singleTensorFold {
+			if err := verifySingleTensorFoldLaunch(u.Start[0], len(u.Start) > 1, readSource); err != nil {
+				return err
+			}
+		}
 		stop := newLifecycleEvidence(readSource, u.Start[0])
 		if err := stop.script(u.Stop, 0); err != nil {
 			return err
 		}
-		// A single service may be renamed if both authored endpoints agree.
+		// A single service may be renamed if both authored endpoints agree,
+		// unless its identity is fixed by the maintained environment binding.
 		// Multi-rank identities remain explicit; guessing rank placement is unsafe.
-		if len(u.Containers) == 1 && len(u.ContainersByRank) == 0 && !start.launch[u.Containers[0]] {
+		if len(u.Containers) == 1 && len(u.ContainersByRank) == 0 && workload.Env["CONTAINER_NAME"] == "" && !start.launch[u.Containers[0]] {
 			var candidates []string
 			for name := range start.launch {
 				if stop.stop[name] {
@@ -109,12 +133,20 @@ func verifyLifecycle(manifest *recipe.Manifest, readSource func(string) ([]byte,
 				if !stop.stop[name] {
 					return layoutError(u.Stop[0], fmt.Errorf("authored stop no longer tears down named container %q", name))
 				}
+				if manifest.Metadata.Engine == "tensorfold" && len(u.ContainersByRank) != 0 {
+					if !start.localLaunch[name] || !stop.localStop[name] || !start.remoteLaunch[name] || !stop.remoteStop[name] {
+						return layoutError(u.Start[0], fmt.Errorf("authored local and SSH lifecycles no longer launch and stop named container %q", name))
+					}
+				}
 			}
 		}
 		if u.EnvFile != "" {
 			read := start.shellEnv[u.EnvFile]
 			if u.EnvFormat == "literal" {
 				read = start.literalEnv[u.EnvFile]
+				if manifest.Metadata.Engine == "tensorfold" {
+					read = read && start.literalParser[u.EnvFile]
+				}
 			}
 			if !read {
 				return layoutError(u.Start[0], fmt.Errorf("authored launch no longer reads %q with %s environment semantics", u.EnvFile, u.EnvFormat))
@@ -156,6 +188,9 @@ func newLifecycleEvidence(readSource func(string) ([]byte, error), startPath str
 		clobbered: map[string]bool{},
 		shellEnv:  map[string]bool{}, literalEnv: map[string]bool{},
 		readSource: readSource, active: map[string]bool{}, startPath: path.Clean(startPath),
+		functions: map[string]lifecycleFunction{}, tensorfoldArrays: map[string][]*syntax.Word{},
+		remoteLaunch: map[string]bool{}, remoteStop: map[string]bool{},
+		localLaunch: map[string]bool{}, localStop: map[string]bool{}, literalParser: map[string]bool{},
 	}
 }
 
@@ -177,7 +212,7 @@ func (e *lifecycleEvidence) script(argv []string, depth int) error {
 	}
 	e.active[name] = true
 	defer delete(e.active, name)
-	values := map[string]string{"SCRIPT_DIR": ".", "0": "./" + name}
+	values := map[string]string{"SCRIPT_DIR": ".", "0": "./" + name, "_LMW_SOURCE_DIR": path.Dir(name)}
 	for i, arg := range argv[1:] {
 		values[strconv.Itoa(i+1)] = arg
 	}
@@ -237,7 +272,7 @@ func sourceWord(word *syntax.Word, values map[string]string) (string, bool) {
 }
 
 func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[string]string, depth int) error {
-	functions := map[string]*syntax.FuncDecl{}
+	functions := e.functions
 	for _, stmt := range file.Stmts {
 		call, ok := stmt.Cmd.(*syntax.CallExpr)
 		if !ok || len(call.Args) != 0 {
@@ -254,7 +289,7 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 	}
 	syntax.Walk(file, func(node syntax.Node) bool {
 		if fn, ok := node.(*syntax.FuncDecl); ok {
-			functions[fn.Name.Value] = fn
+			functions[fn.Name.Value] = lifecycleFunction{fn, content}
 			return false
 		}
 		if p, ok := node.(*syntax.ParamExp); ok {
@@ -264,8 +299,8 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 	})
 	var failure error
 	calling := map[string]bool{}
-	var walk func(syntax.Node, map[string]string)
-	walk = func(root syntax.Node, scope map[string]string) {
+	var walk func(syntax.Node, map[string]string, []byte)
+	walk = func(root syntax.Node, scope map[string]string, sourceContent []byte) {
 		syntax.Walk(root, func(node syntax.Node) bool {
 			if failure != nil {
 				return false
@@ -283,7 +318,7 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 							}
 							if matches, _ := path.Match(text, value); matches {
 								for _, stmt := range item.Stmts {
-									walk(stmt, scope)
+									walk(stmt, scope, sourceContent)
 								}
 								return false
 							}
@@ -292,6 +327,15 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 					return false
 				}
 			case *syntax.Stmt:
+				if loop, ok := n.Cmd.(*syntax.WhileClause); ok && literalEnvironmentLoop(loop) {
+					for _, redirect := range n.Redirs {
+						if redirect.Op == syntax.RdrIn {
+							if value, known := sourceWord(redirect.Word, scope); known {
+								e.literalParser[path.Clean(value)] = true
+							}
+						}
+					}
+				}
 				// Track the source of a normalized temporary environment file,
 				// not an unrelated mention of the original path in a comment.
 				if call, ok := n.Cmd.(*syntax.CallExpr); ok && len(call.Args) > 1 && call.Args[0].Lit() == "sed" {
@@ -309,10 +353,21 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 			case *syntax.ParamExp:
 				e.inputs[n.Param.Value] = true
 			case *syntax.Assign:
+				if n.Name != nil && n.Array != nil {
+					var words []*syntax.Word
+					for _, element := range n.Array.Elems {
+						words = append(words, element.Value)
+					}
+					e.tensorfoldArrays[n.Name.Value] = words
+				}
 				if n.Name != nil && n.Name.Value == "VLLM_ARGS" && n.Array != nil {
 					e.vllmArray = true
 				}
 				if n.Name != nil && n.Array == nil && !n.Append && n.Name.Value != "SCRIPT_DIR" {
+					if repositoryRootWord(n.Value) {
+						scope[n.Name.Value] = path.Clean(scope["_LMW_SOURCE_DIR"] + "/..")
+						return true
+					}
 					if value, ok := sourceWord(n.Value, scope); ok {
 						scope[n.Name.Value] = value
 					} else {
@@ -330,10 +385,37 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 					return true
 				}
 				command, _ := sourceWord(n.Args[0], scope)
+				if command == "shift" && len(n.Args) == 1 {
+					// Ranked SSH helpers consume the worker selector before
+					// forwarding "$@"; keep unknown positional slots aligned.
+					maximum := 0
+					for key := range scope {
+						if position, err := strconv.Atoi(key); err == nil && position > maximum {
+							maximum = position
+						}
+					}
+					for position := 1; position <= maximum; position++ {
+						key := strconv.Itoa(position)
+						if value, known := scope[strconv.Itoa(position+1)]; known {
+							scope[key] = value
+						} else {
+							delete(scope, key)
+						}
+					}
+					return false
+				}
+				if len(n.Args) == 1 && arrayExpansion(n.Args[0]) {
+					if p := simpleExpansion(n.Args[0]); p != nil {
+						words := e.tensorfoldArrays[p.Param.Value]
+						if len(words) >= 2 && words[0].Lit() == "docker" {
+							failure = e.docker(words[1:], scope)
+						}
+					}
+				}
 				if command == "exec" && len(n.Args) >= 3 && path.Base(n.Args[1].Lit()) == "vllm" && n.Args[2].Lit() == "serve" {
 					e.vllm = true
 				}
-				if fn := functions[command]; fn != nil && !calling[command] {
+				if fn, exists := functions[command]; exists && !calling[command] {
 					local := make(map[string]string, len(scope))
 					for key, value := range scope {
 						if _, err := strconv.Atoi(key); err != nil {
@@ -359,12 +441,15 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 						}
 					}
 					calling[command] = true
-					walk(fn.Body, local)
+					walk(fn.declaration.Body, local, fn.content)
 					delete(calling, command)
 				}
 				if (command == "source" || command == ".") && len(n.Args) == 2 {
 					if value, ok := sourceWord(n.Args[1], scope); ok {
 						e.shellEnv[path.Clean(value)] = true
+						if name, literal := literalSource(n); literal {
+							failure = e.sourcedScript(name, scope, depth+1)
+						}
 					}
 				}
 				if command == "docker" {
@@ -376,6 +461,12 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 							break
 						}
 					}
+				}
+				if command == "ssh" {
+					failure = e.forwardedSSH(n.Args[1:], scope, depth+1)
+				}
+				if fn, exists := functions[command]; exists && forwardsSSH(fn.declaration) {
+					failure = e.serializedDocker(file, n.Args[1:], scope)
 				}
 				if path.Clean(command) == e.startPath && len(n.Args) == 2 && n.Args[1].Lit() == "stop" {
 					failure = e.script([]string{command, "stop"}, depth+1)
@@ -393,13 +484,13 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 						for _, part := range q.Parts {
 							if p, ok := part.(*syntax.ParamExp); ok {
 								if value, known := sourceWord(&syntax.Word{Parts: []syntax.WordPart{p}}, scope); known {
-									body.Write(content[at:int(p.Pos().Offset())])
+									body.Write(sourceContent[at:int(p.Pos().Offset())])
 									body.WriteString(value)
 									at = int(p.End().Offset())
 								}
 							}
 						}
-						body.Write(content[at:end])
+						body.Write(sourceContent[at:end])
 						decoded, _ := heredocShell([]byte(body.String()), 0, false)
 						inner, err := parseShell(decoded, "SSH lifecycle")
 						if err == nil {
@@ -407,6 +498,7 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 							for key, value := range scope {
 								local[key] = value
 							}
+							local["_LMW_REMOTE"] = "1"
 							failure = e.shell(inner, decoded, local, depth+1)
 						}
 					}
@@ -418,7 +510,7 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 	if depth > 8 {
 		return fmt.Errorf("authored lifecycle nesting exceeds supported depth")
 	}
-	walk(file, values)
+	walk(file, values, content)
 	if failure != nil {
 		return failure
 	}
@@ -456,14 +548,33 @@ func (e *lifecycleEvidence) docker(args []*syntax.Word, values map[string]string
 			if simpleVariable(args[i]) == "VLLM_ARGS_STR" && e.vllmArray {
 				serving, e.vllm = true, true
 			}
+			if args[i].Lit() == "tensorfold" && i+1 < len(args) && args[i+1].Lit() == "serve" {
+				serving = true
+			}
+			if p := simpleExpansion(args[i]); p != nil && arrayExpansion(args[i]) {
+				words := e.tensorfoldArrays[p.Param.Value]
+				if len(words) >= 2 && words[0].Lit() == "tensorfold" && words[1].Lit() == "serve" {
+					serving = true
+				}
+			}
 		}
 		if name != "" && serving {
 			e.launch[name] = true
+			if values["_LMW_REMOTE"] == "1" {
+				e.remoteLaunch[name] = true
+			} else {
+				e.localLaunch[name] = true
+			}
 		}
 	case "stop", "rm":
 		for _, arg := range args[1:] {
 			if name, ok := sourceWord(arg, values); ok && !strings.HasPrefix(name, "-") {
 				e.stop[name] = true
+				if values["_LMW_REMOTE"] == "1" {
+					e.remoteStop[name] = true
+				} else {
+					e.localStop[name] = true
+				}
 			}
 		}
 	case "compose":

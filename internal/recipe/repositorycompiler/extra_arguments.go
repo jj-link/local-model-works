@@ -48,6 +48,20 @@ func (c *configurationCollector) extraArguments(file *syntax.File, content []byt
 			if !ok || len(call.Args) < 2 || call.Args[0].Lit() != "docker" || call.Args[1].Lit() != "run" {
 				continue
 			}
+			// A direct launch without an authored EXTRA_ARGS_ARR hook still
+			// accepts appended arguments after its final original word.
+			direct, hooked := false, false
+			for i, word := range call.Args {
+				if word.Lit() == "sglang.launch_server" && i > 0 && call.Args[i-1].Lit() == "-m" {
+					direct = true
+				}
+				if p := simpleExpansion(word); p != nil && arrayExpansion(word) && p.Param.Value == "EXTRA_ARGS_ARR" {
+					hooked = true
+				}
+			}
+			if direct && !hooked {
+				add("extra_args", "Additional SGLang arguments", "argv", int(call.Args[len(call.Args)-1].End().Offset()), false)
+			}
 			for _, word := range call.Args {
 				p := simpleExpansion(word)
 				if p == nil || !arrayExpansion(word) {

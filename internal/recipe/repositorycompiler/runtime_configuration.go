@@ -472,7 +472,7 @@ func (c *configurationCollector) generatedWord(configuration *sourceconfig.File,
 		return
 	}
 	// These are already serialized multiword argv, not scalar values.
-	if strings.Contains(variable, "ARGS") || strings.Contains(variable, "MOUNT") || strings.HasSuffix(variable, "_STR") || variable == "PLE_OFFLOAD_ENV" || variable == "worker_preload" || variable == "worker_nccl" || variable == "serve_env" {
+	if strings.Contains(variable, "ARGS") || strings.Contains(variable, "MOUNT") || strings.HasSuffix(variable, "_STR") || variable == "PLE_ENV" || variable == "PLE_OFFLOAD_ENV" || variable == "worker_preload" || variable == "worker_nccl" || variable == "serve_env" {
 		return
 	}
 	configuration.Edits = append(configuration.Edits, sourceconfig.Edit{Start: mappedPosition(positions, word.Pos()), End: mappedPosition(positions, word.End()), Variable: variable, Prefix: prefix, Suffix: suffix, Format: "shell-word"})

@@ -11,7 +11,6 @@ import type { UseQueryResult } from "@tanstack/react-query";
 
 const TEAL = "#5ed6d0";
 const GREEN = "#76c66b";
-const AMBER = "#ffb000";
 
 // Stable formatter identities let uPlot update data without remounting on every poll.
 const formatRate = (value: number) => value.toFixed(1);
@@ -165,7 +164,7 @@ function RankZeroPanel({
         {p?.available ? (
           <>
             <Metric label="model" value={p.model_id ?? p.backend ?? "—"} />
-            <Metric label="generation (aggregate)" value={num(p.generation_tps, "tok/s")} />
+            <Metric label="total generation" value={num(p.generation_tps, "tok/s")} />
             <Metric label={promptLabel} value={num(p.prefill_tps, "tok/s")} />
             <Metric label="requests running / waiting" value={`${count(reportedCount(p, "requests_running"))} / ${count(reportedCount(p, "requests_waiting"))}`} />
             <Metric label="slots active / total" value={`${count(reportedCount(p, "slots_active"))} / ${count(reportedCount(p, "slots_total"))}`} />
@@ -178,27 +177,23 @@ function RankZeroPanel({
           </>
         ) : null}
       </div>
-      <p className="mt-2 font-mono text-[11px] text-faint">
-        {tensorFold
-          ? " TensorFold generation is live aggregate sampled interval token throughput, not individual-request decode speed. Prompt accounting counts prompt tokens from requests completed in the sampled interval, not instantaneous prefill speed. Draft acceptance is cumulative across completed requests."
-          : " Throughput is engine-reported; it is not individual-request decode speed."}
-        {" "}— means not reported or unsupported.
-      </p>
 
       {samples.isError ? (
         <EmptyState title="Serving history unavailable" detail="Retry the service telemetry fetch." onRetry={() => void samples.refetch()} />
       ) : samples.data && samples.data.length ? (
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <figure>
-            <figcaption className="lmw-label mb-2">{tensorFold ? "generation throughput / prompt accounting rate" : "generation / prefill throughput"}</figcaption>
+            <figcaption className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+              <span className="lmw-label">Total generation tok/s</span>
+              <span className="font-mono text-xl font-semibold tnum text-foreground" aria-label="Current total generation throughput">
+                {num(p?.available ? p.generation_tps : null, "tok/s")}
+              </span>
+            </figcaption>
             <TrendChart
-              series={[
-                ...histSeries(samples.data, (x) => x.generation_tps).map((s) => ({ ...s, label: "generation", color: TEAL })),
-                ...histSeries(samples.data, (x) => x.prefill_tps).map((s) => ({ ...s, label: promptLabel, color: AMBER })),
-              ]}
+              series={histSeries(samples.data, (x) => x.generation_tps).map((s) => ({ ...s, label: "total generation", color: TEAL }))}
               yLabel="tok/s"
               valueFormat={formatRate}
-              ariaLabel={tensorFold ? "generation throughput and prompt accounting rate" : "generation and prefill throughput"}
+              ariaLabel="Total generation tok/s"
             />
           </figure>
           <figure>

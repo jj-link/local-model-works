@@ -1,0 +1,81 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: glm53-flash-exl3-tensorfold-spark-tp2
+  version: 2.3.0
+  model: GLM-5.3-Flash-EXL3
+  engine: tensorfold
+  description: >-
+    Runs the original pinned TensorFold start.sh and stop.sh on the head
+    of two 128 GB GB10 Sparks linked by ConnectX-7 RoCE v2. Upstream prepares
+    its own image and pinned target/DFlash2 snapshots on both nodes, compiles
+    CUDA kernels and launches worker then head with host network/IPC and RDMA.
+    Defaults retain four concurrent streams, a native 1,048,576-token window,
+    vision, DFlash2/copy drafts, lossy dense q4 and FP8 KV. Select the generated
+    context setting as 262144 for a 256k window; unset preserves upstream's
+    native default. Start may retry once with a smaller window when memory does
+    not fit. This binding fixes TP=2 and clears WORKER2 for start and stop.
+    Requires Docker/NVIDIA,
+    rsync, curl, Python 3, flock and noninteractive head-to-worker SSH; allow
+    roughly 110 GiB free memory and 205 GB storage per node, with upstream
+    first-download/image checks requiring 180 GB plus 35 GB when co-located.
+    Setup may pull, build, download and synchronize files outside the checkout.
+    Stop interrupts requests and removes both named containers, but can return
+    success with an unreachable worker still running; LMW independently observes
+    rank 1 and verifies teardown. Port 8888 conflicts with other cluster servers.
+    Source pinning does not freeze fallback-build dependencies or roll back host
+    changes, Docker state or shared caches. Default DFlash2 is non-commercial.
+  # Upstream recipe: Apache-2.0; retain LICENSE and third-party NOTICE.
+  # Default target and base: MIT in the pinned target LICENSE/card.
+  # Drafter: CC-BY-NC-ND-4.0, non-commercial/no derivatives.
+  license: Apache-2.0
+  source:
+    url: https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold
+    revision: "22f55f5ff129cf5e48bf847b23af3d873705587f"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts: []
+parameters:
+  - name: worker_ssh
+    type: string
+    minLength: 1
+    description: Upstream WORKER; an existing SSH alias or user@host for the selected worker, reachable noninteractively from the head agent account.
+workloads:
+  - ranks: [0, 1]
+    upstream:
+      coordinatorRank: 0
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [glm53-flash-tf]
+      containersByRank:
+        "1": [glm53-flash-tf]
+      envFile: .env
+      envTemplate: scripts/local.sh.example
+      envFormat: literal
+    env:
+      WORKER: "${setting.worker_ssh}"
+      TP: "2"
+      WORKER2: ""
+      FABRIC_PEER: "${cluster.node.1.fabric.node_addr}"
+      PORT: "8888"
+      HOST: "0.0.0.0"
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      timeoutSeconds: 5

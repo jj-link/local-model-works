@@ -159,7 +159,7 @@ func TestQwenSelectedInputsReachGeneratedDocker(t *testing.T) {
 					if selected {
 						script = "docker() { printf '%s\\0' \"$@\"; }; not_a_command() { exit 91; }\n"
 					}
-					script += cache + mount + "generated=$(cat <<" + delimiter + "\n" + string(body) + delimiter + "\n)\neval \"$generated\"\n"
+					script += cache + mount + "source /dev/stdin <<" + delimiter + "\n" + string(body) + delimiter + "\n"
 					environment := append(boundEnvironment(t, manifest, settings), "HOME=/computed/home", "REMOTE_HF="+literal, "NFS_VOLUME=authored-shared-cache", "IMAGE=fixture/image", "MODEL_ID=model/selected", "VLLM_ARGS_STR=--inherited sentinel")
 					arguments := fragmentArgv(t, script, environment)
 					want := "/computed/home/.cache/huggingface:/root/.cache/huggingface"
@@ -200,11 +200,8 @@ func TestQwenHardcodedArgumentsPreserveFlattenedLiteralWords(t *testing.T) {
 	literal := "parser it's $(not_a_command) `literal`\nLAUNCH_EOF\r"
 	for _, family := range []string{"qwen38-flash-next-spark-tp1", "qwen38-flash-next-dspark-tp2"} {
 		t.Run(family, func(t *testing.T) {
-			for _, configured := range []bool{false, true} {
-				settings := map[string]any{}
-				if configured {
-					settings = map[string]any{"tool_call_parser": literal, "load_format": "custom literal", "enable_auto_tool_choice": false}
-				}
+			for _, enabled := range []bool{false, true} {
+				settings := map[string]any{"tool_call_parser": literal, "load_format": "custom literal", "enable_auto_tool_choice": enabled}
 				_, files := compiledFragments(t, family, settings)
 				fragment := originalAssignments(t, files["start.sh"], func(a *syntax.Assign) bool {
 					if a.Name.Value == "VLLM_ARGS_STR" {
@@ -220,10 +217,7 @@ func TestQwenHardcodedArgumentsPreserveFlattenedLiteralWords(t *testing.T) {
 					return flag == "--tool-call-parser" || flag == "--load-format" || flag == "--enable-auto-tool-choice" || flag == "--kv-cache-dtype"
 				})
 				arguments := fragmentArgv(t, "capture() { printf '%s\\0' \"$@\"; }; not_a_command() { exit 92; }\n"+fragment+"eval \"capture $VLLM_ARGS_STR\"", []string{"KV_CACHE_DTYPE=literal dtype ' $(not_a_command)"})
-				wantParser, wantLoad := "qwen3_coder", "safetensors"
-				if configured {
-					wantParser, wantLoad = literal, "custom literal"
-				}
+				wantParser, wantLoad := literal, "custom literal"
 				if got := flagValue(t, arguments, "--tool-call-parser"); got != wantParser {
 					t.Fatalf("parser split: %q", got)
 				}
@@ -239,8 +233,8 @@ func TestQwenHardcodedArgumentsPreserveFlattenedLiteralWords(t *testing.T) {
 						present = true
 					}
 				}
-				if present == configured {
-					t.Fatalf("presence flag removal/default violated: %#v", arguments)
+				if present != enabled {
+					t.Fatalf("selected presence flag violated: %#v", arguments)
 				}
 			}
 		})
@@ -262,8 +256,19 @@ func TestSingleSparkControllingAliasAndFractionalBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var branch, budget string
+	var branch, budget, defaults string
 	for _, stmt := range file.Stmts {
+		if call, ok := stmt.Cmd.(*syntax.CallExpr); ok && len(call.Args) == 0 {
+			for _, assignment := range call.Assigns {
+				if assignment.Name == nil {
+					continue
+				}
+				switch assignment.Name.Value {
+				case "STOCK_MODEL_ID", "ABLIT_MODEL_ID", "ABLIT", "HOST_SLACK_GIB", "KV_TARGET_GIB", "HOST_RESERVE_GIB":
+					defaults += content[assignment.Pos().Offset():assignment.End().Offset()] + "\n"
+				}
+			}
+		}
 		if _, ok := stmt.Cmd.(*syntax.IfClause); ok && strings.HasPrefix(content[stmt.Pos().Offset():stmt.End().Offset()], "if [[ -n \"${TP1_MODEL_ID:-}\"") {
 			branch = content[stmt.Pos().Offset():stmt.End().Offset()]
 		}
@@ -277,11 +282,8 @@ func TestSingleSparkControllingAliasAndFractionalBudgets(t *testing.T) {
 	if budget == "" {
 		t.Fatal("missing original budget calculation")
 	}
-	defaults := originalAssignments(t, content, func(a *syntax.Assign) bool {
-		return a.Name.Value == "STOCK_MODEL_ID" || a.Name.Value == "ABLIT_MODEL_ID" || a.Name.Value == "ABLIT" || a.Name.Value == "HOST_SLACK_GIB" || a.Name.Value == "KV_TARGET_GIB" || a.Name.Value == "HOST_RESERVE_GIB"
-	})
 	container := originalAssignments(t, content, func(a *syntax.Assign) bool { return a.Name.Value == "CONTAINER_MEM_GIB" })
-	environment := append(boundEnvironment(t, manifest, selected), "WEIGHT_BYTES=10737418240", "PLE_GIB=2", "OVERHEAD_GIB=3", "MTP_GIB=0", "MAX_MODEL_LEN=1", "KV_BYTES_PER_TOKEN=29482", "KV_MULT=1", "MEM_TOTAL_GIB=100")
+	environment := append(boundEnvironment(t, manifest, selected), "WEIGHT_BYTES=10737418240", "PLE_GIB=2", "OVERHEAD_GIB=3", "MTP_GIB=0", "MTP_OFF_CREDIT=0", "MAX_MODEL_LEN=1", "KV_BYTES_PER_TOKEN=29482", "KV_MULT=1", "MEM_TOTAL_GIB=100")
 	arguments := fragmentArgv(t, "warn() { :; }; unset CONTAINER_MEM_GIB\n"+defaults+branch+"\n"+budget+"\n"+container+"\nprintf '%s\\0' \"$MODEL_ID\" \"$BUDGET_GIB\" \"$BUDGET_CAP_GIB\" \"$CONTAINER_MEM_GIB\"", environment)
 	want := []string{selected["tp1_model_id"].(string), "31.50", "73.75", "37"}
 	if !reflect.DeepEqual(arguments, want) {

@@ -107,9 +107,7 @@ func TestPinnedRuntimeConfiguration(t *testing.T) {
 				if _, exists := parameters["max_running_requests"]; exists {
 					t.Fatal("duplicated existing max_concurrent_requests binding")
 				}
-				if _, exists := parameters["extra_args"]; exists {
-					t.Fatal("RTX has no upstream extra-arguments input")
-				}
+				assertOptional(t, parameters, "extra_args")
 			case "qwen38-27b-dgx-spark-mtp":
 				assertDefault(t, parameters, "context_length", int64(262144))
 				assertOptional(t, parameters, "spec_steps")
@@ -173,6 +171,41 @@ func TestEnvironmentPreservesShellAndLiteralSemantics(t *testing.T) {
 			}
 			if tc.format == "literal" && cache.Default != "${HOME}/cache" {
 				t.Fatal("literal dollar text was interpreted as shell syntax")
+			}
+		})
+	}
+}
+
+func TestEnvironmentIgnoresCommentedProseAndRejectsActiveStatements(t *testing.T) {
+	prose := "PLE_GIB=47.68 and MTP_WEIGHTS_GIB=2.34; measured"
+	for _, tc := range []struct {
+		name, input string
+		reject      bool
+	}{
+		{"commented prose", "# " + prose + "\n", false},
+		{"active statements", prose + "\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := &recipe.Manifest{Workloads: []recipe.Workload{{Env: map[string]string{}}}}
+			collector := configurationCollector{manifest: manifest, workload: &manifest.Workloads[0]}
+			err := collector.environment([]byte(tc.input+"# PLE_GIB=47.68 # optional checkpoint override\nMAX_NUM_SEQS=4\n"), ".env.sample", "shell")
+			if tc.reject {
+				if err == nil {
+					t.Fatal("active multi-statement environment input accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parameter := collector.parameter("ple_gib"); parameter == nil || !parameter.Optional || parameter.Default != nil {
+				t.Fatalf("valid optional setting lost: %#v", parameter)
+			}
+			if parameter := collector.parameter("max_num_seqs"); parameter == nil || parameter.Default != int64(4) {
+				t.Fatalf("active setting lost: %#v", parameter)
+			}
+			if parameter := collector.parameter("mtp_weights_gib"); parameter != nil {
+				t.Fatalf("commented prose became a setting: %#v", parameter)
 			}
 		})
 	}

@@ -51,6 +51,11 @@ func compileConfiguration(manifest *recipe.Manifest, readSource func(string) ([]
 		// unconditional constant. Keep these optional: the source can compute
 		// a default from the selected model, host, or another setting at startup.
 		collector.scriptInputs(file, name)
+		if manifest.Metadata.Engine == "tensorfold" {
+			if err := collector.sourcedInputs(file, readSource, map[string]bool{name: true}); err != nil {
+				return err
+			}
+		}
 		if manifest.Metadata.Engine == "sglang" {
 			configuration, err := collector.sglang(file, content, name)
 			if err != nil {
@@ -112,7 +117,8 @@ type configurationCollector struct {
 func managedEnvironment(name string) bool {
 	switch name {
 	case "PORT", "VLLM_PORT", "VLLM_HOST", "HOST", "MASTER_PORT", "MASTER_ADDR",
-		"HEAD_IP", "WORKER_IP", "WORKER_USER", "WORKER_SSH", "WORKER_HOME", "WORKER_HOST",
+		"HEAD_IP", "WORKER_IP", "WORKER_USER", "WORKER_SSH", "WORKER_HOME", "WORKER_HOST", "WORKER", "FABRIC_PEER",
+		"WORKER2", "FABRIC_PEER2", "WORKER_HF_CACHE2", "WORKER_WEIGHTS2", "NFS_SERVER2", "SOCKET_IFNAME",
 		"NODE_RANK", "HEADLESS", "TP", "NNODES", "TENSOR_PARALLEL_SIZE", "DSPARK_TP3",
 		"TP3_MAX_NUM_SEQS", "ENABLE_EXPERT_PARALLEL", "VLLM_HOST_IP", "WORKER_VLLM_HOST_IP",
 		"IFACE", "WORKER_IFACE", "IB_HCA", "WORKER_IB_HCA", "IB_GID_INDEX",
@@ -121,6 +127,7 @@ func managedEnvironment(name string) bool {
 		"WORKER_NCCL_IB_HCA", "WORKER_NCCL_SOCKET_IFNAME", "WORKER_TP_SOCKET_IFNAME", "WORKER_GLOO_SOCKET_IFNAME",
 		"WORKER_NCCL_IB_GID_INDEX", "WORKER_NCCL_IB_GID_MATCH_IP", "NFS_SERVER_IP",
 		"HEAD_CX7_IF", "WORKER_CX7_IF", "HEAD_CX7_IB", "WORKER_CX7_IB", "HEAD_GID", "WORKER_GID",
+		"HEAD_ADDR", "HEAD_DEV", "HEAD_HCA", "HEAD_HCAS", "WORKER_ADDR", "WORKER_DEV", "WORKER_HCA", "WORKER_HCAS", "NFS_SERVER",
 		"CONTAINER_NAME", "CONTAINER_HEAD", "CONTAINER_WORKER", "TP1_CONTAINER_NAME", "PROJECT_NAME",
 		"ENV_FILE", "COMPOSE_FILE", "NFS_VOLUME", "NFS_CONTAINER", "NFS_OVERRIDE_FILE",
 		"API_HOST", "API_URL", "CHAT_URL", "SERVED_MODEL_NAME", "WORKER_DIR", "DSPARK_MODEL",
@@ -255,6 +262,9 @@ func (c *configurationCollector) environment(content []byte, source, format stri
 				return err
 			}
 			if len(parsed.Stmts) != 1 {
+				if optional { // prose can parse as multiple shell statements
+					continue
+				}
 				return fmt.Errorf("expected a single environment assignment for %s", name)
 			}
 			call, ok := parsed.Stmts[0].Cmd.(*syntax.CallExpr)

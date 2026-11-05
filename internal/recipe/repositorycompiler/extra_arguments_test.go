@@ -21,6 +21,7 @@ func TestAdditionalArgumentsReachEveryOriginalLauncher(t *testing.T) {
 		launchers int
 	}{
 		{"qwen38-27b-dgx-spark-mtp", "extra_args", 1},
+		{"qwen38-27b-rtx6000pro-dflash2", "extra_args", 1},
 		{"qwen38-flash-next-spark-tp1", "extra_vllm_args", 1},
 		{"qwen38-flash-next-dspark-tp2", "extra_vllm_args", 2},
 		{"glm53-flash-exl3-dflash2-spark-tp2", "extra_args", 2},
