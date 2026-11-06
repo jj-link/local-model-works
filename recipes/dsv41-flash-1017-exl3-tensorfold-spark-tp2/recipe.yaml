@@ -1,0 +1,76 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: dsv41-flash-1017-exl3-tensorfold-spark-tp2
+  version: 1.0.0
+  model: DeepSeek-V4.1-Flash-1017
+  engine: tensorfold
+  description: >-
+    Runs the original pinned TensorFold start.sh and stop.sh on the head
+    of two 128 GB GB10 Sparks linked by ConnectX-7 RoCE v2. Upstream builds
+    its native Zig image on both nodes, downloads the 196 GiB EAQ v1 2.9 bpw
+    EXL3 checkpoint and ~203 GB of Engram tables on the head, writes each
+    rank's weight file and launches worker then head with host network/IPC
+    and RDMA. Defaults retain four concurrent streams, a native 1,048,576-token
+    window, vision, tool calling, thinking and DSpark drafts. Select the
+    generated context setting as 524288 when the head carries other software.
+    The head must export its Hugging Face cache over NFS to the worker's link
+    address before setup; the worker reads the checkpoint from it read-only.
+    Requires Docker/NVIDIA, git, Python 3, the hf CLI and noninteractive
+    head-to-worker SSH; start refuses below 112 GiB available memory per node.
+    Allow ~530 GB storage on the head and ~335 GB on the worker. Setup may
+    pull, build, download and synchronize files outside the checkout. Stop
+    interrupts requests and removes both named containers; LMW independently
+    observes rank 1 and verifies teardown. Port 8888 conflicts with other
+    cluster servers. Source pinning does not freeze fallback-build
+    dependencies or roll back host changes, Docker state or shared caches.
+  # Upstream recipe: Apache-2.0; retain LICENSE and third-party NOTICE.
+  license: Apache-2.0
+  source:
+    url: https://github.com/MiaAI-Lab/DeepSeek-v4.1-Flash-1017-2x-DGX-Sparks
+    revision: "31457d05f8917301bbf609c3d12c7f364af8a4a6"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts: []
+parameters:
+  - name: worker_ssh
+    type: string
+    minLength: 1
+    description: Upstream WORKER; an existing SSH alias or user@host for the selected worker, reachable noninteractively from the head agent account.
+workloads:
+  - ranks: [0, 1]
+    upstream:
+      coordinatorRank: 0
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [dsv41-1017-exl3-tf]
+      containersByRank:
+        "1": [dsv41-1017-exl3-tf]
+      envFile: .env
+      envTemplate: scripts/local.sh.example
+      envFormat: literal
+    env:
+      WORKER: "${setting.worker_ssh}"
+      FABRIC_PEER: "${cluster.node.1.fabric.node_addr}"
+      PORT: "8888"
+      HOST: "0.0.0.0"
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      timeoutSeconds: 5

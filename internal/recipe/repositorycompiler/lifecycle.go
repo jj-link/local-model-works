@@ -30,6 +30,7 @@ type lifecycleEvidence struct {
 	vllm             bool
 	functions        map[string]lifecycleFunction
 	tensorfoldArrays map[string][]*syntax.Word
+	commandStrings   map[string]quotedCommand
 	remoteLaunch     map[string]bool
 	remoteStop       map[string]bool
 	localLaunch      map[string]bool
@@ -189,7 +190,8 @@ func newLifecycleEvidence(readSource func(string) ([]byte, error), startPath str
 		shellEnv:  map[string]bool{}, literalEnv: map[string]bool{},
 		readSource: readSource, active: map[string]bool{}, startPath: path.Clean(startPath),
 		functions: map[string]lifecycleFunction{}, tensorfoldArrays: map[string][]*syntax.Word{},
-		remoteLaunch: map[string]bool{}, remoteStop: map[string]bool{},
+		commandStrings: map[string]quotedCommand{},
+		remoteLaunch:   map[string]bool{}, remoteStop: map[string]bool{},
 		localLaunch: map[string]bool{}, localStop: map[string]bool{}, literalParser: map[string]bool{},
 	}
 }
@@ -358,10 +360,24 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 					for _, element := range n.Array.Elems {
 						words = append(words, element.Value)
 					}
+					if n.Append {
+						words = append(append([]*syntax.Word(nil), e.tensorfoldArrays[n.Name.Value]...), words...)
+					}
 					e.tensorfoldArrays[n.Name.Value] = words
 				}
 				if n.Name != nil && n.Name.Value == "VLLM_ARGS" && n.Array != nil {
 					e.vllmArray = true
+				}
+				// A command built as one double-quoted string (remote="docker run ...")
+				// is kept unevaluated so an SSH helper call can parse its source text.
+				if n.Name != nil && n.Array == nil && !n.Append {
+					if n.Value == nil {
+						delete(e.commandStrings, n.Name.Value)
+					} else if q, ok := soleDoubleQuote(n.Value); ok {
+						e.commandStrings[n.Name.Value] = quotedCommand{q, sourceContent}
+					} else {
+						delete(e.commandStrings, n.Name.Value)
+					}
 				}
 				if n.Name != nil && n.Array == nil && !n.Append && n.Name.Value != "SCRIPT_DIR" {
 					if repositoryRootWord(n.Value) {
@@ -471,11 +487,20 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 				if path.Clean(command) == e.startPath && len(n.Args) == 2 && n.Args[1].Lit() == "stop" {
 					failure = e.script([]string{command, "stop"}, depth+1)
 				}
-				// SSH helpers pass their authored command as one quoted argument.
-				if command == "ssh" || strings.Contains(command, "ssh") {
+				// SSH helpers pass their authored command as one quoted argument,
+				// either inline or as a variable holding a quoted command string.
+				fn, helper := functions[command]
+				helper = helper && forwardsSSH(fn.declaration)
+				if command == "ssh" || strings.Contains(command, "ssh") || helper {
 					for _, arg := range n.Args[1:] {
 						q, ok := soleDoubleQuote(arg)
 						if !ok {
+							continue
+						}
+						sourceContent := sourceContent
+						if stored, ok := e.commandStrings[soleQuotedVariable(q)]; ok && helper {
+							q, sourceContent = stored.quote, stored.content
+						} else if !(command == "ssh" || strings.Contains(command, "ssh")) {
 							continue
 						}
 						start, end := int(q.Pos().Offset())+1, int(q.End().Offset())-1
@@ -548,12 +573,17 @@ func (e *lifecycleEvidence) docker(args []*syntax.Word, values map[string]string
 			if simpleVariable(args[i]) == "VLLM_ARGS_STR" && e.vllmArray {
 				serving, e.vllm = true, true
 			}
-			if args[i].Lit() == "tensorfold" && i+1 < len(args) && args[i+1].Lit() == "serve" {
+			if tensorfoldServe(args[i:]) {
 				serving = true
 			}
 			if p := simpleExpansion(args[i]); p != nil && arrayExpansion(args[i]) {
-				words := e.tensorfoldArrays[p.Param.Value]
-				if len(words) >= 2 && words[0].Lit() == "tensorfold" && words[1].Lit() == "serve" {
+				if tensorfoldServe(e.tensorfoldArrays[p.Param.Value]) {
+					serving = true
+				}
+			}
+			// The DeepSeek follower rank runs from a quoted command string.
+			if stored, ok := e.commandStrings[simpleVariable(args[i])]; ok && len(stored.quote.Parts) > 0 {
+				if lit, ok := stored.quote.Parts[0].(*syntax.Lit); ok && strings.HasPrefix(lit.Value, "tf-dsv41-lanes ") {
 					serving = true
 				}
 			}
@@ -679,4 +709,29 @@ func verifyScriptArguments(file *syntax.File, argv []string) error {
 		}
 	}
 	return nil
+}
+
+type quotedCommand struct {
+	quote   *syntax.DblQuoted
+	content []byte
+}
+
+// soleQuotedVariable names X in "$X", the whole quoted word being one expansion.
+func soleQuotedVariable(q *syntax.DblQuoted) string {
+	if len(q.Parts) != 1 {
+		return ""
+	}
+	p, ok := q.Parts[0].(*syntax.ParamExp)
+	if !ok || p.Index != nil || p.Exp != nil || p.Slice != nil || p.Repl != nil || p.Length || p.Excl {
+		return ""
+	}
+	return p.Param.Value
+}
+
+// tensorfoldServe reports a TensorFold serving entrypoint at the start of words.
+func tensorfoldServe(words []*syntax.Word) bool {
+	if len(words) < 2 || words[1].Lit() != "serve" {
+		return false
+	}
+	return words[0].Lit() == "tensorfold" || words[0].Lit() == "tensorfold-native"
 }

@@ -20,6 +20,7 @@ const (
 	DeepSeekRepositoryURL        = "https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark"
 	GLM53RepositoryURL           = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks"
 	GLM53TensorFoldRepositoryURL = "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold"
+	DSV41TensorFoldRepositoryURL = "https://github.com/MiaAI-Lab/DeepSeek-v4.1-Flash-1017-2x-DGX-Sparks"
 	GLM53NVFP4RepositoryURL      = "https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark"
 	QwenDGXSparkRepositoryURL    = "https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark"
 	QwenFlashNextRepositoryURL   = "https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Dual-DGX-Sparks"
@@ -51,6 +52,7 @@ func NewRegistry(validator *recipe.Validator) *Registry {
 		{QwenFlashNextRepositoryURL, "qwen38-flash-next-dspark-tp2"},
 		{GLM53RepositoryURL, "glm53-flash-exl3-dflash2-spark-tp2"},
 		{GLM53TensorFoldRepositoryURL, "glm53-flash-exl3-tensorfold-spark-tp2"},
+		{DSV41TensorFoldRepositoryURL, "dsv41-flash-1017-exl3-tensorfold-spark-tp2"},
 	} {
 		repositoryID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: entry.url, Path: "."})
 		registry.drivers[repositoryID] = &UpstreamCompiler{validator: validator, template: entry.template}
