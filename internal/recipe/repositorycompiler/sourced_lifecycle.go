@@ -17,11 +17,19 @@ type lifecycleFunction struct {
 
 // Only literal source paths enter the retained dependency graph. Private local
 // settings and runtime env files are inputs, not repository dependencies.
-func literalSource(call *syntax.CallExpr) (string, bool) {
+// dir is the repository-relative directory of the sourcing file, which a
+// "$(dirname -- "${BASH_SOURCE[0]}")/name" operand is relative to.
+func literalSource(call *syntax.CallExpr, dir string) (string, bool) {
 	if len(call.Args) != 2 || call.Args[0].Lit() != "source" && call.Args[0].Lit() != "." {
 		return "", false
 	}
 	name, ok := constantWord(call.Args[1])
+	if !ok {
+		var relative string
+		if relative, ok = sourceDirectoryWord(call.Args[1]); ok {
+			name = "./" + path.Join(dir, relative)
+		}
+	}
 	if !ok || !strings.HasPrefix(name, "./") {
 		return "", false
 	}
@@ -32,14 +40,14 @@ func literalSource(call *syntax.CallExpr) (string, bool) {
 	return name, true
 }
 
-func (c *configurationCollector) sourcedInputs(file *syntax.File, readSource func(string) ([]byte, error), seen map[string]bool) error {
+func (c *configurationCollector) sourcedInputs(file *syntax.File, dir string, readSource func(string) ([]byte, error), seen map[string]bool) error {
 	var failure error
 	syntax.Walk(file, func(node syntax.Node) bool {
 		call, ok := node.(*syntax.CallExpr)
 		if !ok || failure != nil {
 			return failure == nil
 		}
-		name, known := literalSource(call)
+		name, known := literalSource(call, dir)
 		if !known || seen[name] {
 			return true
 		}
@@ -55,7 +63,7 @@ func (c *configurationCollector) sourcedInputs(file *syntax.File, readSource fun
 			return false
 		}
 		c.scriptInputs(dependency, name)
-		failure = c.sourcedInputs(dependency, readSource, seen)
+		failure = c.sourcedInputs(dependency, path.Dir(name), readSource, seen)
 		return failure == nil
 	})
 	return failure
@@ -91,7 +99,12 @@ func repositoryRootWord(word *syntax.Word) bool {
 	if err := syntax.NewPrinter().Print(&canonical, word); err != nil {
 		return false
 	}
-	return canonical.String() == `$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)`
+	switch canonical.String() {
+	case `$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)`,
+		`$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)`:
+		return true
+	}
+	return false
 }
 
 func forwardsSSH(fn *syntax.FuncDecl) bool {
@@ -245,4 +258,26 @@ func literalEnvironmentLoop(loop *syntax.WhileClause) bool {
 		return true
 	})
 	return read && exported && captures["2"] != "" && captures["3"] != "" && !executable
+}
+
+// sourceDirectoryWord matches "$(dirname -- "${BASH_SOURCE[0]}")/name" (with or
+// without --) and returns name; nothing else in the word may vary.
+func sourceDirectoryWord(word *syntax.Word) (string, bool) {
+	var canonical bytes.Buffer
+	if err := syntax.NewPrinter().Print(&canonical, word); err != nil {
+		return "", false
+	}
+	text := canonical.String()
+	for _, prefix := range []string{`"$(dirname -- "${BASH_SOURCE[0]}")/`, `"$(dirname "${BASH_SOURCE[0]}")/`} {
+		rest, found := strings.CutPrefix(text, prefix)
+		if !found || !strings.HasSuffix(rest, `"`) {
+			continue
+		}
+		name := strings.TrimSuffix(rest, `"`)
+		if name == "" || strings.ContainsAny(name, "$`\\\"' *?[") {
+			return "", false
+		}
+		return name, true
+	}
+	return "", false
 }

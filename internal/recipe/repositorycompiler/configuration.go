@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -52,7 +53,7 @@ func compileConfiguration(manifest *recipe.Manifest, readSource func(string) ([]
 		// a default from the selected model, host, or another setting at startup.
 		collector.scriptInputs(file, name)
 		if manifest.Metadata.Engine == "tensorfold" {
-			if err := collector.sourcedInputs(file, readSource, map[string]bool{name: true}); err != nil {
+			if err := collector.sourcedInputs(file, path.Dir(name), readSource, map[string]bool{name: true}); err != nil {
 				return err
 			}
 		}
@@ -253,7 +254,17 @@ func (c *configurationCollector) environment(content []byte, source, format stri
 		}
 		value, known := raw, true
 		description := conciseComments(comments)
-		if format != "literal" {
+		if format == "literal" {
+			// TensorFold sources read .env with a parser that strips inline
+			// comments; other literal sources keep the whole line as data.
+			if c.manifest.Metadata.Engine == "tensorfold" {
+				var inline string
+				value, inline = literalEnvironmentValue(raw)
+				if inline != "" {
+					description = strings.TrimSpace(description + " " + inline)
+				}
+			}
+		} else {
 			parsed, err := parseShell([]byte(candidate), source)
 			if err != nil {
 				if optional { // prose beginning NAME=value is not a declaration
@@ -695,10 +706,10 @@ func inferredParameter(name, value string) recipe.Parameter {
 	}
 	// These authored budgets are real-valued GiB arithmetic even when a sample
 	// happens to spell a default without a decimal point.
+	// A non-numeric default (such as "auto") keeps the setting a string.
 	if strings.HasSuffix(name, "_gib") {
-		p.Type = "float"
 		if number, err := strconv.ParseFloat(value, 64); err == nil {
-			p.Default = number
+			p.Type, p.Default = "float", number
 		}
 		return p
 	}
@@ -795,4 +806,18 @@ func boundedDescription(text string) string {
 		return text
 	}
 	return string(runes[:954]) + " (see pinned source for the complete notes)"
+}
+
+var quotedLiteralValue = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)')[[:space:]]*(#.*)?$`)
+
+// literalEnvironmentValue reads one KEY=value right-hand side the way the
+// authored literal .env parsers do: a quoted value is taken verbatim, otherwise
+// everything from the first # is a comment and trailing blanks are dropped.
+// The comment text is returned separately for the setting's description.
+func literalEnvironmentValue(raw string) (string, string) {
+	if m := quotedLiteralValue.FindStringSubmatch(raw); m != nil {
+		return m[1] + m[2], strings.TrimSpace(strings.TrimPrefix(m[3], "#"))
+	}
+	value, comment, _ := strings.Cut(raw, "#")
+	return strings.TrimRight(value, " \t"), strings.TrimSpace(comment)
 }

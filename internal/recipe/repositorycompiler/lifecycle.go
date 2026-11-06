@@ -463,9 +463,10 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 				if (command == "source" || command == ".") && len(n.Args) == 2 {
 					if value, ok := sourceWord(n.Args[1], scope); ok {
 						e.shellEnv[path.Clean(value)] = true
-						if name, literal := literalSource(n); literal {
-							failure = e.sourcedScript(name, scope, depth+1)
-						}
+					}
+					if name, literal := literalSource(n, scope["_LMW_SOURCE_DIR"]); literal {
+						e.shellEnv[name] = true
+						failure = e.sourcedScript(name, scope, depth+1)
 					}
 				}
 				if command == "docker" {
@@ -483,6 +484,22 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 				}
 				if fn, exists := functions[command]; exists && forwardsSSH(fn.declaration) {
 					failure = e.serializedDocker(file, n.Args[1:], scope)
+				}
+				if fn, exists := functions[command]; exists && failure == nil && serializesPositionalSSH(fn.declaration) {
+					remote := make(map[string]string, len(scope)+1)
+					for key, value := range scope {
+						remote[key] = value
+					}
+					remote["_LMW_REMOTE"] = "1"
+					args := n.Args[1:]
+					if len(args) == 1 && arrayExpansion(args[0]) {
+						if p := simpleExpansion(args[0]); p != nil {
+							args = e.tensorfoldArrays[p.Param.Value]
+						}
+					}
+					if len(args) >= 2 && args[0].Lit() == "docker" {
+						failure = e.docker(args[1:], remote)
+					}
 				}
 				if path.Clean(command) == e.startPath && len(n.Args) == 2 && n.Args[1].Lit() == "stop" {
 					failure = e.script([]string{command, "stop"}, depth+1)
@@ -575,6 +592,12 @@ func (e *lifecycleEvidence) docker(args []*syntax.Word, values map[string]string
 			}
 			if tensorfoldServe(args[i:]) {
 				serving = true
+			}
+			// --entrypoint "$TF_BIN" "$IMAGE" serve ...
+			if args[i].Lit() == "--entrypoint" && i+3 < len(args) && args[i+3].Lit() == "serve" {
+				if entry, ok := sourceWord(args[i+1], values); ok && path.Base(entry) == "tensorfold-native" {
+					serving = true
+				}
 			}
 			if p := simpleExpansion(args[i]); p != nil && arrayExpansion(args[i]) {
 				if tensorfoldServe(e.tensorfoldArrays[p.Param.Value]) {
@@ -734,4 +757,50 @@ func tensorfoldServe(words []*syntax.Word) bool {
 		return false
 	}
 	return words[0].Lit() == "tensorfold" || words[0].Lit() == "tensorfold-native"
+}
+
+// serializesPositionalSSH recognizes a helper that quotes each of its own
+// arguments with printf %q into one string and passes that string to ssh.
+func serializesPositionalSSH(fn *syntax.FuncDecl) bool {
+	serialized := map[string]bool{}
+	syntax.Walk(fn.Body, func(node syntax.Node) bool {
+		loop, ok := node.(*syntax.ForClause)
+		if !ok {
+			return true
+		}
+		iter, ok := loop.Loop.(*syntax.WordIter)
+		if !ok || len(iter.Items) != 1 || forwardedPosition(iter.Items[0]) != 1 {
+			return true
+		}
+		syntax.Walk(loop, func(node syntax.Node) bool {
+			a, ok := node.(*syntax.Assign)
+			if !ok || a.Name == nil || !a.Append || a.Value == nil {
+				return true
+			}
+			syntax.Walk(a.Value, func(node syntax.Node) bool {
+				call, ok := node.(*syntax.CallExpr)
+				if ok && len(call.Args) == 3 && call.Args[0].Lit() == "printf" {
+					format, constant := constantWord(call.Args[1])
+					if constant && format == "%q" && simpleVariable(call.Args[2]) == iter.Name.Value {
+						serialized[a.Name.Value] = true
+					}
+				}
+				return true
+			})
+			return true
+		})
+		return true
+	})
+	sent := false
+	syntax.Walk(fn.Body, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 || call.Args[0].Lit() != "ssh" {
+			return true
+		}
+		for _, word := range call.Args[1:] {
+			sent = sent || serialized[simpleVariable(word)]
+		}
+		return true
+	})
+	return sent
 }

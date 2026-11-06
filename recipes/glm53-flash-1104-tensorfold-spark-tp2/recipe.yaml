@@ -1,0 +1,75 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: glm53-flash-1104-tensorfold-spark-tp2
+  version: 1.0.0
+  model: GLM-5.3-Flash
+  engine: tensorfold
+  description: >-
+    Runs the original pinned start.sh and stop.sh of Mia's AI Lab's GLM-5.3-Flash
+    1104 recipe on the head of two 128 GB GB10 Sparks linked by ConnectX-7.
+    This is a separate engine lineage from the older GLM TensorFold recipe:
+    TensorFold 1.1.9 native (Zig/CUDA) with the recipe's engine patches, built
+    in Docker for sm_121 and sent to the worker. Upstream downloads the pinned
+    4 bpw EXL3 checkpoint (~164 GiB) on the head and rsyncs it to the worker by
+    default, then launches rank 1 over SSH and rank 0 locally with host
+    network and RDMA. Defaults retain four streams, an automatically fitted
+    window up to 1,048,576 tokens, fp8 KV, q8 dense weights, vision and
+    DFlash2 drafts. Requires Docker/NVIDIA, rsync, Python 3 and noninteractive
+    head-to-worker SSH; allow ~40 GiB for the image and ~180 GiB for the
+    checkpoint on each node. Setup may build, download and synchronize files
+    outside the checkout. Stop interrupts requests and removes both named
+    containers; LMW independently observes rank 1 and verifies teardown.
+    This binding serves on port 8888 instead of upstream's 8020, which
+    conflicts with other cluster servers. Default DFlash2 is non-commercial.
+  # Upstream recipe: Apache-2.0; retain LICENSE and NOTICE.md.
+  license: Apache-2.0
+  source:
+    url: https://github.com/MiaAI-Lab/GLM-5.3-Flash-DGX-Sparks-1104
+    revision: "02dac3879852b8c5713318d3d64a5a791002e954"
+    path: .
+compatibility:
+  nodeCount: 2
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    minBandwidthGbps: 100
+artifacts: []
+parameters:
+  - name: worker_ssh
+    type: string
+    minLength: 1
+    description: Upstream WORKER; an existing SSH alias or user@host for the selected worker, reachable noninteractively from the head agent account.
+workloads:
+  - ranks: [0, 1]
+    upstream:
+      coordinatorRank: 0
+      start: ["./start.sh"]
+      stop: ["./stop.sh"]
+      containers: [glm53-spark]
+      containersByRank:
+        "1": [glm53-spark]
+      envFile: .env
+      envTemplate: scripts/local.sh.example
+      envFormat: literal
+    env:
+      WORKER: "${setting.worker_ssh}"
+      TP: "2"
+      FABRIC_PEER: "${cluster.node.1.fabric.node_addr}"
+      PORT: "8888"
+      HOST: "0.0.0.0"
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      timeoutSeconds: 5

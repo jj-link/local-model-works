@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Copy to scripts/local.sh (gitignored). Exported environment values take precedence over it.
+# Every setting and its default is in scripts/config.sh; the README's settings table explains them.
+
+# --- the pair --------------------------------------------------------------------------------------------------------
+# This Spark serves rank 0 and the API; WORKER runs rank 1. Key-based ssh, no password prompt.
+WORKER=zurih@10.0.34.4        # the worker's address on the Sparks' direct link is ideal: one hop, no LAN
+# FABRIC_PEER=10.0.34.4       # the worker's address on the link (found from the route to WORKER when empty)
+# NCCL_SOCKET_IFNAME=         # this Spark's link netdev (found when empty)
+# TF_ROCE_HCA=                # RDMA devices for the link (found when empty; a Spark's QSFP port gives two)
+PORT=8020
+
+# --- weights ---------------------------------------------------------------------------------------------------------
+# The first start downloads the pinned 4 bpw checkpoint into DATA_DIR/model and sends it to the worker.
+WORKER_WEIGHTS=rsync          # nfs: the worker mounts this Spark's copy instead; check: it must already have it
+# MODEL_SOURCE=local          # serve a checkpoint you already have, with no download
+# MODEL_DIR=/path/to/GLM-5.3-Flash-EXL3-checkpoint
+# ABLIT=1                     # the gated Ablit weights instead (README "Ablit weights"); needs HF_TOKEN below
+# HF_TOKEN=hf_...             # a Hugging Face read token whose account agreed to the Ablit model's terms
+DRAFTER=dflash2               # mtp: the checkpoint's MTP head (no non-commercial weights); none: no drafts
+
+# --- serving ---------------------------------------------------------------------------------------------------------
+PARALLEL=4
+CONTEXT=auto                  # or a token count up to 1048576
+KV=fp8                        # bf16: exact caches on shared KV pages
+DENSE=q8                      # bf16: the checkpoint's dense weights as stored (about 4-5 GiB more a Spark)
+# GB10 budgets from host memory, so everything else the Spark runs competes with the engine. The engine's own default
+# is about 11.9 GiB on a 128 GB Spark; raise it if a long session drives a Spark toward its floor.
+MEMORY_RESERVE_GIB=12
+HOST_CACHE_GIB=0              # the pinned host prompt tier is the same memory as the KV pool here: keep it off
+# PROMPT_CACHE_GIB=8          # device pages for kept prompt states, which is the tier to raise on a Spark
+# THINKING=1
+# VISION=0
+# SERVE_EXTRA_ARGS='--top-k 20'
+# ROCE=off                    # put every exchange on NCCL (the engine's RoCE all-gather path is on by default)
+
+# Keep downloads, the drafter and the engine's digest cache outside the checkout:
+# DATA_DIR=/mnt/models/glm53
+# TENSORFOLD_API_KEY and HF_TOKEN may be exported; never commit them.
