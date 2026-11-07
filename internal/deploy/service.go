@@ -2446,6 +2446,12 @@ func (s *Service) Converge(ctx context.Context, nodeID string) {
 		if len(ranks) == 0 {
 			continue
 		}
+		// The node is back, so its offline finding no longer holds.
+		if kept, removed := diag.Remove(diag.Decode(d.Diagnostics), "agent.offline", nodeID); removed {
+			_ = s.q.UpdateDeploymentObserved(ctx, db.UpdateDeploymentObservedParams{
+				ObservedState: d.ObservedState, Diagnostics: diag.Encode(kept), ID: d.ID,
+			})
+		}
 		runID := ""
 		if d.RunID.Valid {
 			runID = d.RunID.String

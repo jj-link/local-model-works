@@ -75,6 +75,19 @@ func Upsert(existing []Diagnostic, next Diagnostic) []Diagnostic {
 	return append(existing, next)
 }
 
+// Remove drops every diagnostic with code on resource and reports whether
+// any was present.
+func Remove(existing []Diagnostic, code, resource string) ([]Diagnostic, bool) {
+	key := diagnosticKey{code: code, resource: resource}
+	kept := existing[:0]
+	for _, diagnostic := range existing {
+		if keyOf(diagnostic) != key {
+			kept = append(kept, diagnostic)
+		}
+	}
+	return kept, len(kept) != len(existing)
+}
+
 // Encode renders diagnostics for TEXT columns; nil becomes "[]" so readers
 // can always unmarshal into a slice.
 func Encode(ds []Diagnostic) string {

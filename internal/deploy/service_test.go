@@ -2131,3 +2131,21 @@ func TestLaunchProfileCRUDValidationAndPlanApplication(t *testing.T) {
 		t.Fatal("deleting an unknown profile succeeded")
 	}
 }
+
+func TestConvergeClearsAgentOfflineDiagnostic(t *testing.T) {
+	h := newHarness(t)
+	h.seedNode(t, "node-a", gpuAccs("a"), "")
+	h.seedRecipe(t, "recipe-gpu", gpuManifest)
+	dep := h.createDeployment(t, "recipe-gpu")
+	ctx := context.Background()
+
+	h.svc.MarkNodeOffline(ctx, "node-a")
+	if _, found := diag.Remove(diag.Decode(deploymentRow(t, h, dep.ID).Diagnostics), "agent.offline", "node-a"); !found {
+		t.Fatal("offline node left no agent.offline diagnostic")
+	}
+
+	h.svc.Converge(ctx, "node-a")
+	if _, found := diag.Remove(diag.Decode(deploymentRow(t, h, dep.ID).Diagnostics), "agent.offline", "node-a"); found {
+		t.Fatal("agent.offline diagnostic survived the node's reconnect")
+	}
+}
