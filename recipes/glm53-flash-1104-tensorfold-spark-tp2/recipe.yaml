@@ -26,7 +26,7 @@ metadata:
   license: Apache-2.0
   source:
     url: https://github.com/MiaAI-Lab/GLM-5.3-Flash-DGX-Sparks-1104
-    revision: "02dac3879852b8c5713318d3d64a5a791002e954"
+    revision: "e9153a4fc40c6dc088692550c8f9f939fa8fbdf0"
     path: .
 compatibility:
   nodeCount: 2

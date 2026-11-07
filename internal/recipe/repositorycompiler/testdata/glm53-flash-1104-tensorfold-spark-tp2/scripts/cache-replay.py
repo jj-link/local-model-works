@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Replay a small agent loop against the server and print each turn's cached tokens.
 
-Shows whether a user message after a tool loop resumes past the loop (patch 0097, warm turns) or re-reads it.
-Before 0097 the "next user message" row cached 4096 of ~9.3K tokens; with warm turns it should cache ~8192
+Shows whether a user message after a tool loop resumes past the loop (patch 0104, warm turns) or re-reads it.
+Before 0104 the "next user message" row cached 4096 of ~9.3K tokens; with warm turns it should cache ~8192
 (the pass needs a quiet engine: this script waits 3 s after the answer). Run it with no other request in flight:
 a stream decoding or filling its prompt blocks the pass by design, and the row then shows 4096 (seen 2026-11-04 beside
-a 138K-token agent request). Verified 2026-11-04: 8192. Usage: python3 scripts/cache-replay.py [URL]
+a 138K-token agent request). Verified 2026-11-04: 8192. Usage: python3 scripts/cache-replay.py [URL [MODEL]]
+MODEL is the id the requests send; missing or empty, it is $SERVED_NAME, else GLM-5.3-Flash (config.sh's default).
 """
-import json, urllib.request, sys, time
+import json, os, urllib.request, sys, time
 URL = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8888") + "/v1/chat/completions"
+MODEL = (sys.argv[2] if len(sys.argv) > 2 else "") or os.environ.get("SERVED_NAME") or "GLM-5.3-Flash"
 def ask(messages, tools=None, kwargs=None, tag=""):
-    body = {"model": "GLM-5.3-Flash", "messages": messages, "temperature": 0, "max_tokens": 4000,
+    body = {"model": MODEL, "messages": messages, "temperature": 0, "max_tokens": 4000,
             "reasoning_effort": "max", "chat_template_kwargs": {"enable_thinking": True, **(kwargs or {})}}
     if tools: body["tools"] = tools; body["tool_choice"] = "auto"
     t = time.time()

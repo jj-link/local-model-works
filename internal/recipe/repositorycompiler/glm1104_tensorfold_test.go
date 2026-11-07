@@ -16,7 +16,7 @@ const glm1104TensorFoldFamily = "glm53-flash-1104-tensorfold-spark-tp2"
 
 func glm1104TensorFoldSource(t *testing.T) recipe.RepositorySource {
 	t.Helper()
-	return recipe.RepositorySource{URL: GLM1104TensorFoldRepositoryURL, Path: ".", CommitSHA: "02dac3879852b8c5713318d3d64a5a791002e954", RepositoryID: repositoryID(t, GLM1104TensorFoldRepositoryURL)}
+	return recipe.RepositorySource{URL: GLM1104TensorFoldRepositoryURL, Path: ".", CommitSHA: "e9153a4fc40c6dc088692550c8f9f939fa8fbdf0", RepositoryID: repositoryID(t, GLM1104TensorFoldRepositoryURL)}
 }
 
 func glm1104TensorFoldFixture(name string) ([]byte, error) {
