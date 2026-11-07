@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/sourceconfig"
@@ -406,7 +407,7 @@ func upstreamPreservationPaths(ctx context.Context, repository string, authentic
 			candidates[relative] = true
 		} else if err != nil {
 			return nil, err
-		} else if info.Mode() != mode {
+		} else if info.Mode() != checkoutMode(mode) {
 			candidates[relative] = true
 		}
 	}
@@ -416,6 +417,35 @@ func upstreamPreservationPaths(ctx context.Context, repository string, authentic
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+// Git writes a regular blob as 0666 or 0777 masked by the process umask, so an
+// unedited file under umask 002 is 0664, not its recorded 0644.
+func checkoutMode(mode os.FileMode) os.FileMode {
+	if mode&os.ModeSymlink != 0 {
+		return mode
+	}
+	base := os.FileMode(0666)
+	if mode&0111 != 0 {
+		base = 0777
+	}
+	return base &^ processUmask()
+}
+
+// Read the umask from /proc rather than syscall.Umask, which must set it to
+// read it and would race other goroutines creating files.
+func processUmask() os.FileMode {
+	data, err := os.ReadFile("/proc/self/status")
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if value, ok := strings.CutPrefix(line, "Umask:"); ok {
+				if mask, err := strconv.ParseUint(strings.TrimSpace(value), 8, 32); err == nil {
+					return os.FileMode(mask) & 0777
+				}
+			}
+		}
+	}
+	return 0022
 }
 
 func carryUpstreamSource(ctx context.Context, previous *upstreamRecord, spec *ContainerSpec, repository string) error {

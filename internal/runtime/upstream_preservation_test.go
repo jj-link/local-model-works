@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jj-link/local-model-works/internal/sourceconfig"
@@ -332,5 +333,34 @@ func TestUpstreamPackagePreparationDoesNotReconfigureExistingSource(t *testing.T
 	base := rt.Runtime.(*upstreamTestRuntime)
 	if len(base.started) != 0 || len(base.stopped) != 0 || len(base.removed) != 0 {
 		t.Fatal("same-source package preparation changed container lifecycle")
+	}
+}
+
+func TestUpstreamPreservationIgnoresUmaskCheckoutModes(t *testing.T) {
+	previous := syscall.Umask(0002)
+	defer syscall.Umask(previous)
+	repository := t.TempDir()
+	preservationGit(t, repository, "init", "-q")
+	preservationWrite(t, filepath.Join(repository, "settings.conf"), "SETTING=default\n", 0644)
+	preservationWrite(t, filepath.Join(repository, "start.sh"), "#!/bin/sh\n", 0755)
+	preservationGit(t, repository, "add", ".")
+	preservationGit(t, repository, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
+	for _, name := range []string{"settings.conf", "start.sh"} {
+		if err := os.Remove(filepath.Join(repository, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	preservationGit(t, repository, "checkout", "--", ".")
+	authenticated := map[string]string{"settings.conf": "", "start.sh": ""}
+	paths, err := upstreamPreservationPaths(context.Background(), repository, authenticated)
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("umask 002 checkout reported as edited: %v, %v", paths, err)
+	}
+	if err := os.Chmod(filepath.Join(repository, "settings.conf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err = upstreamPreservationPaths(context.Background(), repository, authenticated)
+	if err != nil || !reflect.DeepEqual(paths, []string{"settings.conf"}) {
+		t.Fatalf("mode edit not preserved: %v, %v", paths, err)
 	}
 }
