@@ -14,9 +14,12 @@ import (
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
 )
 
-func TestStandaloneConfigurationApplyAndRollback(t *testing.T) {
+func TestConfigurationChangesTheSameDeployment(t *testing.T) {
 	for _, initialState := range []string{"running", "stopped"} {
-		for _, outcome := range []string{"healthy", "cancelled", "failed"} {
+		for _, outcome := range []string{"healthy", "failed"} {
+			if initialState == "stopped" && outcome == "failed" {
+				continue // a stopped deployment is not started, so cannot fail to
+			}
 			t.Run(initialState+"/"+outcome, func(t *testing.T) {
 				h := newHarness(t)
 				ctx := context.Background()
@@ -45,16 +48,13 @@ func TestStandaloneConfigurationApplyAndRollback(t *testing.T) {
 				settings := RepositoryReplacementSettings{Parameters: map[string]any{"context_length": 8192}}
 				plan, err := h.svc.PlanDeploymentConfiguration(ctx, source.ID, settings)
 				if err != nil || !plan.Ready || len(plan.Deployments) != 1 {
-					t.Fatalf("standalone configuration not reviewable: plan=%+v err=%v", plan, err)
-				}
-				if plan.RepositoryID != "" || plan.TargetDigest != digest || plan.Deployments[0].SourceWasStopped != (initialState == "stopped") {
-					t.Fatalf("configuration changed ownership or source state: %+v", plan)
+					t.Fatalf("configuration not reviewable: plan=%+v err=%v", plan, err)
 				}
 				if _, err := h.svc.CreateDeploymentConfiguration(ctx, source.ID, RepositoryReplacementSettings{Parameters: map[string]any{"context_length": 16384}}, plan.Digest); !errors.Is(err, ErrPlanStale) {
 					t.Fatalf("different settings accepted against reviewed plan: %v", err)
 				}
 				if row := deploymentRow(t, h, source.ID); row.DesiredState != original.DesiredState || row.Parameters != original.Parameters {
-					t.Fatal("stale submission changed source deployment")
+					t.Fatal("stale submission changed the deployment")
 				}
 				runID, err := h.svc.CreateDeploymentConfiguration(ctx, source.ID, settings, plan.Digest)
 				if err != nil {
@@ -62,98 +62,59 @@ func TestStandaloneConfigurationApplyAndRollback(t *testing.T) {
 				}
 				if initialState == "running" {
 					ackDeploymentStop(t, h, source.ID, digest)
-				}
-				if outcome == "healthy" {
-					replacementID := driveReplacementHealthy(t, h, digest)
-					waitRunState(t, h, runID, string(runs.Succeeded))
-					replacement := deploymentRow(t, h, replacementID)
-					if replacementID == source.ID || replacement.RecipeDigest != digest || parametersForValue(replacement.Parameters)["context_length"] != float64(8192) {
-						t.Fatalf("replacement lost the reviewed recipe or setting: %+v", replacement)
-					}
-					if preservedPlacementMismatch(ParsePlacementSet(original.Placement).Entries, ParsePlacementSet(replacement.Placement).Entries) != "" || replacement.Fabric != original.Fabric {
-						t.Fatal("configuration changed deployment hardware or fabric")
-					}
-					if row := deploymentRow(t, h, source.ID); row.Parameters != original.Parameters || row.DesiredState != "stopped" {
-						t.Fatal("configuration discarded the retained source")
-					}
-				} else {
-					// Cancel only after a replacement exists, so rollback must stop
-					// it before restoring the original running/stopped source state.
-					replacementID := ""
-					deadline := time.Now().Add(5 * time.Second)
-					for replacementID == "" && time.Now().Before(deadline) {
-						rows, err := h.q.ListDeployments(ctx)
-						if err != nil {
-							t.Fatal(err)
-						}
-						for _, row := range rows {
-							if row.ID != source.ID && row.RecipeDigest == digest {
-								replacementID = row.ID
-							}
-						}
-						if replacementID == "" {
-							time.Sleep(10 * time.Millisecond)
-						}
-					}
-					if replacementID == "" {
-						t.Fatal("replacement was not created")
-					}
-					if outcome == "cancelled" {
-						if err := h.svc.CancelRepositoryUpdate(ctx, runID); err != nil {
-							t.Fatal(err)
-						}
-					} else {
-						failed := false
-						deadline = time.Now().Add(5 * time.Second)
-						for !failed && time.Now().Before(deadline) {
-							for _, sent := range h.nodes.workloadCommands() {
-								command := sent.msg.GetWorkloadCommand()
-								if command.GetDeploymentId() == replacementID {
-									h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: false, Error: "replacement launch failed"})
-									failed = true
-									break
-								}
-							}
-							if !failed {
-								time.Sleep(10 * time.Millisecond)
-							}
-						}
-						if !failed {
-							t.Fatal("replacement did not dispatch a launch command")
-						}
-					}
-					deadline = time.Now().Add(5 * time.Second)
-					for {
-						for _, sent := range h.nodes.workloadCommands() {
-							command := sent.msg.GetWorkloadCommand()
-							if command.GetDeploymentId() == replacementID && command.GetOp() == agentv1.WorkloadOp_WORKLOAD_OP_STOP {
-								h.svc.OnCommandResult(ctx, &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: true})
-							}
-						}
-						row := deploymentRow(t, h, replacementID)
-						if row.DesiredState == "stopped" && row.ObservedState == "stopped" {
-							break
-						}
-						if time.Now().After(deadline) {
-							t.Fatalf("replacement did not stop: %+v", row)
-						}
-						time.Sleep(10 * time.Millisecond)
-					}
-					if initialState == "running" {
+					if outcome == "healthy" {
 						driveDeploymentHealthy(t, h, source.ID, "node-a")
+					} else {
+						failLaunch(t, h, source.ID, original.RunID.String)
 					}
-					waitRunState(t, h, runID, outcome)
-					restored := deploymentRow(t, h, source.ID)
-					if restored.DesiredState != original.DesiredState || restored.ObservedState != original.ObservedState || restored.Parameters != original.Parameters || restored.Fabric != original.Fabric || preservedPlacementMismatch(ParsePlacementSet(original.Placement).Entries, ParsePlacementSet(restored.Placement).Entries) != "" {
-						t.Fatalf("rollback lost original source contract: original=%+v restored=%+v", original, restored)
+				}
+				waitRunState(t, h, runID, map[string]string{"healthy": string(runs.Succeeded), "failed": string(runs.Failed)}[outcome])
+
+				rows, err := h.q.ListDeployments(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) != 1 {
+					t.Fatalf("configuration created another deployment: %d deployments", len(rows))
+				}
+				row := deploymentRow(t, h, source.ID)
+				if parametersForValue(row.Parameters)["context_length"] != float64(8192) {
+					t.Fatalf("deployment did not keep the new setting: %s", row.Parameters)
+				}
+				if preservedPlacementMismatch(ParsePlacementSet(original.Placement).Entries, ParsePlacementSet(row.Placement).Entries) != "" || row.Fabric != original.Fabric {
+					t.Fatal("configuration changed deployment hardware or fabric")
+				}
+				want := map[string]string{"running/healthy": "healthy", "stopped/healthy": "stopped"}[initialState+"/"+outcome]
+				if outcome == "failed" {
+					if row.ObservedState == "healthy" {
+						t.Fatal("a failed start brought a deployment back")
 					}
+				} else if row.ObservedState != want {
+					t.Fatalf("deployment is %s, want %s", row.ObservedState, want)
 				}
 				if _, err := h.q.GetRecipeRepositoryVersionByDigest(ctx, digest); !errors.Is(err, sql.ErrNoRows) {
-					t.Fatalf("standalone configuration manufactured repository ownership: %v", err)
+					t.Fatalf("configuration manufactured repository ownership: %v", err)
 				}
 			})
 		}
 	}
+}
+
+// failLaunch fails the first launch command of the deployment's new run.
+func failLaunch(t *testing.T, h *harness, deploymentID, previousRunID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sent := range h.nodes.workloadCommands() {
+			command := sent.msg.GetWorkloadCommand()
+			if command.GetDeploymentId() == deploymentID && command.GetRunId() != previousRunID && command.GetOp() != agentv1.WorkloadOp_WORKLOAD_OP_STOP {
+				h.svc.OnCommandResult(context.Background(), &agentv1.CommandResult{CommandId: command.GetCommandId(), Ok: false, Error: "launch failed"})
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("restart did not dispatch a launch command")
 }
 
 func TestConfigurationReviewBindsLiveSourceContract(t *testing.T) {

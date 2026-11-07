@@ -419,6 +419,13 @@ UPDATE deployments SET placement = ?,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = ?;
 
+-- name: UpdateStoppedDeploymentConfiguration :execrows
+UPDATE deployments SET parameters = ?,
+                       placement = ?,
+                       fabric = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND desired_state = 'stopped' AND observed_state = 'stopped';
+
 -- name: UpdateDeploymentRunID :exec
 UPDATE deployments SET run_id = ?,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
