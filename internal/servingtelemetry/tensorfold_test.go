@@ -71,15 +71,16 @@ func TestTensorFoldNativeStreamKV(t *testing.T) {
 	const health = `{"ok":true,"backend":"tensorfold","requests_running":3,"streams":{"decoding":3,"prefilling":0,"max":5},"context_length":262144}`
 	for _, tc := range []struct {
 		name, metrics string
-		want          *float64
+		want, total   *float64
 	}{
-		{"busiest stream not sum or mean", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 0.8\ntensorfold:kv_cache_usage_ratio{pool=\"2\"} 0.6\n", new(0.8)},
-		{"idle gauge preserves zero", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0\n", new(0.0)},
-		{"unsupported is unavailable", "tensorfold:requests_running 3\n", nil},
-		{"invalid member rejects partial peak", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 1.1\n", nil},
-		{"negative is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} -0.1\n", nil},
-		{"nan is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} NaN\n", nil},
-		{"overflow is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 1e999\n", nil},
+		// Each of the 5 lanes owns one window: 2.15 windows used of 5.
+		{"busiest stream and lane total", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 0.8\ntensorfold:kv_cache_usage_ratio{pool=\"2\"} 0.6\n", new(0.8), new(2.15 / 5)},
+		{"idle gauge preserves zero", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0\n", new(0.0), new(0.0)},
+		{"unsupported is unavailable", "tensorfold:requests_running 3\n", nil, nil},
+		{"invalid member rejects partial peak", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.75\ntensorfold:kv_cache_usage_ratio{pool=\"1\"} 1.1\n", nil, nil},
+		{"negative is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} -0.1\n", nil, nil},
+		{"nan is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} NaN\n", nil, nil},
+		{"overflow is unavailable", "tensorfold:kv_cache_usage_ratio{pool=\"0\"} 1e999\n", nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,10 +95,11 @@ func TestTensorFoldNativeStreamKV(t *testing.T) {
 			}))
 			defer srv.Close()
 			out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
-			if !out.Available || out.KVCacheUsageRatio != nil {
-				t.Fatalf("stream contexts must not become shared-pool occupancy: %+v", out)
+			if !out.Available {
+				t.Fatalf("unavailable: %+v", out)
 			}
 			assertTensorFoldRate(t, "busiest stream KV", out.KVCacheMaxStreamUsageRatio, tc.want)
+			assertTensorFoldRate(t, "lane KV total", out.KVCacheUsageRatio, tc.total)
 		})
 	}
 }

@@ -412,6 +412,12 @@ func (p *Prober) probeSGLang(ctx context.Context, st *depState, base string, now
 				r := cached / prompt
 				out.PrefixCacheHitRatio = &r
 			}
+			if total, ok := promSumAlt(body, "sglang:max_total_num_tokens", "sglang_max_total_num_tokens"); ok && total > 0 {
+				if used, ok := promSumAlt(body, "sglang:num_used_tokens", "sglang_num_used_tokens"); ok && used >= 0 && used <= total {
+					r := used / total
+					out.KVCacheUsageRatio = &r
+				}
+			}
 			return out
 		}
 	}

@@ -101,6 +101,14 @@ func (p *Prober) probeTensorFold(ctx context.Context, st *depState, base string,
 	if out.KVCacheUsageRatio == nil {
 		if metrics, err := p.getBody(ctx, base+"/metrics"); err == nil {
 			out.KVCacheMaxStreamUsageRatio = tensorFoldMaxStreamKV(metrics)
+			// Without a pool, each lane owns a cache of one context window, so
+			// all lanes hold max windows and their ratios sum to the used share.
+			if out.KVCacheMaxStreamUsageRatio != nil && out.SlotsTotal > 0 {
+				if used, ok := promSum(metrics, "tensorfold:kv_cache_usage_ratio"); ok && used <= float64(out.SlotsTotal) {
+					ratio := used / float64(out.SlotsTotal)
+					out.KVCacheUsageRatio = &ratio
+				}
+			}
 		}
 	}
 	if health.Drafted != nil && health.Accepted != nil &&

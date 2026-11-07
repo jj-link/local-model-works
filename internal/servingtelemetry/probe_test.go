@@ -161,7 +161,7 @@ func TestSglangMetricsCounters(t *testing.T) {
 	prompt.Store(50)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
-			fmt.Fprintf(w, "sglang:generation_tokens_total %d\nsglang:prompt_tokens_total %d\nsglang:num_running_reqs 3\n", gen.Load(), prompt.Load())
+			fmt.Fprintf(w, "sglang:generation_tokens_total %d\nsglang:prompt_tokens_total %d\nsglang:num_running_reqs 3\nsglang:num_used_tokens 324554\nsglang:max_total_num_tokens 934200\n", gen.Load(), prompt.Load())
 		} else {
 			fmt.Fprint(w, `{}`)
 		}
@@ -180,6 +180,9 @@ func TestSglangMetricsCounters(t *testing.T) {
 	}
 	if out.RequestsRunning != 3 {
 		t.Fatalf("running=%d want 3", out.RequestsRunning)
+	}
+	if out.KVCacheUsageRatio == nil || *out.KVCacheUsageRatio != 324554.0/934200 {
+		t.Fatalf("kv=%v want used/total tokens", out.KVCacheUsageRatio)
 	}
 }
 
