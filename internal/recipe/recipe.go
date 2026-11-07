@@ -574,7 +574,9 @@ func formatSettingValue(v any) string {
 	case json.Number:
 		return t.String()
 	case float64:
-		return fmt.Sprintf("%v", t)
+		// %v switches to exponent form from 1e6 (1048576 -> 1.048576e+06),
+		// which shell consumers reject as a count.
+		return strconv.FormatFloat(t, 'f', -1, 64)
 	case int:
 		return fmt.Sprintf("%d", t)
 	default:
