@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -341,4 +342,76 @@ func TestTensorFoldFailureReseedsRates(t *testing.T) {
 	p.now = func() time.Time { return base.Add(15 * time.Second) }
 	out = p.Probe(context.Background(), d)
 	assertTensorFoldRate(t, "single failure retains fresh baseline", out.GenerationTPS, &ten)
+}
+
+// Captured from tf-dsv41-lanes serving DeepSeek-V4.1-Flash-1017.
+func tensorFoldLanesServer(t *testing.T, health string) *httptest.Server {
+	t.Helper()
+	metrics, err := os.ReadFile("testdata/tensorfold-lanes-metrics.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			w.Write(metrics)
+		case "/health":
+			fmt.Fprint(w, health)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestTensorFoldLanesMetrics(t *testing.T) {
+	health, err := os.ReadFile("testdata/tensorfold-lanes-health.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := tensorFoldLanesServer(t, string(health))
+	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
+	if !out.Available || out.Backend != "tensorfold" || out.ErrorCode != nil {
+		t.Fatalf("lane server unavailable: %+v", out)
+	}
+	if out.RequestsRunning != 3 || out.SlotsActive != 3 || out.SlotsTotal != 4 || out.RequestsWaiting == nil || *out.RequestsWaiting != 0 {
+		t.Fatalf("load incorrect: %+v", out)
+	}
+	decode, prefill := 72.0, 1468.3
+	prefix, acceptance, kv := 702464.0/848190, 17052.0/25582, 0.050498
+	assertTensorFoldRate(t, "generation", out.GenerationTPS, &decode)
+	assertTensorFoldRate(t, "prefill", out.PrefillTPS, &prefill)
+	assertTensorFoldRate(t, "prefix cache", out.PrefixCacheHitRatio, &prefix)
+	assertTensorFoldRate(t, "draft acceptance", out.SpecAcceptanceRatio, &acceptance)
+	assertTensorFoldRate(t, "busiest stream KV", out.KVCacheMaxStreamUsageRatio, &kv)
+	if out.KVCacheUsageRatio != nil || out.TTFTP95Seconds == nil || out.E2EP95Seconds == nil || out.ITLP95Seconds == nil {
+		t.Fatalf("latency/KV fields incorrect: %+v", out)
+	}
+}
+
+func TestTensorFoldLanesHealthOptional(t *testing.T) {
+	srv := tensorFoldLanesServer(t, `{"detail":"Not Found"}`)
+	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
+	if !out.Available || out.RequestsRunning != 3 || out.SlotsTotal != 0 || out.GenerationTPS != nil || out.PrefillTPS != nil {
+		t.Fatalf("health-less lane server: %+v", out)
+	}
+}
+
+func TestTensorFoldHealthIdentityBeatsLaneMetrics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			fmt.Fprint(w, "tensorfold:num_requests_running 1\n")
+		case "/health":
+			fmt.Fprint(w, tensorFoldFixture)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
+	if !out.Available || out.RequestsRunning != 2 || out.SlotsTotal != 4 {
+		t.Fatalf("health-identified server read as lanes: %+v", out)
+	}
 }

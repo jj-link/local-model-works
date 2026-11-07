@@ -77,7 +77,8 @@ type depState struct {
 	sglangStickySet bool
 	sglangStickyAt  time.Time
 
-	tensorfold tensorFoldCounters
+	tensorfold      tensorFoldCounters
+	tensorfoldLanes bool
 }
 
 // NewProber builds a Prober around an injected HTTP client (tests supply a
@@ -111,6 +112,9 @@ func (p *Prober) Probe(ctx context.Context, dep deploy.MonitorTarget) telemetry.
 	case BackendLlamaCPP:
 		return p.probeLlamaCPP(ctx, st, base, now)
 	case BackendTensorFold:
+		if st.tensorfoldLanes {
+			return p.probeTensorFoldLanes(ctx, st, base, now)
+		}
 		return p.probeTensorFold(ctx, st, base, now)
 	default:
 		return p.fail(st, fmt.Errorf("%s", ErrUnsupported))
@@ -205,6 +209,8 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 	// /metrics is the primary classifier; a real failure (timeout, unreachable,
 	// unauthorized, oversized) is surfaced as monitor status rather than
 	// treated as "no matching backend".
+	st.tensorfoldLanes = false
+	lanes := false
 	if body, err := p.getBody(ctx, base+"/metrics"); err != nil {
 		if err.Error() != errEndpointMissing {
 			return err
@@ -221,6 +227,8 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 		st.backend = BackendLlamaCPP
 		st.backendAt = now
 		return nil
+	} else {
+		_, lanes = promSum(body, "tensorfold:num_requests_running")
 	}
 	// TensorFold's CUDA health document identifies its backend explicitly.
 	// Check it before the legacy server-info classifier.
@@ -237,6 +245,14 @@ func (p *Prober) detect(ctx context.Context, st *depState, base string, now time
 			st.backendAt = now
 			return nil
 		}
+	}
+	// TensorFold's lane server (tf-dsv41-lanes) omits the health identity and
+	// publishes vLLM-style names under the tensorfold: prefix instead.
+	if lanes {
+		st.backend = BackendTensorFold
+		st.tensorfoldLanes = true
+		st.backendAt = now
+		return nil
 	}
 	if body, err := p.getBody(ctx, base+"/get_server_info"); err == nil && isSGLangInfo(body) {
 		st.backend = BackendSGLang

@@ -143,7 +143,12 @@ func (p *Prober) probeTensorFold(ctx context.Context, st *depState, base string,
 // Keep its maximum separate from shared-pool occupancy: adding the ratios
 // can exceed one, and idle retained prefixes are absent from these gauges.
 func tensorFoldMaxStreamKV(body string) *float64 {
-	const name = "tensorfold:kv_cache_usage_ratio"
+	return maxRatioGauge(body, "tensorfold:kv_cache_usage_ratio")
+}
+
+// maxRatioGauge is the largest series of a 0..1 gauge; any out-of-range or
+// unparseable series makes the whole gauge unavailable.
+func maxRatioGauge(body, name string) *float64 {
 	var highest float64
 	found := false
 	for line := range strings.SplitSeq(body, "\n") {
@@ -172,4 +177,76 @@ func tensorFoldMaxStreamKV(body string) *float64 {
 		return nil
 	}
 	return &highest
+}
+
+// tensorFoldLanesHealth is the lane server's /health. It carries no backend
+// identity; live holds the server's own current throughput.
+type tensorFoldLanesHealth struct {
+	MaxBatchSize int32 `json:"max_batch_size"`
+	Live         *struct {
+		Decode  *float64 `json:"decode_tokens_per_second"`
+		Prefill *float64 `json:"prefill_tokens_per_second"`
+	} `json:"live"`
+}
+
+// probeTensorFoldLanes reads tf-dsv41-lanes, whose /metrics mirrors vLLM's
+// names under the tensorfold: prefix. Throughput comes from the server's live
+// rates; /health is optional, so its failure only drops those fields.
+func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base string, now time.Time) telemetry.ServingPayload {
+	body, err := p.getBody(ctx, base+"/metrics")
+	if err != nil {
+		return p.fail(st, err)
+	}
+	running, ok := promSum(body, "tensorfold:num_requests_running")
+	if !ok || running < 0 {
+		return p.fail(st, fmt.Errorf("%s", ErrInvalidResponse))
+	}
+	st.failCount = 0
+	out := telemetry.ServingPayload{
+		Available:       true,
+		Backend:         string(BackendTensorFold),
+		RequestsRunning: int32(running),
+		SlotsActive:     int32(running),
+	}
+	if waiting, ok := promSum(body, "tensorfold:num_requests_waiting"); ok && waiting >= 0 {
+		value := int32(waiting)
+		out.RequestsWaiting = &value
+	}
+	out.KVCacheMaxStreamUsageRatio = maxRatioGauge(body, "tensorfold:kv_cache_usage_perc")
+	if hits, ok := promSum(body, "tensorfold:prefix_cache_hits_total"); ok {
+		if queries, _ := promSum(body, "tensorfold:prefix_cache_queries_total"); queries > 0 && hits <= queries {
+			r := hits / queries
+			out.PrefixCacheHitRatio = &r
+		}
+	}
+	if accepted, ok := promSum(body, "tensorfold:spec_decode_num_accepted_tokens_total"); ok {
+		if drafted, _ := promSum(body, "tensorfold:spec_decode_num_draft_tokens_total"); drafted > 0 && accepted <= drafted {
+			r := accepted / drafted
+			out.SpecAcceptanceRatio = &r
+		}
+	}
+	if preempts, ok := promSum(body, "tensorfold:preemptions_total"); ok && preempts >= 0 {
+		out.PreemptionsTotal = int64(preempts)
+	}
+	out.TTFTP95Seconds = p95(body, "tensorfold:time_to_first_token_seconds")
+	out.E2EP95Seconds = p95(body, "tensorfold:request_latency_seconds")
+	out.ITLP95Seconds = p95(body, "tensorfold:request_time_per_output_token_seconds")
+
+	if raw, err := p.getBody(ctx, base+"/health"); err == nil {
+		var health tensorFoldLanesHealth
+		if json.Unmarshal([]byte(raw), &health) == nil {
+			if health.MaxBatchSize > 0 && int32(running) <= health.MaxBatchSize {
+				out.SlotsTotal = health.MaxBatchSize
+			}
+			if live := health.Live; live != nil {
+				if live.Decode != nil && *live.Decode >= 0 {
+					out.GenerationTPS = live.Decode
+				}
+				if live.Prefill != nil && *live.Prefill >= 0 {
+					out.PrefillTPS = live.Prefill
+				}
+			}
+		}
+	}
+	return out
 }
