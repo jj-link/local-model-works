@@ -385,8 +385,8 @@ func TestTensorFoldLanesMetrics(t *testing.T) {
 	assertTensorFoldRate(t, "prefix cache", out.PrefixCacheHitRatio, &prefix)
 	assertTensorFoldRate(t, "draft acceptance", out.SpecAcceptanceRatio, &acceptance)
 	assertTensorFoldRate(t, "busiest stream KV", out.KVCacheMaxStreamUsageRatio, &kv)
-	// Three reporting lanes over four equal windows; the idle lane holds nothing.
-	total := (0.039606 + 0.010029 + 0.050498) / 4
+	// The lanes share one pool of the context window's positions.
+	total := 0.039606 + 0.010029 + 0.050498
 	assertTensorFoldRate(t, "all-lane KV", out.KVCacheUsageRatio, &total)
 	if out.TTFTP95Seconds == nil || out.E2EP95Seconds == nil || out.ITLP95Seconds == nil {
 		t.Fatalf("latency/KV fields incorrect: %+v", out)
