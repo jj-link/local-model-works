@@ -237,6 +237,16 @@ func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base st
 		if json.Unmarshal([]byte(raw), &health) == nil {
 			if health.MaxBatchSize > 0 && int32(running) <= health.MaxBatchSize {
 				out.SlotsTotal = health.MaxBatchSize
+				// Every lane gets the same --context window, so the share of all
+				// lane caches in use is the per-lane ratios over the lane count;
+				// lanes that report nothing hold nothing.
+				if out.KVCacheMaxStreamUsageRatio != nil {
+					if used, ok := promSum(body, "tensorfold:kv_cache_usage_perc"); ok {
+						if ratio := used / float64(health.MaxBatchSize); ratio <= 1 {
+							out.KVCacheUsageRatio = &ratio
+						}
+					}
+				}
 			}
 			if live := health.Live; live != nil {
 				if live.Decode != nil && *live.Decode >= 0 {

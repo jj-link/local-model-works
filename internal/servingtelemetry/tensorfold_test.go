@@ -385,7 +385,10 @@ func TestTensorFoldLanesMetrics(t *testing.T) {
 	assertTensorFoldRate(t, "prefix cache", out.PrefixCacheHitRatio, &prefix)
 	assertTensorFoldRate(t, "draft acceptance", out.SpecAcceptanceRatio, &acceptance)
 	assertTensorFoldRate(t, "busiest stream KV", out.KVCacheMaxStreamUsageRatio, &kv)
-	if out.KVCacheUsageRatio != nil || out.TTFTP95Seconds == nil || out.E2EP95Seconds == nil || out.ITLP95Seconds == nil {
+	// Three reporting lanes over four equal windows; the idle lane holds nothing.
+	total := (0.039606 + 0.010029 + 0.050498) / 4
+	assertTensorFoldRate(t, "all-lane KV", out.KVCacheUsageRatio, &total)
+	if out.TTFTP95Seconds == nil || out.E2EP95Seconds == nil || out.ITLP95Seconds == nil {
 		t.Fatalf("latency/KV fields incorrect: %+v", out)
 	}
 }
@@ -393,7 +396,7 @@ func TestTensorFoldLanesMetrics(t *testing.T) {
 func TestTensorFoldLanesHealthOptional(t *testing.T) {
 	srv := tensorFoldLanesServer(t, `{"detail":"Not Found"}`)
 	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
-	if !out.Available || out.RequestsRunning != 3 || out.SlotsTotal != 0 || out.GenerationTPS != nil || out.PrefillTPS != nil {
+	if !out.Available || out.RequestsRunning != 3 || out.SlotsTotal != 0 || out.GenerationTPS != nil || out.PrefillTPS != nil || out.KVCacheUsageRatio != nil {
 		t.Fatalf("health-less lane server: %+v", out)
 	}
 }
