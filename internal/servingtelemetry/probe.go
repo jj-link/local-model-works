@@ -415,6 +415,10 @@ func (p *Prober) probeSGLang(ctx context.Context, st *depState, base string, now
 			out.PrefillTPS = &prefillRate
 			out.RequestsRunning = int32(running)
 			out.SlotsActive = int32(running)
+			if waiting, ok := promSumAlt(body, "sglang:num_queue_reqs", "sglang_num_queue_reqs"); ok && waiting >= 0 {
+				value := int32(waiting)
+				out.RequestsWaiting = &value
+			}
 			if promptTotal > 0 {
 				r := cached / promptTotal
 				out.PrefixCacheHitRatio = &r

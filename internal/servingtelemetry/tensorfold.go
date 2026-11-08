@@ -98,8 +98,10 @@ func (p *Prober) probeTensorFold(ctx context.Context, st *depState, base string,
 		ratio := float64(*health.PoolTokens-*health.PoolFreeTokens) / float64(*health.PoolTokens)
 		out.KVCacheUsageRatio = &ratio
 	}
-	if out.KVCacheUsageRatio == nil {
-		if metrics, err := p.getBody(ctx, base+"/metrics"); err == nil {
+	if metrics, err := p.getBody(ctx, base+"/metrics"); err == nil {
+		out.TTFTP95Seconds = p95(metrics, "tensorfold:time_to_first_token_seconds")
+		out.E2EP95Seconds = p95(metrics, "tensorfold:request_latency_seconds")
+		if out.KVCacheUsageRatio == nil {
 			out.KVCacheMaxStreamUsageRatio = tensorFoldMaxStreamKV(metrics)
 			// Without a pool, each lane owns a cache of one context window, so
 			// all lanes hold max windows and their ratios sum to the used share.

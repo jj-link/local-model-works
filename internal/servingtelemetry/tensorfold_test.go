@@ -435,3 +435,24 @@ func TestTensorFoldHealthIdentityBeatsLaneMetrics(t *testing.T) {
 		t.Fatalf("health-identified server read as lanes: %+v", out)
 	}
 }
+
+func TestTensorFoldLatencyPercentiles(t *testing.T) {
+	const health = `{"ok":true,"backend":"tensorfold","requests_running":0,"context_length":262144}`
+	const metrics = "tensorfold:time_to_first_token_seconds_bucket{le=\"1\"} 90\ntensorfold:time_to_first_token_seconds_bucket{le=\"5\"} 100\ntensorfold:time_to_first_token_seconds_bucket{le=\"+Inf\"} 100\n" +
+		"tensorfold:request_latency_seconds_bucket{le=\"10\"} 50\ntensorfold:request_latency_seconds_bucket{le=\"60\"} 100\ntensorfold:request_latency_seconds_bucket{le=\"+Inf\"} 100\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, health)
+		case "/metrics":
+			fmt.Fprint(w, metrics)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))
+	if out.TTFTP95Seconds == nil || out.E2EP95Seconds == nil || out.ITLP95Seconds != nil {
+		t.Fatalf("latency percentiles: %+v", out)
+	}
+}
