@@ -161,9 +161,10 @@ func TestSglangMetricsCounters(t *testing.T) {
 	prompt.Store(50)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
-			fmt.Fprintf(w, "sglang:generation_tokens_total %d\nsglang:prompt_tokens_total %d\nsglang:num_running_reqs 3\nsglang:num_queue_reqs 2\nsglang:num_used_tokens 324554\nsglang:max_total_num_tokens 934200\n", gen.Load(), prompt.Load())
+			fmt.Fprintf(w, "sglang:generation_tokens_total %d\nsglang:prompt_tokens_total %d\nsglang:num_running_reqs 3\nsglang:num_queue_reqs 2\nsglang:num_used_tokens 324554\nsglang:max_total_num_tokens 934200\n"+
+				"sglang:mamba_usage 0.457\nsglang:spec_accept_rate 0.54\nsglang:context_len 262144\n", gen.Load(), prompt.Load())
 		} else {
-			fmt.Fprint(w, `{}`)
+			fmt.Fprint(w, `{"max_running_requests":8}`)
 		}
 	}))
 	defer srv.Close()
@@ -184,8 +185,11 @@ func TestSglangMetricsCounters(t *testing.T) {
 	if out.RequestsWaiting == nil || *out.RequestsWaiting != 2 {
 		t.Fatalf("waiting=%v want 2", out.RequestsWaiting)
 	}
-	if out.KVCacheUsageRatio == nil || *out.KVCacheUsageRatio != 324554.0/934200 {
-		t.Fatalf("kv=%v want used/total tokens", out.KVCacheUsageRatio)
+	if out.KVCacheUsageRatio == nil || *out.KVCacheUsageRatio != 0.457 {
+		t.Fatalf("kv=%v want the fuller Mamba cache", out.KVCacheUsageRatio)
+	}
+	if out.SlotsTotal != 8 || out.ContextLength != 262144 || out.SpecAcceptanceRatio == nil || *out.SpecAcceptanceRatio != 0.54 {
+		t.Fatalf("slots/context/acceptance: %+v", out)
 	}
 }
 

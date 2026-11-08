@@ -426,10 +426,29 @@ func (p *Prober) probeSGLang(ctx context.Context, st *depState, base string, now
 			out.TTFTP95Seconds = p95(body, "sglang:time_to_first_token_seconds")
 			out.E2EP95Seconds = p95(body, "sglang:e2e_request_latency_seconds")
 			out.ITLP95Seconds = p95(body, "sglang:inter_token_latency_seconds")
+			// Hybrid models fill two caches: attention tokens and Mamba states.
+			// Like SGLang's own token_usage, report the fuller one.
 			if total, ok := promSumAlt(body, "sglang:max_total_num_tokens", "sglang_max_total_num_tokens"); ok && total > 0 {
 				if used, ok := promSumAlt(body, "sglang:num_used_tokens", "sglang_num_used_tokens"); ok && used >= 0 && used <= total {
 					r := used / total
+					if mamba, ok := promSumAlt(body, "sglang:mamba_usage", "sglang_mamba_usage"); ok && mamba > r && mamba <= 1 {
+						r = mamba
+					}
 					out.KVCacheUsageRatio = &r
+				}
+			}
+			if accept, ok := promSumAlt(body, "sglang:spec_accept_rate", "sglang_spec_accept_rate"); ok && accept > 0 && accept <= 1 {
+				out.SpecAcceptanceRatio = &accept
+			}
+			if window, ok := promSumAlt(body, "sglang:context_len", "sglang_context_len"); ok && window > 0 {
+				out.ContextLength = int32(window)
+			}
+			if info, err := p.getBody(ctx, base+"/get_server_info"); err == nil {
+				var limits struct {
+					MaxRunning float64 `json:"max_running_requests"`
+				}
+				if json.Unmarshal([]byte(info), &limits) == nil && limits.MaxRunning > 0 {
+					out.SlotsTotal = int32(limits.MaxRunning)
 				}
 			}
 			return out
