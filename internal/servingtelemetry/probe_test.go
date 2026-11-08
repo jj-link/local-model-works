@@ -186,6 +186,36 @@ func TestSglangMetricsCounters(t *testing.T) {
 	}
 }
 
+// Finished-request totals stand still while requests run; the realtime
+// counter carries the live rates.
+func TestSglangRealtimeCounters(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	var decode, compute atomic.Int64
+	decode.Store(1000)
+	compute.Store(500)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			fmt.Fprintf(w, "sglang:generation_tokens_total 7\nsglang:prompt_tokens_total 9\n"+
+				"sglang:realtime_tokens_total{mode=\"prefill_compute\"} %d\nsglang:realtime_tokens_total{mode=\"decode\"} %d\n"+
+				"sglang:realtime_tokens_total{mode=\"prefill_cache\"} 99999\n", compute.Load(), decode.Load())
+		} else {
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+	p := NewProber(srv.Client())
+	p.now = func() time.Time { return base }
+	d := dep("d1", portOf(srv.URL))
+	p.Probe(context.Background(), d)
+	decode.Store(1500)
+	compute.Store(1500)
+	p.now = func() time.Time { return base.Add(5 * time.Second) }
+	out := p.Probe(context.Background(), d)
+	if *out.GenerationTPS != 100 || *out.PrefillTPS != 200 {
+		t.Fatalf("sglang gen/prefill=%v/%v want 100/200", *out.GenerationTPS, *out.PrefillTPS)
+	}
+}
+
 func TestLlamaCPPSlotCounters(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	slotsA := `[{"id":0,"n_decoded":100,"n_prompt_tokens_processed":50,"is_processing":true},

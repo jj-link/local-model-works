@@ -395,6 +395,21 @@ func TestTensorFoldLanesMetrics(t *testing.T) {
 	}
 }
 
+// With a pool four context windows long, each lane's window ratio is a
+// quarter as much of the pool.
+func TestTensorFoldLanesPoolLargerThanContext(t *testing.T) {
+	health, err := os.ReadFile("testdata/tensorfold-lanes-health.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := tensorFoldLanesServer(t, string(health))
+	target := dep("tf", portOf(srv.URL))
+	target.Parameters = map[string]any{"context": float64(262144), "pool": float64(1048576)}
+	out := NewProber(srv.Client()).Probe(context.Background(), target)
+	total := (0.039606 + 0.010029 + 0.050498) / 4
+	assertTensorFoldRate(t, "pool KV", out.KVCacheUsageRatio, &total)
+}
+
 func TestTensorFoldLanesHealthOptional(t *testing.T) {
 	srv := tensorFoldLanesServer(t, `{"detail":"Not Found"}`)
 	out := NewProber(srv.Client()).Probe(context.Background(), dep("tf", portOf(srv.URL)))

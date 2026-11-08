@@ -2186,7 +2186,7 @@ func (q *Queries) ListBenchmarkTrialResultsByRun(ctx context.Context, runID stri
 }
 
 const listDeploymentMonitorTargets = `-- name: ListDeploymentMonitorTargets :many
-SELECT id, desired_state, observed_state, endpoint, endpoint_model, endpoint_path
+SELECT id, desired_state, observed_state, endpoint, endpoint_model, endpoint_path, parameters
 FROM deployments
 WHERE desired_state = 'running'
   AND observed_state IN ('healthy', 'degraded')
@@ -2200,6 +2200,7 @@ type ListDeploymentMonitorTargetsRow struct {
 	Endpoint      sql.NullString `json:"endpoint"`
 	EndpointModel sql.NullString `json:"endpoint_model"`
 	EndpointPath  sql.NullString `json:"endpoint_path"`
+	Parameters    string         `json:"parameters"`
 }
 
 func (q *Queries) ListDeploymentMonitorTargets(ctx context.Context) ([]ListDeploymentMonitorTargetsRow, error) {
@@ -2218,6 +2219,7 @@ func (q *Queries) ListDeploymentMonitorTargets(ctx context.Context) ([]ListDeplo
 			&i.Endpoint,
 			&i.EndpointModel,
 			&i.EndpointPath,
+			&i.Parameters,
 		); err != nil {
 			return nil, err
 		}

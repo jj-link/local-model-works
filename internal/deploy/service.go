@@ -3330,6 +3330,8 @@ type MonitorTarget struct {
 	// pre-migration rows that fell back to recipe setting/metadata.
 	EndpointModel string
 	EndpointPath  string
+	// Parameters are the deployment's resolved launch settings.
+	Parameters map[string]any
 }
 
 // ListMonitoringTargets returns the desired-running healthy/degraded
@@ -3360,6 +3362,9 @@ func (s *Service) ListMonitoringTargets(ctx context.Context) ([]MonitorTarget, e
 		}
 		if r.EndpointPath.Valid {
 			t.EndpointPath = r.EndpointPath.String
+		}
+		if r.Parameters != "" {
+			_ = json.Unmarshal([]byte(r.Parameters), &t.Parameters)
 		}
 		out = append(out, t)
 	}

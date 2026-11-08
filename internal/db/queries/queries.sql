@@ -333,7 +333,7 @@ SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        dispatch, created_at, updated_at
 FROM deployments ORDER BY created_at DESC;
 -- name: ListDeploymentMonitorTargets :many
-SELECT id, desired_state, observed_state, endpoint, endpoint_model, endpoint_path
+SELECT id, desired_state, observed_state, endpoint, endpoint_model, endpoint_path, parameters
 FROM deployments
 WHERE desired_state = 'running'
   AND observed_state IN ('healthy', 'degraded')

@@ -200,7 +200,7 @@ type tensorFoldLanesHealth struct {
 // probeTensorFoldLanes reads tf-dsv41-lanes, whose /metrics mirrors vLLM's
 // names under the tensorfold: prefix. Throughput comes from the server's live
 // rates; /health is optional, so its failure only drops those fields.
-func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base string, now time.Time) telemetry.ServingPayload {
+func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base string, now time.Time, poolShare float64) telemetry.ServingPayload {
 	body, err := p.getBody(ctx, base+"/metrics")
 	if err != nil {
 		return p.fail(st, err)
@@ -245,12 +245,14 @@ func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base st
 		if json.Unmarshal([]byte(raw), &health) == nil {
 			if health.MaxBatchSize > 0 && int32(running) <= health.MaxBatchSize {
 				out.SlotsTotal = health.MaxBatchSize
-				// Each lane's ratio is over the --context window, which (with no
-				// larger POOL) is also the one position pool all lanes share, so
-				// their sum is the pool's live share; kept prompts are not in it.
+				// Each lane's ratio is over the --context window; all lanes share
+				// one position pool of --pool (or --context), so the scaled sum is
+				// the pool's live share; kept prompts are not in it.
 				if out.KVCacheMaxStreamUsageRatio != nil {
-					if used, ok := promSum(body, "tensorfold:kv_cache_usage_perc"); ok && used <= 1 {
-						out.KVCacheUsageRatio = &used
+					if used, ok := promSum(body, "tensorfold:kv_cache_usage_perc"); ok {
+						if used *= poolShare; used <= 1 {
+							out.KVCacheUsageRatio = &used
+						}
 					}
 				}
 			}
@@ -265,4 +267,15 @@ func (p *Prober) probeTensorFoldLanes(ctx context.Context, st *depState, base st
 		}
 	}
 	return out
+}
+
+// lanePoolShare is context/pool for a lane server whose --pool exceeds its
+// --context, and 1 when the pool is the context window.
+func lanePoolShare(params map[string]any) float64 {
+	window, _ := params["context"].(float64)
+	pool, _ := params["pool"].(float64)
+	if window > 0 && pool > window {
+		return window / pool
+	}
+	return 1
 }

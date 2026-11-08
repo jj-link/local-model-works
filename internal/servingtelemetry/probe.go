@@ -113,7 +113,7 @@ func (p *Prober) Probe(ctx context.Context, dep deploy.MonitorTarget) telemetry.
 		return p.probeLlamaCPP(ctx, st, base, now)
 	case BackendTensorFold:
 		if st.tensorfoldLanes {
-			return p.probeTensorFoldLanes(ctx, st, base, now)
+			return p.probeTensorFoldLanes(ctx, st, base, now, lanePoolShare(dep.Parameters))
 		}
 		return p.probeTensorFold(ctx, st, base, now)
 	default:
@@ -390,6 +390,13 @@ func (p *Prober) probeSGLang(ctx context.Context, st *depState, base string, now
 	if body, err := p.getBody(ctx, base+"/metrics"); err == nil {
 		if gen, ok := promSumAlt(body, "sglang:generation_tokens_total", "sglang_generation_tokens_total"); ok {
 			prompt, _ := promSumAlt(body, "sglang:prompt_tokens_total", "sglang_prompt_tokens_total")
+			promptTotal := prompt
+			// The *_tokens_total counters grow only when a request finishes;
+			// realtime_tokens_total grows while requests run.
+			if decode, ok := promSumLabeled(body, "sglang:realtime_tokens_total", `mode="decode"`); ok {
+				gen = decode
+				prompt, _ = promSumLabeled(body, "sglang:realtime_tokens_total", `mode="prefill_compute"`)
+			}
 			running, _ := promSumAlt(body, "sglang:num_running_reqs", "sglang_num_running_reqs")
 			cached, _ := promSumAlt(body, "sglang:cached_tokens_total", "sglang_cached_tokens_total")
 
@@ -408,10 +415,13 @@ func (p *Prober) probeSGLang(ctx context.Context, st *depState, base string, now
 			out.PrefillTPS = &prefillRate
 			out.RequestsRunning = int32(running)
 			out.SlotsActive = int32(running)
-			if prompt > 0 {
-				r := cached / prompt
+			if promptTotal > 0 {
+				r := cached / promptTotal
 				out.PrefixCacheHitRatio = &r
 			}
+			out.TTFTP95Seconds = p95(body, "sglang:time_to_first_token_seconds")
+			out.E2EP95Seconds = p95(body, "sglang:e2e_request_latency_seconds")
+			out.ITLP95Seconds = p95(body, "sglang:inter_token_latency_seconds")
 			if total, ok := promSumAlt(body, "sglang:max_total_num_tokens", "sglang_max_total_num_tokens"); ok && total > 0 {
 				if used, ok := promSumAlt(body, "sglang:num_used_tokens", "sglang_num_used_tokens"); ok && used >= 0 && used <= total {
 					r := used / total
@@ -778,6 +788,25 @@ func promSumAlt(body, a, b string) (float64, bool) {
 			continue
 		}
 		if m[1] != a && (b == "" || m[1] != b) {
+			continue
+		}
+		v, err := strconv.ParseFloat(m[2], 64)
+		if err != nil {
+			continue
+		}
+		sum += v
+		found = true
+	}
+	return sum, found
+}
+
+// promSumLabeled sums the series of name whose labels contain label.
+func promSumLabeled(body, name, label string) (float64, bool) {
+	var sum float64
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		m := seriesRe.FindStringSubmatch(line)
+		if m == nil || m[1] != name || !strings.Contains(line, label) {
 			continue
 		}
 		v, err := strconv.ParseFloat(m[2], 64)
