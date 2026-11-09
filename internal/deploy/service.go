@@ -1041,8 +1041,44 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Deployment, e
 	if !plan.Ready {
 		return nil, fmt.Errorf("%w: %v", ErrNotReady, diag.Decode(diag.Encode(plan.Diagnostics)))
 	}
-
+	if dep, err := s.relaunchStopped(ctx, plan); dep != nil || err != nil {
+		return dep, err
+	}
 	return s.createPlanned(ctx, plan)
+}
+
+// relaunchStopped starts the newest stopped deployment of the plan's recipe on
+// the same ranks, nodes and accelerators, saved with the plan's settings, so a
+// launch does not add another copy. It returns nil when there is none.
+func (s *Service) relaunchStopped(ctx context.Context, plan *Plan) (*Deployment, error) {
+	rows, err := s.q.ListStoppedDeploymentsByRecipe(ctx, plan.RecipeDigest)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		entries := ParsePlacementSet(row.Placement).Entries
+		if len(entries) == 0 || preservedPlacementMismatch(entries, plan.Placements) != "" {
+			continue
+		}
+		if err := s.acquirePlan(ctx, plan, true); err != nil {
+			return nil, err
+		}
+		var fabric sql.NullString
+		if plan.Fabric != nil {
+			fabric = sql.NullString{String: *plan.Fabric, Valid: true}
+		}
+		updated, err := s.q.UpdateStoppedDeploymentConfiguration(ctx, db.UpdateStoppedDeploymentConfigurationParams{
+			Parameters: marshalParameters(plan.Parameters), Placement: placementSetFromPlan(plan).Marshal(), Fabric: fabric, ID: row.ID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if updated == 0 {
+			continue // started or removed since it was listed
+		}
+		return s.Start(ctx, row.ID)
+	}
+	return nil, nil
 }
 
 func (s *Service) createPlanned(ctx context.Context, plan *Plan) (*Deployment, error) {

@@ -132,3 +132,46 @@ func TestConfigurationReviewBindsLiveSourceContract(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchReusesStoppedDeployment(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	digest := "sha256:" + strings.Repeat("8", 64)
+	manifest, err := recipe.Parse([]byte(noArtifactManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Parameters = []recipe.Parameter{{Name: "context_length", Type: "int", Default: 4096}}
+	manifest.Workloads[0].Args = append(manifest.Workloads[0].Args, "--context-length", "${setting.context_length}")
+	document, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.seedRecipe(t, digest, string(document))
+	first := h.createDeployment(t, digest)
+	driveDeploymentHealthy(t, h, first.ID, "node-a")
+	if _, err := h.svc.Stop(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	ackDeploymentStop(t, h, first.ID, digest)
+
+	again, err := h.createReviewed(ctx, CreateRequest{RecipeDigest: digest, Parameters: map[string]any{"context_length": 8192}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID {
+		t.Fatalf("launch created %s instead of starting %s", again.ID, first.ID)
+	}
+	rows, err := h.q.ListDeployments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("%d deployments, want 1", len(rows))
+	}
+	row := deploymentRow(t, h, first.ID)
+	if row.DesiredState != "running" || parametersFor(row)["context_length"] != float64(8192) {
+		t.Fatalf("reused deployment not started with the new settings: desired=%s params=%s", row.DesiredState, row.Parameters)
+	}
+}

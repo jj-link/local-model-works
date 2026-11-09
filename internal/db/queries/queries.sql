@@ -339,6 +339,12 @@ WHERE desired_state = 'running'
   AND observed_state IN ('healthy', 'degraded')
   AND endpoint IS NOT NULL AND endpoint != '';
 
+-- name: ListStoppedDeploymentsByRecipe :many
+SELECT id, placement
+FROM deployments
+WHERE recipe_digest = ? AND desired_state = 'stopped' AND observed_state = 'stopped'
+ORDER BY created_at DESC, id DESC;
+
 -- name: GetDeploymentByRecipeParametersPlacement :one
 SELECT id, recipe_digest, parameters, placement, fabric, desired_state,
        observed_state, endpoint, endpoint_model, endpoint_path,

@@ -3025,6 +3025,41 @@ func (q *Queries) ListSecrets(ctx context.Context) ([]Secret, error) {
 	return items, nil
 }
 
+const listStoppedDeploymentsByRecipe = `-- name: ListStoppedDeploymentsByRecipe :many
+SELECT id, placement
+FROM deployments
+WHERE recipe_digest = ? AND desired_state = 'stopped' AND observed_state = 'stopped'
+ORDER BY created_at DESC, id DESC
+`
+
+type ListStoppedDeploymentsByRecipeRow struct {
+	ID        string `json:"id"`
+	Placement string `json:"placement"`
+}
+
+func (q *Queries) ListStoppedDeploymentsByRecipe(ctx context.Context, recipeDigest string) ([]ListStoppedDeploymentsByRecipeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStoppedDeploymentsByRecipe, recipeDigest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStoppedDeploymentsByRecipeRow
+	for rows.Next() {
+		var i ListStoppedDeploymentsByRecipeRow
+		if err := rows.Scan(&i.ID, &i.Placement); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTransfers = `-- name: ListTransfers :many
 SELECT id, artifact_id, source_node, dest_node, dest_path, credential_hash,
        state, bytes_total, bytes_done, diagnostic, created_at, updated_at
