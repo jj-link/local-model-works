@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Change: advance the single-Spark Qwen3.8 Flash Next TensorFold recipe to version 3.0.0 at upstream `20e15e4`: TensorFold v1.1.4's native Zig engine with 17 patches, the NVIDIA FP4 checkpoint, fp8 KV and a digest-pinned image, replacing the v0.6.1 MLX-format checkpoint, int8 KV and SSD n-gram tables. Refresh the exact-source fixtures, accept the source's Docker-array `tensorfold-native serve` launch with forwarded arguments and a prepared-snapshot model path, and keep the container name distinct from the server's `--name` alias. Port 8000 and container observation are unchanged.
+
 - Feature: expose optional "Additional SGLang arguments" for direct `docker run … sglang.launch_server` launches that lack an authored `EXTRA_ARGS_ARR` hook (including the RTX PRO 6000 Qwen3.8-27B recipe), appended after the final original argument with the existing protected-flag checks; unset preserves upstream bytes. Enables e.g. `["--enable-metrics"]`.
 
 - Fix: collect TensorFold active-stream KV/context gauges from `/metrics` when shared-pool counters are absent. Display and retain the busiest-stream ratio separately from pool occupancy, preserving valid idle zeros, unavailable metrics and historical charts when current gauges are absent.

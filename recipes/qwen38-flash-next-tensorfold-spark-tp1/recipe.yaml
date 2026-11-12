@@ -2,33 +2,38 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-flash-next-tensorfold-spark-tp1
-  version: 2.3.0
+  version: 3.0.0
   model: Qwen3.8-Flash-Next
   engine: tensorfold
   description: >-
     Runs the original pinned TensorFold preparation, start.sh and stop.sh on
-    one 128 GB GB10 DGX Spark. Upstream TensorFold v0.6.1 serves
-    Vontra/Qwen3.8-Flash-Next-MLX-4bit-MTP with five concurrent streams,
-    a 262,144-token context, int8 KV, vision and PLE tables on SSD by default.
-    Optional settings retain the original defaults until explicitly selected.
-    Requires Docker with the NVIDIA runtime, curl, Python 3, flock and roughly
-    103 GiB available memory. Preparation downloads roughly 106 GiB of weights
-    and pulls a matching image or builds it with upstream patches; its initial
-    disk checks require 125 GB for the model plus 35 GB for the image when
+    one 128 GB GB10 DGX Spark. Upstream builds TensorFold v1.1.4's native Zig
+    engine with its 17 patches and serves nvidia/Qwen3.8-Flash-Next-FP4-Local
+    (NVFP4 experts, MXFP8) with up to five concurrent streams sharing one
+    cache pool, a 262,144-token context (also the maximum), lossy fp8 KV,
+    vision and MTP drafts by default. The FP8 n-gram table loads with the
+    weights. Optional settings retain the original defaults until explicitly
+    selected. Requires Docker with the NVIDIA runtime, curl, Python 3, flock
+    and roughly 107 GiB available memory; the engine keeps 9 GiB free, so run
+    nothing else large on the Spark. Preparation downloads roughly 96 GiB of
+    weights and pulls the matching image by digest or builds it; its disk
+    checks require up to 114 GB for the model plus 40 GB for the image when
     co-located. Shared Hugging Face and kernel caches persist outside the
-    checkout. First launch compiles CUDA kernels. This binding fixes the
-    listener to 0.0.0.0:8000, the model alias to Qwen3.8-Flash-Next and the
-    observed container to qwen38-flash-next-tf. Stop interrupts active requests
-    and removes that container. Source pinning does not freeze remote model
-    snapshots or fallback-build dependencies and does not roll back host,
-    Docker or cache changes. Model weights use Qwen Community License 1.0,
-    separately from the MIT recipe. Port 8000 conflicts with other single-Spark servers.
+    checkout. This binding fixes the listener to 0.0.0.0:8000 instead of
+    upstream's 8888, the model alias to Qwen3.8-Flash-Next and the observed
+    container to qwen38-flash-next-tf. Stop interrupts active requests and
+    removes that container. Source pinning does not freeze fallback-build
+    dependencies and does not roll back host, Docker or cache changes. Model
+    weights use the NVIDIA Open Model Agreement over a Qwen Community License
+    1.0 base, separately from the MIT recipe. The optional ABLIT overlay is
+    gated and removes safety refusals. Port 8000 conflicts with other
+    single-Spark servers.
   # Original scripts and TensorFold patches: MIT, Copyright 2026 MiaAI-Lab
   # and TensorFold contributors; retained fixture LICENSE includes both notices.
   license: MIT
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold
-    revision: "4c0dea8ebe93a1d445d6a716b5a38995ff6e9362"
+    revision: "20e15e41f2f514a0d287710f4665ee1b5009ba41"
     path: .
 compatibility:
   nodeCount: 1

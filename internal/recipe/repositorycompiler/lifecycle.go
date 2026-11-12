@@ -579,9 +579,10 @@ func (e *lifecycleEvidence) docker(args []*syntax.Word, values map[string]string
 	}
 	switch args[0].Lit() {
 	case "run":
-		name, serving := "", false
+		name, serving, entered := "", false, false
 		for i := 1; i < len(args); i++ {
-			if args[i].Lit() == "--name" && i+1 < len(args) {
+			// After the TensorFold entrypoint, --name is the server's model alias.
+			if args[i].Lit() == "--name" && i+1 < len(args) && !entered {
 				name, _ = sourceWord(args[i+1], values)
 			}
 			if args[i].Lit() == "sglang.launch_server" || args[i].Lit() == "/start.sh" {
@@ -591,7 +592,7 @@ func (e *lifecycleEvidence) docker(args []*syntax.Word, values map[string]string
 				serving, e.vllm = true, true
 			}
 			if tensorfoldServe(args[i:]) {
-				serving = true
+				serving, entered = true, true
 			}
 			// --entrypoint "$TF_BIN" "$IMAGE" serve ...
 			if args[i].Lit() == "--entrypoint" && i+3 < len(args) && args[i+3].Lit() == "serve" {
