@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -514,6 +515,12 @@ func carryUpstreamSource(ctx context.Context, previous *upstreamRecord, spec *Co
 		incoming, err := upstreamWorkingFile(repository, relative)
 		if err != nil {
 			return err
+		}
+		// A file the new release removed is kept only for its local content.
+		// Permissions alone (a umask checkout, an installer chmod) must not
+		// carry removed upstream source into the successor.
+		if !incoming.Exists && original.Exists && local.Exists && bytes.Equal(original.Data, local.Data) {
+			continue
 		}
 		if generatedEnv && !incoming.Exists && spec.Upstream.EnvFile == previous.Spec.Upstream.EnvFile && spec.Upstream.EnvTemplate != "" {
 			incoming, err = upstreamWorkingFile(repository, filepath.ToSlash(filepath.Join(spec.Upstream.SourcePath, spec.Upstream.EnvTemplate)))
