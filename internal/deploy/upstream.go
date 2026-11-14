@@ -60,8 +60,8 @@ func (s *Service) previewUpstream(ctx context.Context, plan *Plan, manifest *rec
 		node := nodes[int(placement.Rank)]
 		renderContext := recipe.RenderContext{
 			NodeID: node.NodeID, NodeRank: int(placement.Rank), NodeAddress: node.NodeAddress,
-			NodeAccelerators: placement.acceleratorBinding(),
-			FabricAddr:       nodes[0].FabricNodeAddr, FabricNodeAddr: node.FabricNodeAddr,
+			NodeAccelerators: placement.acceleratorBinding(), NodePort: placement.servingPort(workload),
+			FabricAddr: nodes[0].FabricNodeAddr, FabricNodeAddr: node.FabricNodeAddr,
 			FabricInterface: node.FabricInterface, FabricRDMADevice: node.FabricRDMADevice,
 			FabricGIDIndex: node.FabricGIDIndex, Settings: plan.Parameters, Nodes: nodes,
 		}
@@ -109,6 +109,9 @@ func renderUpstream(manifest *recipe.Manifest, workload *recipe.Workload, ctx re
 	if execution.Stop, err = render(execution.Stop); err != nil {
 		return execution, nil, err
 	}
+	if execution.Status, err = render(execution.Status); err != nil {
+		return execution, nil, err
+	}
 	if names, exists := execution.ContainersByRank[ctx.NodeRank]; exists {
 		execution.Containers = names
 	}
@@ -119,13 +122,13 @@ func renderUpstream(manifest *recipe.Manifest, workload *recipe.Workload, ctx re
 	if execution.AuxiliaryContainers, err = render(execution.AuxiliaryContainers); err != nil {
 		return execution, nil, err
 	}
-	install := execution.Install
 	if commands, exists := execution.InstallByRank[ctx.NodeRank]; exists {
-		install = commands
+		execution.Install = commands
 	}
 	execution.InstallByRank = nil
-	execution.Install = nil
-	if install != nil {
+	// Observers never query status; placement holders also run no setup.
+	execution.RestrictToRankRole(ctx.NodeRank)
+	if install := execution.Install; install != nil {
 		execution.Install = make([][]string, len(install))
 		for i, command := range install {
 			if execution.Install[i], err = render(command); err != nil {
@@ -169,7 +172,7 @@ func frozenUpstreamSpec(row db.GetDeploymentRow, placement *Placement, runID str
 		Name: containerName(row.ID, runID, placement.Rank), AcquisitionPolicy: AcquisitionRequireExisting,
 		Upstream: &runtime.UpstreamSpec{
 			SourceURL: reviewed.Source.URL, Revision: reviewed.Source.Revision, SourcePath: reviewed.Source.Path,
-			Install: execution.Install, Start: execution.Start, Stop: execution.Stop,
+			Install: execution.Install, Start: execution.Start, Stop: execution.Stop, Status: execution.Status,
 			Containers: execution.Containers, AuxiliaryContainers: execution.AuxiliaryContainers,
 			EnvFile: execution.EnvFile, EnvTemplate: execution.EnvTemplate, EnvFormat: execution.EnvFormat,
 			LogFile: execution.LogFile, Approved: true,

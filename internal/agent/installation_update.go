@@ -159,7 +159,7 @@ func validateInstallationUpdate(manifest *recipe.Manifest, digest string, inputs
 			return nil, err
 		}
 		source := manifest.Metadata.Source
-		expected := &runtime.UpstreamSpec{SourceURL: source.URL, Revision: source.Revision, SourcePath: source.Path, Install: execution.Install, Start: execution.Start, Stop: execution.Stop, Containers: execution.Containers, AuxiliaryContainers: execution.AuxiliaryContainers, ObserveOnly: execution.CoordinatorRank != nil && *execution.CoordinatorRank != input.Rank, EnvFile: execution.EnvFile, EnvTemplate: execution.EnvTemplate, EnvFormat: execution.EnvFormat, LogFile: execution.LogFile, Approved: true, Configuration: configuration}
+		expected := &runtime.UpstreamSpec{SourceURL: source.URL, Revision: source.Revision, SourcePath: source.Path, Install: execution.Install, Start: execution.Start, Stop: execution.Stop, Status: execution.Status, Containers: execution.Containers, AuxiliaryContainers: execution.AuxiliaryContainers, ObserveOnly: execution.CoordinatorRank != nil && *execution.CoordinatorRank != input.Rank, EnvFile: execution.EnvFile, EnvTemplate: execution.EnvTemplate, EnvFormat: execution.EnvFormat, LogFile: execution.LogFile, Approved: true, Configuration: configuration}
 		actualJSON, _ := json.Marshal(spec.Upstream)
 		expectedJSON, _ := json.Marshal(expected)
 		if !bytes.Equal(actualJSON, expectedJSON) {

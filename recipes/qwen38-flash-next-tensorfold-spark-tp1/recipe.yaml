@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-flash-next-tensorfold-spark-tp1
-  version: 3.0.0
+  version: 3.1.0
   model: Qwen3.8-Flash-Next
   engine: tensorfold
   description: >-
@@ -19,15 +19,16 @@ metadata:
     weights and pulls the matching image by digest or builds it; its disk
     checks require up to 114 GB for the model plus 40 GB for the image when
     co-located. Shared Hugging Face and kernel caches persist outside the
-    checkout. This binding fixes the listener to 0.0.0.0:8000 instead of
-    upstream's 8888, the model alias to Qwen3.8-Flash-Next and the observed
-    container to qwen38-flash-next-tf. Stop interrupts active requests and
+    checkout. This binding fixes the listener to 0.0.0.0 on the node's
+    serve-port label (8000 when unlabelled) instead of upstream's 8888, the
+    model alias to Qwen3.8-Flash-Next and the observed container to
+    qwen38-flash-next-tf. Stop interrupts active requests and
     removes that container. Source pinning does not freeze fallback-build
     dependencies and does not roll back host, Docker or cache changes. Model
     weights use the NVIDIA Open Model Agreement over a Qwen Community License
     1.0 base, separately from the MIT recipe. The optional ABLIT overlay is
-    gated and removes safety refusals. Port 8000 conflicts with other
-    single-Spark servers.
+    gated and removes safety refusals. The serving port conflicts with other
+    single-Spark servers on the same node.
   # Original scripts and TensorFold patches: MIT, Copyright 2026 MiaAI-Lab
   # and TensorFold contributors; retained fixture LICENSE includes both notices.
   license: MIT
@@ -54,7 +55,7 @@ workloads:
       envFile: .env
       envFormat: literal
     env:
-      PORT: "8000"
+      PORT: "${node.port}"
       HOST: "0.0.0.0"
       CONTAINER_NAME: qwen38-flash-next-tf
       SERVED_NAME: Qwen3.8-Flash-Next

@@ -112,6 +112,14 @@ func verifyLifecycle(manifest *recipe.Manifest, readSource func(string) ([]byte,
 		if err := stop.script(u.Stop, 0); err != nil {
 			return err
 		}
+		if len(u.Status) != 0 {
+			// The status query reports only; it must still be a dispatched,
+			// parseable authored command whose sources resolve.
+			status := newLifecycleEvidence(readSource, u.Start[0])
+			if err := status.script(u.Status, 0); err != nil {
+				return err
+			}
+		}
 		// A single service may be renamed if both authored endpoints agree,
 		// unless its identity is fixed by the maintained environment binding.
 		// Multi-rank identities remain explicit; guessing rank placement is unsafe.
@@ -380,6 +388,10 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 					}
 				}
 				if n.Name != nil && n.Array == nil && !n.Append && n.Name.Value != "SCRIPT_DIR" {
+					delete(scope, selfScriptKey(n.Name.Value))
+					if scriptPathWord(n.Value) && strings.HasPrefix(scope["0"], "./") {
+						scope[selfScriptKey(n.Name.Value)] = path.Clean(scope["0"])
+					}
 					if repositoryRootWord(n.Value) {
 						scope[n.Name.Value] = path.Clean(scope["_LMW_SOURCE_DIR"] + "/..")
 						return true
@@ -464,7 +476,11 @@ func (e *lifecycleEvidence) shell(file *syntax.File, content []byte, values map[
 					if value, ok := sourceWord(n.Args[1], scope); ok {
 						e.shellEnv[path.Clean(value)] = true
 					}
-					if name, literal := literalSource(n, scope["_LMW_SOURCE_DIR"]); literal {
+					name, literal := literalSource(n, scope["_LMW_SOURCE_DIR"])
+					if !literal {
+						name, literal = selfRelativeSource(n, scope)
+					}
+					if literal {
 						e.shellEnv[name] = true
 						failure = e.sourcedScript(name, scope, depth+1)
 					}

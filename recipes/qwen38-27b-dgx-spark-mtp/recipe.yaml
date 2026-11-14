@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark
-  version: 2.2.0
+  version: 2.3.0
   model: qwen3.8-27b-sglang
   engine: sglang
   description: >-
@@ -10,7 +10,8 @@ metadata:
     Copies the authored .env.sample as literal KEY=value configuration;
     its actual concurrency default is 16, despite the older README text.
     Upstream owns image/model downloads, CPU pinning, privileged Docker,
-    host network/IPC, port 8888 and persistent source-relative caches.
+    host network/IPC and persistent source-relative caches. Its literal
+    PORT is bound to the node's serve-port label (8888 when unlabelled).
     Stop also addresses the legacy qwen3.8-27b-sglang-mtp container.
     No LMW swap, swappiness, cache-dropping or reconstructed serving command
     is applied. Source pinning does not pin mutable image/model dependencies.

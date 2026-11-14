@@ -19,6 +19,15 @@ func configureUpstreamProcess(cmd *exec.Cmd) error {
 	return nil
 }
 
+// killUpstreamProcessGroup ends a query started with configureUpstreamProcess
+// together with every helper in its group.
+func killUpstreamProcessGroup(pid int) error {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
+}
+
 func upstreamProcessIdentity(pid int) (string, error) {
 	if pid <= 1 {
 		return "", fmt.Errorf("upstream.process_identity_invalid")

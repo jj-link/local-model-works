@@ -59,6 +59,9 @@ func TestQwen27TensorFoldPinnedCompiler(t *testing.T) {
 			t.Fatalf("unsupported or coupled lifecycle setting exposed: %s", name)
 		}
 	}
+	if w := manifest.Workloads[0]; w.Env["PORT"] != recipe.TemplNodePort || len(w.Ports) != 1 || w.Ports[0].Host != 8000 || w.Readiness.HTTPGet.Port != 8000 {
+		t.Fatal("serving port must follow the placement with 8000 as the unlabelled fallback")
+	}
 	for _, selected := range []map[string]any{
 		{},
 		{"context": "131072", "hf_cache": "/data/shared HF cache", "kernel_cache": "/data/kernel cache"},
@@ -67,7 +70,7 @@ func TestQwen27TensorFoldPinnedCompiler(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		upstream, environment, edits, err := recipe.RenderInstallationUpstream(manifest, recipe.InstallationUpdateSpec{Workload: 0, Rank: 0, Parameters: settings})
+		upstream, environment, edits, err := recipe.RenderInstallationUpstream(manifest, recipe.InstallationUpdateSpec{Workload: 0, Rank: 0, Parameters: settings, Bindings: map[string]string{recipe.TemplNodePort: "8002"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +79,7 @@ func TestQwen27TensorFoldPinnedCompiler(t *testing.T) {
 			upstream.EnvFile != ".env" || upstream.EnvFormat != "literal" || len(edits) != 0 || len(upstream.Configuration) != 0 {
 			t.Fatal("rendering rewrote the original lifecycle or changed container observation")
 		}
-		if environment["HOST"] != "0.0.0.0" || environment["PORT"] != "8000" || environment["CONTAINER_NAME"] != "qwen38-27b-tf" || environment["SERVED_NAME"] != "Qwen3.8-27B" {
+		if environment["HOST"] != "0.0.0.0" || environment["PORT"] != "8002" || environment["CONTAINER_NAME"] != "qwen38-27b-tf" || environment["SERVED_NAME"] != "Qwen3.8-27B" {
 			t.Fatal("fixed endpoint, container identity or model alias changed")
 		}
 		for _, name := range []string{"context", "hf_cache", "kernel_cache"} {

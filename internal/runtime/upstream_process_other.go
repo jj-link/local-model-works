@@ -9,6 +9,7 @@ import (
 )
 
 func configureUpstreamProcess(cmd *exec.Cmd) error { return fmt.Errorf("upstream.linux_required") }
+func killUpstreamProcessGroup(pid int) error       { return fmt.Errorf("upstream.linux_required") }
 func upstreamProcessIdentity(pid int) (string, error) {
 	return "", fmt.Errorf("upstream.linux_required")
 }

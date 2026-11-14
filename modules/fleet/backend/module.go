@@ -24,6 +24,7 @@ import (
 	"github.com/jj-link/local-model-works/internal/httpx"
 	"github.com/jj-link/local-model-works/internal/jobs"
 	"github.com/jj-link/local-model-works/internal/moduleapi"
+	"github.com/jj-link/local-model-works/internal/nodes"
 	"github.com/jj-link/local-model-works/internal/settings"
 	"github.com/jj-link/local-model-works/internal/telemetry"
 	agentv1 "github.com/jj-link/local-model-works/proto/agent/v1"
@@ -132,6 +133,10 @@ func (m *Module) updateNode(w http.ResponseWriter, r *http.Request) {
 		Labels      map[string]string `json:"labels"`
 	}
 	if err := httpx.DecodeBody(r, &req); err != nil {
+		httpx.HandleErr(w, fmt.Errorf("%w: %v", httpx.ErrUnprocessable, err))
+		return
+	}
+	if _, _, err := nodes.ServePort(req.Labels); err != nil {
 		httpx.HandleErr(w, fmt.Errorf("%w: %v", httpx.ErrUnprocessable, err))
 		return
 	}

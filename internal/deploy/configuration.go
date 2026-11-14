@@ -91,6 +91,7 @@ func (s *Service) applyConfiguration(ctx context.Context, runID, deploymentID st
 		RecipeDigest: reviewedPlan.RecipeDigest, Parameters: reviewedPlan.Parameters,
 		Placements: planOverrides(reviewedPlan.Placements), Variants: reviewedPlan.Variants,
 		WorkloadIndex: &reviewedPlan.WorkloadIndex, AcquisitionPolicy: valueOrPolicy(reviewedPlan.AcquisitionPolicy),
+		frozenPorts: frozenPorts(reviewedPlan.Placements),
 	}, nil, false)
 	if err == nil && (!fresh.Ready || preservedPlacementMismatch(reviewedPlan.Placements, fresh.Placements) != "" ||
 		fresh.WorkloadIndex != reviewedPlan.WorkloadIndex || valueOr(fresh.Fabric, "") != reviewed.Fabric) {

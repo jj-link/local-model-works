@@ -80,8 +80,9 @@ func RenderInstallationUpstream(m *Manifest, input InstallationUpdateSpec) (Upst
 		execution.Install = commands
 	}
 	execution.ContainersByRank, execution.InstallByRank = nil, nil
+	execution.RestrictToRankRole(input.Rank)
 	var err error
-	for _, values := range []*[]string{&execution.Start, &execution.Stop, &execution.Containers, &execution.AuxiliaryContainers} {
+	for _, values := range []*[]string{&execution.Start, &execution.Stop, &execution.Status, &execution.Containers, &execution.AuxiliaryContainers} {
 		*values, err = renderList(*values)
 		if err != nil {
 			return execution, nil, nil, err

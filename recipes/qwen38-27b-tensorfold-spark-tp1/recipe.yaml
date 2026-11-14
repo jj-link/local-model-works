@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-27b-tensorfold-spark-tp1
-  version: 1.0.0
+  version: 1.1.0
   model: Qwen3.8-27B
   engine: tensorfold
   description: >-
@@ -17,15 +17,17 @@ metadata:
     Python 3 and flock. Preparation downloads roughly 19 GB of checkpoints and
     pulls a matching image or builds it with upstream patches (25-35 GB).
     Shared Hugging Face and kernel caches persist outside the checkout. First
-    launch compiles CUDA kernels. This binding fixes the listener to
-    0.0.0.0:8000, the model alias to Qwen3.8-27B, the default reply limit (when a
+    launch compiles CUDA kernels. This binding fixes the listener to 0.0.0.0 on
+    the node's serve-port label (8000 when unlabelled), the model alias to
+    Qwen3.8-27B, the default reply limit (when a
     request omits max_tokens) to 131,072 tokens instead of
     TensorFold's 4,096, and the observed container to
     qwen38-27b-tf. Stop interrupts active requests and removes that container.
     Source pinning does not freeze remote model snapshots or fallback-build
     dependencies and does not roll back host, Docker or cache changes. Model
     weights use Qwen Community License 1.0, separately from the Apache-2.0
-    recipe. Port 8000 conflicts with other single-Spark servers.
+    recipe. The serving port conflicts with other single-Spark servers on the
+    same node.
   # Original scripts and TensorFold patches: Apache-2.0, Copyright 2026
   # MiaAI-Lab; MIT-licensed parts keep their notices (retained NOTICE).
   license: Apache-2.0
@@ -52,7 +54,7 @@ workloads:
       envFile: .env
       envFormat: literal
     env:
-      PORT: "8000"
+      PORT: "${node.port}"
       HOST: "0.0.0.0"
       CONTAINER_NAME: qwen38-27b-tf
       SERVED_NAME: Qwen3.8-27B

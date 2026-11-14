@@ -155,55 +155,60 @@ func TestQwenPortReachesOriginalListenerAndReadiness(t *testing.T) {
 	if err := compileConfiguration(manifest, reader); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := sourceconfig.Resolve(manifest.Workloads[0].Upstream.Configuration, nil, func(template string) (string, error) {
-		return strings.ReplaceAll(template, "${node.accelerators}", "GPU-reviewed"), nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	original, err := reader("start.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	patched := string(original)
-	for i := len(resolved[0].Edits) - 1; i >= 0; i-- {
-		edit := resolved[0].Edits[i]
-		patched = patched[:edit.Start] + edit.Replacement + patched[edit.End:]
-	}
-	file, err := parseShell([]byte(patched), "start.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var script strings.Builder
-	script.WriteString("docker() { printf '%s\\0' \"$@\"; }\n")
-	for _, stmt := range file.Stmts {
-		call, ok := stmt.Cmd.(*syntax.CallExpr)
-		if !ok {
-			continue
+	// The reviewed port is the unlabelled fallback; a node's serve-port label
+	// moves the listener and readiness URL together through ${node.port}.
+	for _, nodePort := range []string{"8000", "8003"} {
+		resolved, err := sourceconfig.Resolve(manifest.Workloads[0].Upstream.Configuration, nil, func(template string) (string, error) {
+			template = strings.ReplaceAll(template, "${node.accelerators}", "GPU-reviewed")
+			return strings.ReplaceAll(template, "${node.port}", nodePort), nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, assignment := range call.Assigns {
-			if assignment.Name != nil && (assignment.Name.Value == "PORT" || assignment.Name.Value == "READY_URL") {
-				script.WriteString(patched[assignment.Pos().Offset():assignment.End().Offset()] + "\n")
+		original, err := reader("start.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		patched := string(original)
+		for i := len(resolved[0].Edits) - 1; i >= 0; i-- {
+			edit := resolved[0].Edits[i]
+			patched = patched[:edit.Start] + edit.Replacement + patched[edit.End:]
+		}
+		file, err := parseShell([]byte(patched), "start.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var script strings.Builder
+		script.WriteString("docker() { printf '%s\\0' \"$@\"; }\n")
+		for _, stmt := range file.Stmts {
+			call, ok := stmt.Cmd.(*syntax.CallExpr)
+			if !ok {
+				continue
+			}
+			for _, assignment := range call.Assigns {
+				if assignment.Name != nil && (assignment.Name.Value == "PORT" || assignment.Name.Value == "READY_URL") {
+					script.WriteString(patched[assignment.Pos().Offset():assignment.End().Offset()] + "\n")
+				}
+			}
+			if len(call.Args) > 1 && call.Args[0].Lit() == "docker" && call.Args[1].Lit() == "run" {
+				script.WriteString(patched[call.Pos().Offset():call.End().Offset()] + "\n")
 			}
 		}
-		if len(call.Args) > 1 && call.Args[0].Lit() == "docker" && call.Args[1].Lit() == "run" {
-			script.WriteString(patched[call.Pos().Offset():call.End().Offset()] + "\n")
+		script.WriteString("printf 'readiness=%s\\0' \"$READY_URL\"\n")
+		output, err := exec.Command(bash, "-c", script.String()).CombinedOutput()
+		if err != nil {
+			t.Fatalf("execute original endpoint expressions: %v\n%s", err, output)
 		}
-	}
-	script.WriteString("printf 'readiness=%s\\0' \"$READY_URL\"\n")
-	output, err := exec.Command(bash, "-c", script.String()).CombinedOutput()
-	if err != nil {
-		t.Fatalf("execute original endpoint expressions: %v\n%s", err, output)
-	}
-	args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
-	port := ""
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--port" {
-			port = args[i+1]
+		args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+		port := ""
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--port" {
+				port = args[i+1]
+			}
 		}
-	}
-	if port != "8000" || args[len(args)-1] != "readiness=http://127.0.0.1:8000/v1/models" {
-		t.Fatalf("listener and readiness did not move together to 8000: %q", args)
+		if port != nodePort || args[len(args)-1] != "readiness=http://127.0.0.1:"+nodePort+"/v1/models" {
+			t.Fatalf("listener and readiness did not move together to %s: %q", nodePort, args)
+		}
 	}
 }
 

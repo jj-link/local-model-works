@@ -299,8 +299,10 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		byID[c.nodeID] = c
 	}
 	nodeStatus := map[string]string{}
+	nodeLabels := map[string]string{}
 	for _, n := range nodes {
 		nodeStatus[n.ID] = n.Status
+		nodeLabels[n.ID] = n.Labels
 	}
 	// Accelerator allocation within this plan: UUIDs per node, plus the
 	// set of nodes a devAll rank has consumed (no second rank there).
@@ -467,6 +469,9 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 		}
 	}
 	sort.Slice(placements, func(i, j int) bool { return placements[i].Rank < placements[j].Rank })
+	for i := range placements {
+		placements[i].Port = plannedServingPort(w, nodeCount, placements[i].Rank, nodeLabels[placements[i].NodeID], req.frozenPorts)
+	}
 	plan.Placements = placements
 	if len(placements) < len(rankList) {
 		plan.Ready = false
@@ -615,7 +620,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			if c != nil {
 				addr = c.addr
 			}
-			for _, p := range w.Ports {
+			for i, p := range w.Ports {
 				base := p.Host
 				if base == 0 {
 					base = p.Container
@@ -623,6 +628,9 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 				hostPort := base + int(pl.Rank)
 				if w.Upstream != nil {
 					hostPort = base
+				}
+				if i == 0 {
+					hostPort = int(pl.Port)
 				}
 				proto := p.Protocol
 				if proto == "" {
@@ -699,11 +707,6 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			if c := nodeByID[r0.NodeID]; c != nil {
 				addr = c.addr
 			}
-			first := w.Ports[0]
-			base := first.Host
-			if base == 0 {
-				base = first.Container
-			}
 			model := settingString(values, "model")
 			if model == "" {
 				if defaults, err := m.EffectiveSettings(nil); err == nil {
@@ -715,7 +718,7 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			}
 			ep := Endpoint{
 				Host:  addr,
-				Port:  int32(base + int(r0.Rank)),
+				Port:  r0.Port,
 				Model: model,
 			}
 			if w.Readiness != nil && w.Readiness.HTTPGet != nil && w.Readiness.HTTPGet.Path != "" {
@@ -759,6 +762,15 @@ func (s *Service) plan(ctx context.Context, req PlanRequest, ignoredDeployments 
 			if candidate == nil || candidate.inv == nil || !slices.Contains(candidate.inv.ProtocolFeatures, runtime.UpstreamConfigurationProtocolFeature) {
 				plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.configuration_unavailable",
 					fmt.Sprintf("node %s needs an updated agent supporting upstream-configuration-v1 before runtime overrides can be applied", preview.NodeName)))
+			}
+		}
+		if len(w.Upstream.Status) != 0 {
+			for _, placement := range placements {
+				candidate := nodeByID[placement.NodeID]
+				if candidate == nil || candidate.inv == nil || !slices.Contains(candidate.inv.ProtocolFeatures, runtime.UpstreamStatusProtocolFeature) {
+					plan.Diagnostics = append(plan.Diagnostics, diag.Error("upstream.status_unavailable",
+						fmt.Sprintf("node %s needs an updated agent supporting upstream-status-v1 to observe this source-owned service through its status command", placement.NodeName)))
+				}
 			}
 		}
 	}
@@ -2691,12 +2703,7 @@ func (s *Service) readinessPassed(ctx context.Context, row db.GetDeploymentRow) 
 	if !row.Endpoint.Valid || row.Endpoint.String == "" {
 		return false, "waiting for endpoint"
 	}
-	hostPort := row.Endpoint.String
-	if probe.HTTPGet.Port != 0 {
-		if host, _, splitErr := net.SplitHostPort(hostPort); splitErr == nil {
-			hostPort = net.JoinHostPort(host, strconv.Itoa(probe.HTTPGet.Port))
-		}
-	}
+	hostPort := probeAddress(row.Endpoint.String, probe.HTTPGet.Port, workload, row.Placement)
 	probePath := probe.HTTPGet.Path
 	if probePath == "" {
 		probePath = "/health"
@@ -2819,10 +2826,7 @@ func (s *Service) OnStateUpdate(ctx context.Context, nodeID string, su *agentv1.
 			// Recover ports from the immutable workload, without launching or acquiring.
 			if manifest, err := s.manifestFor(ctx, row.RecipeDigest); err == nil {
 				if _, workload, err := s.selectWorkload(ctx, row, manifest); err == nil && len(workload.Ports) > 0 {
-					port = workload.Ports[0].Host
-					if port == 0 {
-						port = workload.Ports[0].Container
-					}
+					port = int(head.servingPort(workload))
 				}
 			}
 		}
@@ -3028,6 +3032,7 @@ func (s *Service) Start(ctx context.Context, depID string) (*Deployment, error) 
 		Parameters:        parametersFor(row),
 		AcquisitionPolicy: ps.AcquisitionPolicy,
 		WorkloadIndex:     ps.Workload,
+		frozenPorts:       frozenPorts(ps.Entries),
 	}, nil, len(ps.Upstream) > 0)
 	if err != nil {
 		return nil, err
@@ -3203,12 +3208,7 @@ func (s *Service) Verify(ctx context.Context, depID string) (*Deployment, error)
 	if row.Endpoint.String == "" {
 		return nil, fmt.Errorf("%w: no endpoint recorded", ErrState)
 	}
-	hostPort := row.Endpoint.String
-	if probe.HTTPGet.Port != 0 {
-		if host, _, splitErr := net.SplitHostPort(hostPort); splitErr == nil {
-			hostPort = net.JoinHostPort(host, strconv.Itoa(int(probe.HTTPGet.Port)))
-		}
-	}
+	hostPort := probeAddress(row.Endpoint.String, probe.HTTPGet.Port, w, row.Placement)
 	path := probe.HTTPGet.Path
 	if path == "" {
 		path = "/health"
@@ -3605,8 +3605,8 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 	}
 	rctx := recipe.RenderContext{
 		NodeID: pl.NodeID, NodeRank: int(rank), NodeAddress: nodeAddress,
-		NodeAccelerators: pl.acceleratorBinding(),
-		FabricAddr:       fabricAddress, FabricNodeAddr: fabricNodeAddress,
+		NodeAccelerators: pl.acceleratorBinding(), NodePort: pl.servingPort(w),
+		FabricAddr: fabricAddress, FabricNodeAddr: fabricNodeAddress,
 		FabricInterface: fabricInterface, FabricRDMADevice: fabricRDMADevice,
 		FabricGIDIndex: fabricGIDIndex, Artifacts: map[string]string{}, Settings: values,
 	}
@@ -3718,17 +3718,21 @@ func (s *Service) renderSpec(ctx context.Context, depID string, rank int32, runI
 			{Name: "stack", Hard: 67108864, Soft: 67108864},
 		}
 	}
-	for _, p := range w.Ports {
-		base := p.Host
-		if base == 0 {
-			base = p.Container
+	for i, p := range w.Ports {
+		hostPort := p.Host
+		if hostPort == 0 {
+			hostPort = p.Container
+		}
+		hostPort += int(rank)
+		if i == 0 {
+			hostPort = int(pl.servingPort(w))
 		}
 		proto := p.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
 		spec.Ports = append(spec.Ports, runtime.PortSpec{
-			Host:      base + int(rank),
+			Host:      hostPort,
 			Container: p.Container,
 			Protocol:  proto,
 		})

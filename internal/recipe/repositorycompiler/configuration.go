@@ -71,6 +71,11 @@ func compileConfiguration(manifest *recipe.Manifest, readSource func(string) ([]
 		if err := collector.runtimeConfiguration(file, content, name); err != nil {
 			return layoutError(name, err)
 		}
+		if manifest.Metadata.Engine == "dsgb10" {
+			if err := collector.dsgb10WithoutKey(file, content, name); err != nil {
+				return layoutError(name, err)
+			}
+		}
 		if strings.HasPrefix(name, "start-deepseek-") {
 			const dependency = "docker-compose.dspark.yml"
 			compose, err := readSource(dependency)
@@ -393,11 +398,12 @@ func (c *configurationCollector) hardcodedCaches(file *syntax.File, source strin
 
 // Bind the source variable rather than just --port: its readiness URL and
 // operator-facing URLs must follow the same endpoint as the actual listener.
+// The bound value is the placement's serving port, which defaults to the
+// reviewed port but follows a node's serve-port label on single-node runs.
 func (c *configurationCollector) hardcodedPort(file *syntax.File) error {
 	if len(c.workload.Ports) != 1 {
 		return fmt.Errorf("direct SGLang launch requires one reviewed API port")
 	}
-	port := strconv.Itoa(c.workload.Ports[0].Container)
 	found := false
 	for _, stmt := range file.Stmts {
 		call, ok := stmt.Cmd.(*syntax.CallExpr)
@@ -408,18 +414,16 @@ func (c *configurationCollector) hardcodedPort(file *syntax.File) error {
 			if assignment.Name == nil || assignment.Name.Value != "PORT" {
 				continue
 			}
-			value, literal := constantWord(assignment.Value)
+			_, literal := constantWord(assignment.Value)
 			if found || assignment.Value == nil || assignment.Array != nil || assignment.Append || !literal {
 				return fmt.Errorf("expected one literal PORT assignment")
 			}
 			found = true
-			if value != port {
-				configuration := &c.workload.Upstream.Configuration[0]
-				configuration.Edits = append(configuration.Edits, sourceconfig.Edit{
-					Start: int(assignment.Value.Pos().Offset()), End: int(assignment.Value.End().Offset()),
-					Template: port, Format: "shell",
-				})
-			}
+			configuration := &c.workload.Upstream.Configuration[0]
+			configuration.Edits = append(configuration.Edits, sourceconfig.Edit{
+				Start: int(assignment.Value.Pos().Offset()), End: int(assignment.Value.End().Offset()),
+				Template: recipe.TemplNodePort, Format: "shell",
+			})
 		}
 	}
 	if !found {

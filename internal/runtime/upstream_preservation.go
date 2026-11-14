@@ -87,6 +87,9 @@ func PrepareUpstreamSource(ctx context.Context, rt Runtime, spec *ContainerSpec)
 	if err := validateUpstream(spec); err != nil {
 		return err
 	}
+	if placementHolder(spec.Upstream) {
+		return nil // runs nothing from the source, so needs no checkout
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	workspace := r.reusableWorkspace(spec)

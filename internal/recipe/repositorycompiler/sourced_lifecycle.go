@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -105,6 +106,51 @@ func repositoryRootWord(word *syntax.Word) bool {
 		return true
 	}
 	return false
+}
+
+// scriptPathWord recognizes the authored self-path calculation
+// $(cd "$(dirname "$0")" && pwd)/$(basename "$0") by its parsed syntax: the
+// variable it assigns names the running script, never an evaluated path.
+func scriptPathWord(word *syntax.Word) bool {
+	if word == nil {
+		return false
+	}
+	var canonical bytes.Buffer
+	if err := syntax.NewPrinter().Print(&canonical, word); err != nil {
+		return false
+	}
+	return canonical.String() == `$(cd "$(dirname "$0")" && pwd)/$(basename "$0")`
+}
+
+// selfScriptKey holds, in a lifecycle scope, the script path a variable was
+// assigned by scriptPathWord. Ordinary values never enter this key.
+func selfScriptKey(variable string) string { return "_LMW_SELF_" + variable }
+
+var selfRelativeOperand = regexp.MustCompile(`^"\$\(dirname "\$([A-Za-z_][A-Za-z0-9_]*)"\)/([^"$` + "`" + `\\' *?\[]+)"$`)
+
+// selfRelativeSource resolves `. "$(dirname "$SELF")/name"` when SELF holds the
+// running script's own path (scriptPathWord). Other operands stay unresolved.
+func selfRelativeSource(call *syntax.CallExpr, scope map[string]string) (string, bool) {
+	if len(call.Args) != 2 || call.Args[0].Lit() != "source" && call.Args[0].Lit() != "." {
+		return "", false
+	}
+	var canonical bytes.Buffer
+	if err := syntax.NewPrinter().Print(&canonical, call.Args[1]); err != nil {
+		return "", false
+	}
+	match := selfRelativeOperand.FindStringSubmatch(canonical.String())
+	if match == nil {
+		return "", false
+	}
+	self, known := scope[selfScriptKey(match[1])]
+	if !known {
+		return "", false
+	}
+	name := path.Join(path.Dir(self), match[2])
+	if name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
+		return "", false
+	}
+	return name, true
 }
 
 func forwardsSSH(fn *syntax.FuncDecl) bool {

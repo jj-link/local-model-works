@@ -48,8 +48,14 @@ const UpstreamProtocolFeature = "upstream-execution-v1"
 // UpstreamConfigurationProtocolFeature prevents older workers ignoring source edits.
 const UpstreamConfigurationProtocolFeature = "upstream-configuration-v1"
 
+// UpstreamStatusProtocolFeature gates status-observed workloads and their
+// container-less placement holders to agents that understand both.
+const UpstreamStatusProtocolFeature = "upstream-status-v1"
+
 // UpstreamSpec executes a reviewed repository's authored host lifecycle. It is
 // not a container security boundary; Approved acknowledges host/Docker authority.
+// Status is the authored liveness query; on the coordinator it replaces Docker
+// observation (exit 0: running). Observers never carry it.
 type UpstreamSpec struct {
 	SourceURL           string                      `json:"sourceURL"`
 	Revision            string                      `json:"revision"`
@@ -57,6 +63,7 @@ type UpstreamSpec struct {
 	Install             [][]string                  `json:"install,omitempty"`
 	Start               []string                    `json:"start"`
 	Stop                []string                    `json:"stop"`
+	Status              []string                    `json:"status,omitempty"`
 	Containers          []string                    `json:"containers"`
 	AuxiliaryContainers []string                    `json:"auxiliaryContainers,omitempty"`
 	ObserveOnly         bool                        `json:"observeOnly,omitempty"`

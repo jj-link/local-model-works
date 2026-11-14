@@ -33,6 +33,13 @@ const QwenFlashNextTensorFoldRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3
 
 const QwenTensorFoldRepositoryURL = "https://github.com/MiaAI-Lab/Qwen3.8-27B-DGX-Spark-TensorFold"
 
+// DSGB10RepositoryURL hosts several procedures; LMW maintains only the
+// four-Spark DeepSeek V4.1 Flash one in DSGB10SourcePath.
+const (
+	DSGB10RepositoryURL = "https://github.com/Picom-code/pico-dgx-ds4"
+	DSGB10SourcePath    = "ds41f-4xgx10-switchless"
+)
+
 type Compiler = recipe.RepositoryCompiler
 
 // Registry prefers upstream-authored native bundles, then reviewed source procedures.
@@ -43,20 +50,21 @@ type Registry struct {
 
 func NewRegistry(validator *recipe.Validator) *Registry {
 	registry := &Registry{validator: validator, drivers: map[string]Compiler{}}
-	for _, entry := range []struct{ url, template string }{
-		{QwenRepositoryURL, "qwen38-27b-rtx6000pro-dflash2"},
-		{QwenDGXSparkRepositoryURL, "qwen38-27b-dgx-spark-mtp"},
-		{QwenFlashNextSingleRepositoryURL, "qwen38-flash-next-spark-tp1"},
-		{QwenFlashNextTensorFoldRepositoryURL, "qwen38-flash-next-tensorfold-spark-tp1"},
-		{QwenTensorFoldRepositoryURL, "qwen38-27b-tensorfold-spark-tp1"},
-		{DeepSeekRepositoryURL, "deepseek-v4-flash-vision-exp-dspark-tp2"},
-		{QwenFlashNextRepositoryURL, "qwen38-flash-next-dspark-tp2"},
-		{GLM53RepositoryURL, "glm53-flash-exl3-dflash2-spark-tp2"},
-		{GLM53TensorFoldRepositoryURL, "glm53-flash-exl3-tensorfold-spark-tp2"},
-		{DSV41TensorFoldRepositoryURL, "dsv41-flash-1017-exl3-tensorfold-spark-tp2"},
-		{GLM1104TensorFoldRepositoryURL, "glm53-flash-1104-tensorfold-spark-tp2"},
+	for _, entry := range []struct{ url, path, template string }{
+		{QwenRepositoryURL, ".", "qwen38-27b-rtx6000pro-dflash2"},
+		{QwenDGXSparkRepositoryURL, ".", "qwen38-27b-dgx-spark-mtp"},
+		{QwenFlashNextSingleRepositoryURL, ".", "qwen38-flash-next-spark-tp1"},
+		{QwenFlashNextTensorFoldRepositoryURL, ".", "qwen38-flash-next-tensorfold-spark-tp1"},
+		{QwenTensorFoldRepositoryURL, ".", "qwen38-27b-tensorfold-spark-tp1"},
+		{DeepSeekRepositoryURL, ".", "deepseek-v4-flash-vision-exp-dspark-tp2"},
+		{QwenFlashNextRepositoryURL, ".", "qwen38-flash-next-dspark-tp2"},
+		{GLM53RepositoryURL, ".", "glm53-flash-exl3-dflash2-spark-tp2"},
+		{GLM53TensorFoldRepositoryURL, ".", "glm53-flash-exl3-tensorfold-spark-tp2"},
+		{DSV41TensorFoldRepositoryURL, ".", "dsv41-flash-1017-exl3-tensorfold-spark-tp2"},
+		{GLM1104TensorFoldRepositoryURL, ".", "glm53-flash-1104-tensorfold-spark-tp2"},
+		{DSGB10RepositoryURL, DSGB10SourcePath, "deepseek-v41-flash-dsgb10-spark-tp4"},
 	} {
-		repositoryID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: entry.url, Path: "."})
+		repositoryID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: entry.url, Path: entry.path})
 		registry.drivers[repositoryID] = &UpstreamCompiler{validator: validator, template: entry.template}
 	}
 	nvfp4ID, _, _, _ := recipe.RepositoryIdentity(recipe.Source{URL: GLM53NVFP4RepositoryURL, Path: "."})
@@ -167,6 +175,9 @@ func (c *UpstreamCompiler) CompileRetained(_ context.Context, source recipe.Repo
 			return nil, fmt.Errorf("reviewed upstream procedure has no authored lifecycle")
 		}
 		required := []string{workload.Upstream.Start[0], workload.Upstream.Stop[0]}
+		if len(workload.Upstream.Status) != 0 {
+			required = append(required, workload.Upstream.Status[0])
+		}
 		for _, command := range workload.Upstream.Install {
 			required = append(required, command[0])
 		}

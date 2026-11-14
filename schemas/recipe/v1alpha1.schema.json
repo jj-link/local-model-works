@@ -119,7 +119,7 @@
     "templateString": {
       "type": "string",
       "maxLength": 8192,
-      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address)|fabric\\.(?:address|node_address|interface|rdma_device|gid_index)|cluster\\.node\\.(?:0|[1-9][0-9]*)\\.(?:id|address|fabric\\.(?:node_addr|interface|rdma_device|gid_index))|artifact\\.[a-z0-9][a-z0-9_]*\\.path|setting\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
+      "pattern": "^(\\$\\{(?:node\\.(?:id|rank|address|port)|fabric\\.(?:address|node_address|interface|rdma_device|gid_index)|cluster\\.node\\.(?:0|[1-9][0-9]*)\\.(?:id|address|fabric\\.(?:node_addr|interface|rdma_device|gid_index))|artifact\\.[a-z0-9][a-z0-9_]*\\.path|setting\\.[a-z0-9][a-z0-9_]*)\\}|[^${])*$"
     },
     "upstreamPath": {
       "type": "string",
@@ -140,17 +140,19 @@
       "prefixItems": [{ "allOf": [{ "$ref": "#/$defs/upstreamString" }, { "pattern": "\\S" }] }],
       "items": { "$ref": "#/$defs/upstreamString" }
     },
-    "upstreamContainers": {
+    "upstreamContainerList": {
       "type": "array",
-      "minItems": 1,
       "maxItems": 64,
       "uniqueItems": true,
       "items": { "allOf": [{ "$ref": "#/$defs/upstreamString" }, { "minLength": 1, "pattern": "^(?:[A-Za-z0-9]|\\$\\{[^}]+\\})(?:[A-Za-z0-9_.-]|\\$\\{[^}]+\\})*$" }] }
     },
+    "upstreamContainers": { "allOf": [{ "$ref": "#/$defs/upstreamContainerList" }, { "minItems": 1 }] },
     "upstream": {
       "type": "object",
       "additionalProperties": false,
       "required": ["start", "stop", "containers"],
+      "if": { "not": { "required": ["status"] } },
+      "then": { "properties": { "containers": { "minItems": 1 } } },
       "properties": {
         "configuration": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/sourceConfigurationFile" } },
         "install": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/upstreamArgv" } },
@@ -163,7 +165,8 @@
         },
         "start": { "$ref": "#/$defs/upstreamArgv" },
         "stop": { "$ref": "#/$defs/upstreamArgv" },
-        "containers": { "$ref": "#/$defs/upstreamContainers" },
+        "status": { "$ref": "#/$defs/upstreamArgv", "description": "Authored liveness query run on the coordinator (exit 0: serving, otherwise not running). Runtime state then comes from it instead of Docker, and containers may be empty for sources that run plain host processes." },
+        "containers": { "$ref": "#/$defs/upstreamContainerList" },
         "coordinatorRank": { "type": "integer", "const": 0, "description": "The authored coordinator runs on the API head (rank zero); other ranks independently observe it." },
         "containersByRank": {
           "type": "object",

@@ -72,6 +72,12 @@ type upstreamRuntime struct {
 	allowExecution bool
 	mu             sync.Mutex
 	records        map[string]*upstreamRecord
+	// probes hold background status results of started status-observed
+	// installations, keyed by record ID and guarded by mu.
+	probes         map[string]*upstreamProbe
+	statusTimeout  time.Duration
+	statusInterval time.Duration
+	statusGrace    time.Duration
 }
 
 // WithUpstream always retains installation inspection and ownership. Host lifecycle
@@ -88,7 +94,8 @@ func WithUpstream(base Runtime, persistentRoot string, allowExecution bool) (Run
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
-	r := &upstreamRuntime{Runtime: base, root: root, allowExecution: allowExecution && goruntime.GOOS == "linux", records: make(map[string]*upstreamRecord)}
+	r := &upstreamRuntime{Runtime: base, root: root, allowExecution: allowExecution && goruntime.GOOS == "linux", records: make(map[string]*upstreamRecord),
+		probes: make(map[string]*upstreamProbe), statusTimeout: upstreamStatusTimeout, statusInterval: upstreamStatusInterval, statusGrace: upstreamStatusGrace}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -184,6 +191,9 @@ func validateUpstream(spec *ContainerSpec) error {
 		return fmt.Errorf("upstream.configuration_invalid: %w", err)
 	}
 	commands := append([][]string{u.Start, u.Stop}, u.Install...)
+	if u.Status != nil {
+		commands = append(commands, u.Status)
+	}
 	for _, argv := range commands {
 		if len(argv) == 0 || argv[0] == "" {
 			return fmt.Errorf("upstream.lifecycle_incomplete")
@@ -194,8 +204,18 @@ func validateUpstream(spec *ContainerSpec) error {
 			}
 		}
 	}
+	if u.ObserveOnly && len(u.Status) != 0 {
+		return fmt.Errorf("upstream.observer_status_invalid: only the coordinator queries status")
+	}
 	if len(u.Containers) == 0 {
-		return fmt.Errorf("upstream.observed_containers_required")
+		switch {
+		case len(u.AuxiliaryContainers) != 0:
+			return fmt.Errorf("upstream.observed_containers_required")
+		case u.ObserveOnly && (len(u.Install) != 0 || len(u.Configuration) != 0):
+			return fmt.Errorf("upstream.placement_holder_executes: a rank without observed containers only holds placement")
+		case !u.ObserveOnly && len(u.Status) == 0:
+			return fmt.Errorf("upstream.observed_containers_required")
+		}
 	}
 	seen := make(map[string]bool)
 	for name := range upstreamContainerNames(u) {
@@ -486,7 +506,7 @@ func (r *upstreamRuntime) Start(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if r.jobAlive(rec) || info.State == "running" {
+	if r.jobAlive(rec) || info.State == "running" || r.startedService(rec) {
 		return nil
 	}
 	if rec.Armed {
@@ -512,15 +532,18 @@ func (r *upstreamRuntime) Start(ctx context.Context, id string) error {
 		return err
 	}
 	if rec.Spec.Upstream.ObserveOnly {
+		// A placement holder has nothing to set up or observe: arming records
+		// only that the coordinator may now drive this host.
+		holder := placementHolder(rec.Spec.Upstream)
 		setup := len(rec.Spec.Upstream.Install) != 0 || len(rec.Spec.Upstream.Configuration) != 0
-		if !setup {
+		if !setup && !holder {
 			if _, err := os.Stat(filepath.Join(rec.Workspace, "configuration-state.json")); err == nil {
 				setup = true
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
-		if docker, ok := r.Runtime.(*dockerRuntime); ok {
+		if docker, ok := r.Runtime.(*dockerRuntime); ok && !holder {
 			socket := strings.TrimPrefix(docker.cli.DaemonHost(), "unix://")
 			if socket != "/var/run/docker.sock" && socket != "/run/docker.sock" {
 				return fmt.Errorf("upstream.observer_custom_daemon_unsupported: coordinator remote Docker endpoint cannot be bound by this observer")
@@ -835,6 +858,7 @@ func (r *upstreamRuntime) Remove(ctx context.Context, id string, force bool) err
 		}
 	}
 	rec.Removed, rec.Armed = true, false
+	delete(r.probes, rec.ID)
 	return r.save(rec)
 }
 
@@ -935,6 +959,27 @@ func (r *upstreamRuntime) inspect(ctx context.Context, rec *upstreamRecord) (*Co
 		}
 		if r.currentOwner(name, ci.ID) != rec && rec.Job != nil && !rec.Stopped && !r.jobAlive(rec) {
 			info.Error = "upstream.container_identity_changed: " + name
+		}
+	}
+	if len(rec.Spec.Upstream.Status) != 0 {
+		// Without container identities the authored status query decides
+		// liveness, and only for the service this installation's start launched.
+		if !rec.Stopped && rec.Job != nil && rec.Job.Operation == "start" && status.Done && status.Error == "" {
+			result, failing := r.statusObservation(rec)
+			switch {
+			case result == nil:
+				allRunning, info.State = false, "starting"
+			case result.running():
+			case failing < r.statusGrace:
+				// Authored supervisors restart failed engines themselves: a
+				// bounded recovery window is not yet a terminal exit.
+				allRunning, info.State, info.ExitCode = false, "restarting", result.ExitCode
+			default:
+				allRunning, info.ExitCode = false, result.ExitCode
+				info.Error = "upstream.status_not_running: " + result.describe()
+			}
+		} else {
+			allRunning = false
 		}
 	}
 	if info.Error == "" && allRunning && (rec.Stopped || rec.Job == nil || rec.Job.Operation == "start") {
@@ -1305,6 +1350,18 @@ func (r *upstreamRuntime) reusableWorkspace(spec *ContainerSpec) string {
 
 func (r *upstreamRuntime) inspectObserver(ctx context.Context, rec *upstreamRecord) (*ContainerInfo, error) {
 	info := &ContainerInfo{ID: rec.ID, Name: rec.Spec.Name, State: "created", Labels: rec.Spec.Labels}
+	if placementHolder(rec.Spec.Upstream) {
+		// Nothing local to observe: the reservation follows the coordinator's
+		// dispatch, so health is the coordinator's status and readiness.
+		switch {
+		case rec.Stopped:
+			info.State = "exited"
+		case rec.Armed:
+			info.State = "running"
+		}
+		info.Status = info.State
+		return info, nil
+	}
 	if rec.Armed {
 		info.State = "observing"
 	}

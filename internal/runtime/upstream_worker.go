@@ -269,8 +269,22 @@ func executeUpstreamJob(ctx context.Context, base Runtime, dir string, request *
 				return fmt.Errorf("upstream.stop_incomplete: %s", name)
 			}
 		}
+		// Without container identities, teardown is proven by the authored
+		// status query no longer reporting a running service.
+		if argv := request.Spec.Upstream.Status; len(argv) != 0 {
+			if result := runUpstreamStatus(ctx, argv, working, environment, upstreamStatusTimeout); result.running() {
+				return fmt.Errorf("upstream.stop_incomplete: %s still reports a running service", argv[0])
+			}
+		}
 		status.Phase = "exited"
 		return nil
+	}
+	// Without container identities, the status query is the ownership
+	// preflight: never build over or adopt a service this start did not launch.
+	if argv := request.Spec.Upstream.Status; request.Operation == "start" && len(argv) != 0 {
+		if result := runUpstreamStatus(ctx, argv, working, environment, upstreamStatusTimeout); result.running() {
+			return fmt.Errorf("upstream.foreign_service: %s reports a running service this installation did not start; stop it before starting this deployment", argv[0])
+		}
 	}
 	installed := filepath.Join(request.Installation, "installed.json")
 	var installedRevision string

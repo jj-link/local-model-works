@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ const (
 	TemplNodeRank         = "${node.rank}"
 	TemplNodeAddress      = "${node.address}"
 	TemplNodeAccelerators = "${node.accelerators}"
+	TemplNodePort         = "${node.port}"
 	TemplFabricAddr       = "${fabric.address}"
 	TemplFabricNodeAddr   = "${fabric.node_address}"
 	TemplFabricInterface  = "${fabric.interface}"
@@ -233,11 +235,15 @@ type Workload struct {
 
 // UpstreamExecution preserves the repository's authored lifecycle commands.
 // Commands run with host authority, not in an LMW-managed container sandbox.
+// Status, when present, is the authored liveness query (exit 0: serving);
+// runtime state then comes from it instead of Docker, and Containers may be
+// empty for processes the source runs outside containers.
 type UpstreamExecution struct {
 	Install             [][]string          `json:"install,omitempty"`
 	InstallByRank       map[int][][]string  `json:"installByRank,omitempty"`
 	Start               []string            `json:"start"`
 	Stop                []string            `json:"stop"`
+	Status              []string            `json:"status,omitempty"`
 	Containers          []string            `json:"containers"`
 	CoordinatorRank     *int                `json:"coordinatorRank,omitempty"`
 	ContainersByRank    map[int][]string    `json:"containersByRank,omitempty"`
@@ -247,6 +253,60 @@ type UpstreamExecution struct {
 	EnvFormat           string              `json:"envFormat,omitempty"`
 	LogFile             string              `json:"logFile,omitempty"`
 	Configuration       []sourceconfig.File `json:"configuration,omitempty"`
+}
+
+// PlacementHolder reports whether rank only holds placement and leases for its
+// coordinator: a non-coordinator rank with no authored containers to observe.
+// The coordinator's source drives that host remotely; LMW runs nothing there.
+func (u *UpstreamExecution) PlacementHolder(rank int) bool {
+	if u.CoordinatorRank == nil || *u.CoordinatorRank == rank {
+		return false
+	}
+	names := u.Containers
+	if byRank, ok := u.ContainersByRank[rank]; ok {
+		names = byRank
+	}
+	return len(names) == 0
+}
+
+// RestrictToRankRole drops execution a resolved rank never performs. Only the
+// coordinator queries status; a placement holder also runs no setup and needs
+// no source edits. Call after ContainersByRank and InstallByRank resolution.
+func (u *UpstreamExecution) RestrictToRankRole(rank int) {
+	if u.CoordinatorRank == nil || *u.CoordinatorRank == rank {
+		return
+	}
+	u.Status = nil
+	if len(u.Containers) == 0 {
+		u.Install, u.Configuration = nil, nil
+	}
+}
+
+// BindsNodePort reports whether the workload hands ${node.port} to its
+// listener. Host-networked upstream scripts can only move their port through
+// that binding; managed containers are remapped when published.
+func (w *Workload) BindsNodePort() bool {
+	values := append([]string{}, w.Args...)
+	for _, value := range w.Env {
+		values = append(values, value)
+	}
+	if u := w.Upstream; u != nil {
+		values = append(append(append(values, u.Start...), u.Stop...), u.Status...)
+		for _, command := range u.Install {
+			values = append(values, command...)
+		}
+		for _, commands := range u.InstallByRank {
+			for _, command := range commands {
+				values = append(values, command...)
+			}
+		}
+		for _, file := range u.Configuration {
+			for _, edit := range file.Edits {
+				values = append(values, edit.Template)
+			}
+		}
+	}
+	return slices.Contains(TemplateVars(values...), TemplNodePort)
 }
 
 // HostPreparation declares the narrow host-memory controls LMW applies after
@@ -462,6 +522,7 @@ type RenderContext struct {
 	NodeRank         int
 	NodeAddress      string
 	NodeAccelerators string // comma-separated UUIDs from this node's reviewed placement
+	NodePort         int32  // host port this node's placement serves on
 	FabricAddr       string
 	FabricNodeAddr   string
 	FabricInterface  string
@@ -493,6 +554,11 @@ func (c RenderContext) Resolve(v string) (string, bool) {
 		return c.NodeAddress, true
 	case TemplNodeAccelerators:
 		return c.NodeAccelerators, c.NodeAccelerators != ""
+	case TemplNodePort:
+		if c.NodePort <= 0 {
+			return "", false
+		}
+		return strconv.Itoa(int(c.NodePort)), true
 	case TemplFabricAddr:
 		return c.FabricAddr, true
 	case TemplFabricNodeAddr:

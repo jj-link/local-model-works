@@ -1,0 +1,84 @@
+apiVersion: localmodelworks/v1alpha1
+kind: Recipe
+metadata:
+  name: deepseek-v41-flash-dsgb10-spark-tp4
+  version: 1.0.0
+  model: DeepSeek-V4.1-Flash-1017
+  engine: dsgb10
+  description: >-
+    Runs the original pinned DSGB10 engine/server/service.sh on the head of
+    four 128 GB GB10 Sparks on one switched RoCE v2 subnet. Setup builds the
+    CUDA engine (CMake, nvcc at /usr/local/cuda-13.0) and the Rust front-end
+    (cargo) in the checkout. Start launches the authored supervisor, which
+    SSHes to ranks 1-3 from the operator's fleet file, starts dsgb10_rank on
+    every Spark and dsfront on the head, and returns once it serves. These are
+    plain host processes, not containers: LMW observes the head through
+    service.sh status and the other ranks only hold their placement. Weights,
+    Engram shards, the hash map and cfmlp_cml.bin are prepared out of band at
+    the fleet file's paths; the recipe downloads nothing. Requires cmake,
+    nvcc and cargo on the head agent's PATH, an unlimited memlock limit for
+    the head agent, noninteractive head-to-worker SSH, and at least 100 GiB
+    available memory on every Spark. LMW removes upstream's API-key
+    requirement with a reviewed source edit; port 8888 serves unauthenticated
+    on 127.0.0.1 and the head's LMW address. Stop ends the supervisor, which
+    stops every rank. Port 8888 conflicts with other cluster servers.
+  # Upstream: MIT (pico-dgx-ds4, a fork of blaesus/dsgx10); retain LICENSE and NOTICE.
+  license: MIT
+  source:
+    url: https://github.com/Picom-code/pico-dgx-ds4
+    revision: "f2117916f2a4cac0f79fa41680ebd39bf5d42b51"
+    path: ds41f-4xgx10-switchless
+compatibility:
+  nodeCount: 4
+  accelerator:
+    vendor: nvidia
+    architectures:
+      - sm_121
+    count: 1
+  fabric:
+    transport: roce
+    sharedGIDIndex: true
+artifacts: []
+parameters:
+  - name: fleet_file
+    type: string
+    minLength: 1
+    description: Upstream FLEET; absolute path on the head of the operator's fleet file, whose RANK0-RANK3 entries must name the selected Sparks in placement order (for example /home/jjlink/fleet.conf). The value is not shell-expanded, so ~ is not supported.
+  - name: tokenizer
+    type: string
+    minLength: 1
+    description: Absolute path on the head of the DeepSeek-V4.1-Flash-1017 checkpoint's tokenizer.json, passed to dsfront as --tokenizer. Must not contain spaces.
+  - name: cf_mlp
+    type: string
+    minLength: 1
+    description: Absolute path of cfmlp_cml.bin (tools/stack4), identical on all four Sparks, passed to every rank as DSGB10_CF_MLP. Must not contain spaces.
+workloads:
+  - ranks: [0, 1, 2, 3]
+    upstream:
+      coordinatorRank: 0
+      install:
+        - ["cmake", "-S", "engine", "-B", "engine/build", "-DCMAKE_BUILD_TYPE=Release"]
+        - ["cmake", "--build", "engine/build", "-j4"]
+        - ["cargo", "build", "--release", "-j4", "--manifest-path", "frontend/Cargo.toml"]
+      start: ["./engine/server/service.sh", "start"]
+      stop: ["./engine/server/service.sh", "stop"]
+      status: ["./engine/server/service.sh", "status"]
+      containers: []
+    env:
+      FLEET: "${setting.fleet_file}"
+      DSGB10_PROD: "1"
+      DSGB10_PORT: "8888"
+      DSGB10_ADDR: "127.0.0.1 ${node.address}"
+      DSGB10_FRONT_ARGS: "--tokenizer ${setting.tokenizer} --encoding 1017 --model-name deepseek-v4.1-flash"
+      DSGB10_ENGINE_ARGS: "--max-ctx 1048576 --slots 16 --big-slots 4 --setenv DSGB10_BUDGET=1 --setenv DSGB10_OEA=4,12,9 --setenv DSGB10_DRAFT1=6 --setenv DSGB10_WIDE=64 --setenv DSGB10_WIDE_COST=24,2.2,57,1.1 --draft-head4 --draft-markov8 --setenv DSGB10_HEAD4_C1=1 --setenv DSGB10_CF_MLP=${setting.cf_mlp} --setenv DSGB10_CF_ALPHA=1.0 --setenv DSGB10_CERT=1 --setenv DSGB10_RING_DIRECT=2"
+    permissions: [host.upstream-exec]
+    ports:
+      - container: 8888
+        host: 8888
+        protocol: tcp
+    readiness:
+      httpGet:
+        method: GET
+        path: /health
+        port: 8888
+      timeoutSeconds: 5

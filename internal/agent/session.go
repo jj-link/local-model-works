@@ -257,7 +257,7 @@ func (a *Agent) probeInventory() *agentv1.Inventory {
 	}
 	out.ProtocolFeatures = []string{downloads.ProtocolFeature, recipe.InstallationUpdateProtocolFeature}
 	if runtime.UpstreamEnabled(a.rt) {
-		out.ProtocolFeatures = append(out.ProtocolFeatures, runtime.UpstreamProtocolFeature, runtime.UpstreamConfigurationProtocolFeature, workerssh.ProtocolFeature)
+		out.ProtocolFeatures = append(out.ProtocolFeatures, runtime.UpstreamProtocolFeature, runtime.UpstreamConfigurationProtocolFeature, runtime.UpstreamStatusProtocolFeature, workerssh.ProtocolFeature)
 	}
 	out.DownloadRoots = &agentv1.DownloadRoots{RecipeRoot: filepath.Join(a.cfg.StateRoot, "recipes"), Platform: goruntime.GOOS + "/" + goruntime.GOARCH}
 	if storage, err := a.rt.ImageStorage(ctx); err == nil {

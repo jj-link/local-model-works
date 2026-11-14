@@ -13,12 +13,15 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jj-link/local-model-works/internal/cjson"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/downloads"
 	"github.com/jj-link/local-model-works/internal/inventory"
+	"github.com/jj-link/local-model-works/internal/nodes"
+	"github.com/jj-link/local-model-works/internal/recipe"
 )
 
 // Sentinel errors; the API layer maps these to status codes.
@@ -42,6 +45,88 @@ type Placement struct {
 	AcceleratorUUID  string   `json:"accelerator_uuid,omitempty"`
 	Accelerators     []string `json:"accelerators,omitempty"` // full set for multi-GPU ranks
 	Container        string   `json:"container,omitempty"`
+	// Port is the host port this rank serves the workload's first declared
+	// port on, frozen at plan time. Zero for rows planned before it existed.
+	Port int32 `json:"port,omitempty"`
+}
+
+// declaredServingPort is the host port the workload's first port declares.
+func declaredServingPort(w *recipe.Workload) int32 {
+	if len(w.Ports) == 0 {
+		return 0
+	}
+	if w.Ports[0].Host != 0 {
+		return int32(w.Ports[0].Host)
+	}
+	return int32(w.Ports[0].Container)
+}
+
+// defaultServingPort is the recipe's own rule: native ranks offset the
+// declared port by rank; source-owned procedures publish it unchanged.
+func defaultServingPort(w *recipe.Workload, rank int32) int32 {
+	base := declaredServingPort(w)
+	if base == 0 || w.Upstream != nil {
+		return base
+	}
+	return base + rank
+}
+
+// plannedServingPort selects the port a plan freezes for one rank. Only a
+// single-node workload follows its node's serve-port label, and a source-owned
+// procedure only when it binds ${node.port}. A replan of an existing
+// deployment passes its frozen ports; rows frozen before ports existed keep
+// the recipe rule rather than adopting a later label.
+func plannedServingPort(w *recipe.Workload, nodeCount int, rank int32, nodeLabels string, frozen map[int32]int32) int32 {
+	if len(w.Ports) == 0 {
+		return 0
+	}
+	if frozen != nil {
+		if port := frozen[rank]; port != 0 {
+			return port
+		}
+	} else if nodeCount == 1 && (w.Upstream == nil || w.BindsNodePort()) {
+		if port, ok := nodes.LabelServePort(nodeLabels); ok {
+			return port
+		}
+	}
+	return defaultServingPort(w, rank)
+}
+
+// servingPort is the frozen serving host port, or the recipe rule for rows
+// planned before ports were frozen.
+func (p *Placement) servingPort(w *recipe.Workload) int32 {
+	if p.Port != 0 {
+		return p.Port
+	}
+	return defaultServingPort(w, p.Rank)
+}
+
+// frozenPorts maps an existing deployment's ranks to their frozen serving
+// ports. The map is never nil, so a replan cannot adopt a node label.
+func frozenPorts(placements []Placement) map[int32]int32 {
+	ports := make(map[int32]int32, len(placements))
+	for _, placement := range placements {
+		ports[placement.Rank] = placement.Port
+	}
+	return ports
+}
+
+// probeAddress resolves a recipe probe against the recorded endpoint. A probe
+// of the declared serving port targets the deployment's frozen serving port;
+// any other probe port is used as declared.
+func probeAddress(endpoint string, probePort int, w *recipe.Workload, placement string) string {
+	if probePort == 0 {
+		return endpoint
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	port := int32(probePort)
+	if head := ParsePlacementSet(placement).EntryFor(0); head != nil && port == declaredServingPort(w) {
+		port = head.servingPort(w)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(port)))
 }
 
 // acceleratorBinding preserves the reviewed group's order and never substitutes
@@ -190,6 +275,9 @@ type PlanRequest struct {
 	LaunchProfileID string            `json:"launch_profile_id,omitempty"`
 	Variants        map[string]string `json:"variants,omitempty"`
 	Parameters      map[string]any    `json:"parameters,omitempty"`
+	// frozenPorts carries an existing deployment's rank -> serving port into
+	// a restart replan; nil plans fresh ports. Never decoded from requests.
+	frozenPorts map[int32]int32
 }
 
 // CreateRequest creates from a validated plan (openapi).

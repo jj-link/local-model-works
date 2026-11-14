@@ -135,6 +135,15 @@ func TestUpstreamRejectsUnsafeOrMixedLifecycle(t *testing.T) {
 		{"empty-start", func(_, _ map[string]any, u map[string]any) { u["start"] = []string{} }},
 		{"blank-executable", func(_, _ map[string]any, u map[string]any) { u["start"] = []string{" "} }},
 		{"missing-containers", func(_, _ map[string]any, u map[string]any) { delete(u, "containers") }},
+		{"empty-containers-without-status", func(_, _ map[string]any, u map[string]any) { u["containers"] = []string{} }},
+		{"missing-containers-with-status", func(_, _ map[string]any, u map[string]any) {
+			delete(u, "containers")
+			u["status"] = []string{"./status.sh"}
+		}},
+		{"empty-status", func(_, _ map[string]any, u map[string]any) { u["containers"], u["status"] = []string{}, []string{} }},
+		{"status-traversal", func(_, _ map[string]any, u map[string]any) {
+			u["containers"], u["status"] = []string{}, []string{"bash", "../status.sh"}
+		}},
 		{"container-option", func(_, _ map[string]any, u map[string]any) { u["containers"] = []string{"--all"} }},
 		{"duplicate-container", func(_, _ map[string]any, u map[string]any) { u["containers"] = []string{"server", "server"} }},
 		{"command-control", func(_, _ map[string]any, u map[string]any) { u["stop"] = []string{"stop.sh\x00"} }},
@@ -190,6 +199,83 @@ func upstreamTestExtension() map[string]any {
 		"command":      []string{"true"},
 		"args":         []string{},
 		"outputSchema": map[string]any{},
+	}
+}
+
+func TestUpstreamStatusObservationWithoutContainers(t *testing.T) {
+	validator, err := NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator := 0
+	statusManifest := func() *Manifest {
+		manifest := upstreamValidationManifest()
+		manifest.Compatibility.NodeCount = 3
+		workload := &manifest.Workloads[0]
+		workload.Ranks = []int{0, 1, 2}
+		workload.Upstream.CoordinatorRank = &coordinator
+		workload.Upstream.Containers = []string{}
+		workload.Upstream.Status = []string{"./service.sh", "status", "${setting.port}"}
+		return manifest
+	}
+	findings := func(manifest *Manifest) []Diagnostic {
+		t.Helper()
+		doc, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		diagnostics, err := validator.Validate(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return diagnostics
+	}
+	manifest := statusManifest()
+	if diagnostics := findings(manifest); len(diagnostics) != 0 {
+		t.Fatalf("status-observed workload without containers rejected: %+v", diagnostics)
+	}
+	upstream := manifest.Workloads[0].Upstream
+	if upstream.PlacementHolder(0) || !upstream.PlacementHolder(1) || !upstream.PlacementHolder(2) {
+		t.Fatal("only non-coordinator ranks without containers hold placement")
+	}
+	upstream.ContainersByRank = map[int][]string{2: {"rank-two"}}
+	if upstream.PlacementHolder(2) {
+		t.Fatal("a rank with observed containers is not a placement holder")
+	}
+
+	for name, tc := range map[string]struct {
+		mutate func(*UpstreamExecution)
+		code   string
+	}{
+		"auxiliary without primary": {func(u *UpstreamExecution) { u.AuxiliaryContainers = []string{"builder"} }, "recipe.upstream-observation"},
+		"setup on placement holder": {func(u *UpstreamExecution) { u.InstallByRank = map[int][][]string{1: {{"./build.sh"}}} }, "recipe.upstream-rank"},
+		"undeclared status setting": {func(u *UpstreamExecution) { u.Status = []string{"./service.sh", "${setting.missing}"} }, "recipe.template"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			manifest := statusManifest()
+			tc.mutate(manifest.Workloads[0].Upstream)
+			diagnostics := findings(manifest)
+			if len(diagnostics) == 0 || diagnostics[0].Code != tc.code {
+				t.Fatalf("diagnostics = %+v, want %s", diagnostics, tc.code)
+			}
+		})
+	}
+	// An explicitly empty setup override documents that the holder runs nothing.
+	manifest = statusManifest()
+	manifest.Workloads[0].Upstream.InstallByRank = map[int][][]string{1: {}}
+	if diagnostics := findings(manifest); len(diagnostics) != 0 {
+		t.Fatalf("empty holder setup rejected: %+v", diagnostics)
+	}
+
+	// Each rank renders only what it performs.
+	execution := *statusManifest().Workloads[0].Upstream
+	execution.RestrictToRankRole(0)
+	if len(execution.Status) == 0 || len(execution.Install) == 0 {
+		t.Fatal("coordinator lost its status query or setup")
+	}
+	execution.RestrictToRankRole(1)
+	if execution.Status != nil || execution.Install != nil || execution.Configuration != nil {
+		t.Fatalf("placement holder retains execution: %+v", execution)
 	}
 }
 

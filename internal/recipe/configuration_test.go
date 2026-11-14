@@ -106,6 +106,45 @@ func TestConfigurationTemplatesValidateAndRequireReviewedBindings(t *testing.T) 
 	}
 }
 
+func TestNodePortTemplateValidatesAndRequiresPlacementPort(t *testing.T) {
+	validator, err := NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := upstreamValidationManifest()
+	if manifest.Workloads[0].Env == nil {
+		manifest.Workloads[0].Env = map[string]string{}
+	}
+	manifest.Workloads[0].Env["PORT"] = TemplNodePort
+	manifest.Workloads[0].Upstream.Configuration = []sourceconfig.File{{
+		Path: "start.sh", SHA256: strings.Repeat("a", 64),
+		Edits: []sourceconfig.Edit{{Start: 0, End: 0, Template: TemplNodePort, Format: "shell"}},
+	}}
+	validate := func() bool {
+		t.Helper()
+		document, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, findings, err := validator.ValidateStrict(document)
+		return err == nil && len(findings) == 0
+	}
+	if !validate() {
+		t.Fatal("placement port template rejected in env and source edits")
+	}
+	manifest.Workloads[0].Env["PORT"] = "${node.ports}"
+	if validate() {
+		t.Fatal("misspelled node template accepted")
+	}
+	if _, err := manifest.Render(TemplNodePort, RenderContext{Settings: map[string]any{"node.port": 9000, "port": 9000}}); err == nil {
+		t.Fatal("settings supplied a missing placement port")
+	}
+	rendered, err := manifest.Render("--port=${node.port}", RenderContext{NodePort: 8003})
+	if err != nil || rendered != "--port=8003" {
+		t.Fatalf("placement port rendered %q, %v", rendered, err)
+	}
+}
+
 func TestSettingsArgumentPoliciesProtectTopologyAndDockerCommand(t *testing.T) {
 	manifest := &Manifest{Parameters: []Parameter{
 		{Name: "engine", Type: "string", Format: "argv", Optional: true, ForbiddenArgs: []string{"--port", "-p", "--node-rank"}},

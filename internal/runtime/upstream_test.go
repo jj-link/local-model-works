@@ -961,6 +961,7 @@ func upstreamFixture(t *testing.T, install string) (string, string) {
 		"recipe/install.sh":    "#!/bin/sh\nset -eu\n" + install + "\n",
 		"recipe/start.sh":      "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$1\" > argv.txt\nprintf '%s\\n' \"$VALUE\" > value.txt\nprintf 'started\\n' > started\nprintf '# authored patch\\n' >> tracked.py\nprintf 'start stdout\\n'\nprintf 'start stderr\\n' >&2\n",
 		"recipe/stop.sh":       "#!/bin/sh\nset -eu\nrm -f started\n",
+		"recipe/status.sh":     "#!/bin/sh\ntest -f started || test -f stuck\n",
 		"recipe/tracked.py":    "# exact pinned source\n",
 		"recipe/env.template":  "VALUE=default\nUNCHANGED=upstream-default\n",
 		"outside-source.asset": "complete repository asset\n",

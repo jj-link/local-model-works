@@ -2,7 +2,7 @@ apiVersion: localmodelworks/v1alpha1
 kind: Recipe
 metadata:
   name: qwen38-flash-next-spark-tp1
-  version: 2.3.0
+  version: 2.4.0
   model: qwen3.8-flash-next
   engine: vllm
   description: >-
@@ -17,6 +17,7 @@ metadata:
     Bash, Python3, Docker/NVIDIA GPU access, curl and the authored Linux
     utilities. No local serving launcher, memory cap or watchdog replaces
     upstream. Source pinning does not pin upstream image/model downloads.
+    PORT follows the node's serve-port label (8000 when unlabelled).
   license: AGPL-3.0-or-later AND Apache-2.0
   source:
     url: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark
@@ -44,7 +45,7 @@ workloads:
       envFormat: shell
       logFile: logs/memwatch-vllm-fn-tp1.log
     env:
-      PORT: "8000"
+      PORT: "${node.port}"
     permissions: [host.upstream-exec]
     ports:
       - container: 8000

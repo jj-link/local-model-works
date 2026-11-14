@@ -224,6 +224,50 @@ func TestRecipeUpdateRejectsInjectedTargetContracts(t *testing.T) {
 	}
 }
 
+func TestRecipeUpdateReconstructsStatusObservedRoles(t *testing.T) {
+	coordinator := 0
+	manifest := &recipe.Manifest{}
+	manifest.Metadata.Source = &recipe.Source{URL: "https://example.invalid/source.git", Revision: strings.Repeat("a", 40), Path: "service"}
+	manifest.Compatibility.NodeCount = 2
+	manifest.Workloads = []recipe.Workload{{Ranks: []int{0, 1}, Permissions: []string{"host.upstream-exec"}, Upstream: &recipe.UpstreamExecution{
+		Install: [][]string{{"cargo", "build"}}, Start: []string{"./service.sh", "start"}, Stop: []string{"./service.sh", "stop"},
+		Status: []string{"./service.sh", "status"}, Containers: []string{}, CoordinatorRank: &coordinator,
+	}}}
+	doc, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, err := recipe.PackManifest(doc, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := manifest.Metadata.Source
+	input := func(rank int, upstream runtime.UpstreamSpec) recipe.InstallationUpdateSpec {
+		upstream.SourceURL, upstream.Revision, upstream.SourcePath, upstream.Approved = source.URL, source.Revision, source.Path, true
+		upstream.Start, upstream.Stop, upstream.Containers = manifest.Workloads[0].Upstream.Start, manifest.Workloads[0].Upstream.Stop, []string{}
+		spec := runtime.ContainerSpec{Name: "installation-" + string(rune('0'+rank)), Labels: runtime.ManagedLabels("deployment", "run", packed.ManifestDigest, "1", rank, "serving"), Upstream: &upstream}
+		raw, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return recipe.InstallationUpdateSpec{Spec: raw, Workload: 0, Rank: rank}
+	}
+	head := runtime.UpstreamSpec{Install: manifest.Workloads[0].Upstream.Install, Status: manifest.Workloads[0].Upstream.Status}
+	holder := runtime.UpstreamSpec{ObserveOnly: true}
+	if _, err := validateInstallationUpdate(manifest, packed.ManifestDigest, []recipe.InstallationUpdateSpec{input(0, head), input(1, holder)}); err != nil {
+		t.Fatalf("status coordinator and placement holder not reconstructed: %v", err)
+	}
+	for name, spec := range map[string]recipe.InstallationUpdateSpec{
+		"coordinator without status": input(0, runtime.UpstreamSpec{Install: head.Install}),
+		"holder querying status":     input(1, runtime.UpstreamSpec{ObserveOnly: true, Status: head.Status}),
+		"holder running setup":       input(1, runtime.UpstreamSpec{ObserveOnly: true, Install: head.Install}),
+	} {
+		if _, err := validateInstallationUpdate(manifest, packed.ManifestDigest, []recipe.InstallationUpdateSpec{spec}); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}
+
 func TestRecipeUpdateSupportsNativePackageWithoutUpstreamSpecs(t *testing.T) {
 	manifest := &recipe.Manifest{Workloads: []recipe.Workload{{Image: recipe.Image{Reference: "native-image"}}}}
 	doc, err := json.Marshal(manifest)

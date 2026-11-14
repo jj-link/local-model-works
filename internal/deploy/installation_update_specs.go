@@ -121,8 +121,17 @@ func (s *Service) installationUpdateSpecs(ctx context.Context, nodeID, targetDig
 					input.Parameters[name] = value
 				}
 			}
-			if placement := persisted.EntryFor(rank); placement != nil && placement.acceleratorBinding() != "" {
+			placement := persisted.EntryFor(rank)
+			if placement == nil {
+				placement = &Placement{NodeID: nodeID, Rank: rank}
+			}
+			if placement.acceleratorBinding() != "" {
 				input.Bindings[recipe.TemplNodeAccelerators] = placement.acceleratorBinding()
+			}
+			// The installation keeps serving where it does: its frozen port, or
+			// the old recipe's port for rows planned before ports were frozen.
+			if port := placement.servingPort(oldWorkload); port != 0 {
+				input.Bindings[recipe.TemplNodePort] = strconv.Itoa(int(port))
 			}
 			for _, peer := range persisted.Upstream {
 				input.Bindings[fmt.Sprintf("${cluster.node.%d.id}", peer.Rank)] = peer.NodeID
@@ -137,7 +146,7 @@ func (s *Service) installationUpdateSpecs(ctx context.Context, nodeID, targetDig
 			spec := runtime.ContainerSpec{
 				Name:     containerName(row.ID, row.RunID.String, rank),
 				Labels:   map[string]string{runtime.LabelManaged: "true", runtime.LabelDeployment: row.ID, runtime.LabelRun: row.RunID.String, runtime.LabelRecipe: targetDigest, runtime.LabelRecipeVersion: recipeVersion(targetDigest), runtime.LabelRank: strconv.Itoa(int(rank)), runtime.LabelModule: "serving"},
-				Upstream: &runtime.UpstreamSpec{SourceURL: target.Metadata.Source.URL, Revision: target.Metadata.Source.Revision, SourcePath: target.Metadata.Source.Path, Install: execution.Install, Start: execution.Start, Stop: execution.Stop, Containers: execution.Containers, AuxiliaryContainers: execution.AuxiliaryContainers, EnvFile: execution.EnvFile, EnvTemplate: execution.EnvTemplate, EnvFormat: execution.EnvFormat, LogFile: execution.LogFile, Approved: true, Configuration: configuration, ObserveOnly: execution.CoordinatorRank != nil && *execution.CoordinatorRank != int(rank)},
+				Upstream: &runtime.UpstreamSpec{SourceURL: target.Metadata.Source.URL, Revision: target.Metadata.Source.Revision, SourcePath: target.Metadata.Source.Path, Install: execution.Install, Start: execution.Start, Stop: execution.Stop, Status: execution.Status, Containers: execution.Containers, AuxiliaryContainers: execution.AuxiliaryContainers, EnvFile: execution.EnvFile, EnvTemplate: execution.EnvTemplate, EnvFormat: execution.EnvFormat, LogFile: execution.LogFile, Approved: true, Configuration: configuration, ObserveOnly: execution.CoordinatorRank != nil && *execution.CoordinatorRank != int(rank)},
 			}
 			keys := make([]string, 0, len(environment))
 			for key := range environment {
@@ -179,6 +188,7 @@ func recoverInstallationBindings(manifest *recipe.Manifest, workload *recipe.Wor
 	execution := workload.Upstream
 	pair(execution.Start, preview.Execution.Start)
 	pair(execution.Stop, preview.Execution.Stop)
+	pair(execution.Status, preview.Execution.Status)
 	names := execution.Containers
 	if byRank, ok := execution.ContainersByRank[int(preview.Rank)]; ok {
 		names = byRank

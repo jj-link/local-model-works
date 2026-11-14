@@ -292,8 +292,15 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 		}
 		checkTempl(w.Upstream.Start, p+".upstream.start", nil, &w)
 		checkTempl(w.Upstream.Stop, p+".upstream.stop", nil, &w)
+		checkTempl(w.Upstream.Status, p+".upstream.status", nil, &w)
 		checkTempl(w.Upstream.Containers, p+".upstream.containers", nil, &w)
 		checkTempl(w.Upstream.AuxiliaryContainers, p+".upstream.auxiliaryContainers", nil, &w)
+		if len(w.Upstream.Containers) == 0 && len(w.Upstream.Status) == 0 {
+			add("recipe.upstream-observation", "a source-owned workload needs authored containers or a status command to observe", p+".upstream.containers")
+		}
+		if len(w.Upstream.Containers) == 0 && len(w.Upstream.AuxiliaryContainers) != 0 {
+			add("recipe.upstream-observation", "auxiliary containers require primary authored containers", p+".upstream.auxiliaryContainers")
+		}
 		for rank, names := range w.Upstream.ContainersByRank {
 			checkTempl(names, fmt.Sprintf("%s.upstream.containersByRank.%d", p, rank), nil, &w)
 			if !upstreamRankSelected(m, &w, rank) {
@@ -314,6 +321,9 @@ func semanticDiagnostics(m *Manifest) []Diagnostic {
 		for rank, commands := range w.Upstream.InstallByRank {
 			if !upstreamRankSelected(m, &w, rank) {
 				add("recipe.upstream-rank", "install override rank must be selected by this workload", fmt.Sprintf("%s.upstream.installByRank.%d", p, rank))
+			}
+			if len(commands) != 0 && w.Upstream.PlacementHolder(rank) {
+				add("recipe.upstream-rank", "a rank without authored containers only holds placement for the coordinator and runs no setup", fmt.Sprintf("%s.upstream.installByRank.%d", p, rank))
 			}
 			for j, argv := range commands {
 				checkTempl(argv, fmt.Sprintf("%s.upstream.installByRank.%d[%d]", p, rank, j), nil, &w)
@@ -514,7 +524,7 @@ func asNumber(v any) (float64, bool) {
 
 func checkTemplateVar(tv string, m *Manifest, workload *Workload) error {
 	switch tv {
-	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplNodeAccelerators:
+	case TemplNodeID, TemplNodeRank, TemplNodeAddress, TemplNodeAccelerators, TemplNodePort:
 		return nil
 	case TemplFabricAddr, TemplFabricNodeAddr, TemplFabricInterface, TemplFabricRDMADevice, TemplFabricGIDIndex:
 		if !m.HasFabricRequirement() {
