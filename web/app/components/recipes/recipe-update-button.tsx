@@ -86,7 +86,7 @@ export function RecipeUpdateButton({ recipeDigest, repositoryId }: { recipeDiges
         {prepare.isPending ? <p role="status" className="py-4 text-sm text-muted">Checking for updates and existing installations…</p> : null}
         {prepare.isError ? <RecipeError error={prepare.error} retry={() => void check()} /> : null}
         {plan && !runId ? <div className="space-y-4">
-          <p className="text-sm">{plan.up_to_date ? "The latest update is already installed on these devices." : <>Install version <strong>{plan.target_version}</strong> on the following devices:</>}</p>
+          <p className="text-sm">{plan.up_to_date ? "The latest update is already installed on these devices." : plan.installed_devices.length === 0 ? <>Save version <strong>{plan.target_version}</strong>. No devices have this recipe installed.</> : <>Install version <strong>{plan.target_version}</strong> on the following devices:</>}</p>
           <ul className="divide-y divide-rule rounded-lg border border-rule px-4" aria-label="Update devices">
             {plan.installed_devices.map((device) => {
               const versions = [...new Set((reviewed?.repository.versions || []).filter((version) => device.installed_digests.includes(version.recipe.digest)).map((version) => version.recipe.version))];

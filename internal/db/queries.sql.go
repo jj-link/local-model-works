@@ -140,7 +140,7 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (int64
 }
 
 const approveNode = `-- name: ApproveNode :exec
-UPDATE nodes SET status = 'online' WHERE id = ? AND status = 'pending'
+UPDATE nodes SET status = 'offline' WHERE id = ? AND status = 'pending'
 `
 
 func (q *Queries) ApproveNode(ctx context.Context, id string) error {

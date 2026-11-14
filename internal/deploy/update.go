@@ -184,34 +184,31 @@ type RepositoryReplacementSettings struct {
 	WorkloadIndex *int              `json:"workload_index,omitempty"`
 }
 
+// InstallationUpdateTarget is the recipe a package-installation update moves
+// devices to. It may be an unsaved candidate: planning never reads it from
+// the library.
+type InstallationUpdateTarget struct {
+	Digest   string
+	Manifest *recipe.Manifest
+}
+
 // PlanRepositoryInstallationUpdate selects only physical package installations.
-// The library must already contain the freshly prepared current recipe.
-func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, repositoryID, targetDigest string) (*RepositoryUpdatePlan, error) {
+// It writes nothing, so it previews an unsaved candidate exactly as it will be
+// applied. The plan is up to date only when the target is already the
+// repository's selected version and every device has it.
+func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, repositoryID string, target InstallationUpdateTarget) (*RepositoryUpdatePlan, error) {
 	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
 	if err != nil {
 		return nil, err
 	}
-	if repository.CurrentDigest.String != targetDigest {
-		return nil, fmt.Errorf("%w: saved recipe changed", ErrPlanStale)
-	}
-	target, err := s.q.GetRecipe(ctx, targetDigest)
-	if err != nil {
-		return nil, err
-	}
-	manifest, err := recipe.Parse([]byte(target.Manifest))
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.q.GetArtifactByIdentity(ctx, "recipe://"+targetDigest); err != nil {
-		return nil, fmt.Errorf("target package is unavailable: %w", err)
-	}
+	manifest := target.Manifest
 	devices, err := recipe.ListRepositoryInstalledDevices(ctx, s.q, repositoryID)
 	if err != nil {
 		return nil, err
 	}
 	plan := &RepositoryUpdatePlan{
-		RepositoryID: repositoryID, TargetDigest: targetDigest, TargetVersion: target.Version,
-		Ready: true, UpToDate: true,
+		RepositoryID: repositoryID, TargetDigest: target.Digest, TargetVersion: manifest.Metadata.Version,
+		Ready: true, UpToDate: repository.CurrentDigest.String == target.Digest,
 		DeploymentIDs: []string{}, UnchangedDeploymentIDs: []string{},
 		Deployments: []RepositoryUpdateDeployment{}, RunningDeployments: []RepositoryUpdateTarget{},
 		InstalledDevices: []RepositoryUpdateDevice{}, Diagnostics: []diag.Diagnostic{},
@@ -224,14 +221,14 @@ func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, reposito
 			NodeID: device.NodeID, NodeName: device.NodeName, NodeStatus: device.NodeStatus,
 			InstalledDigests: append([]string{}, device.InstalledDigests...),
 		})
-		specs, specErr := s.installationUpdateSpecs(ctx, device.NodeID, targetDigest)
+		specs, specErr := s.installationUpdateSpecs(ctx, device.NodeID, target.Digest, manifest)
 		if specErr != nil {
 			plan.Ready, plan.UpToDate = false, false
 			plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_reconstruction_failed", specErr.Error()))
 		} else {
 			plan.installationSpecs[device.NodeID] = specs
 			if slices.ContainsFunc(manifest.Workloads, func(w recipe.Workload) bool { return w.Upstream != nil }) {
-				prepared, receiptErr := s.installationUpdatePrepared(ctx, repositoryID, targetDigest, device.NodeID, specs)
+				prepared, receiptErr := s.installationUpdatePrepared(ctx, repositoryID, target.Digest, device.NodeID, specs)
 				if receiptErr != nil {
 					return nil, receiptErr
 				}
@@ -255,7 +252,7 @@ func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, reposito
 			plan.Diagnostics = append(plan.Diagnostics, diag.Error("recipe.update_source_authority_unavailable",
 				fmt.Sprintf("node %s needs its existing source-execution authority enabled to prepare retained source installations", device.NodeName)))
 		}
-		if !slices.Contains(device.InstalledDigests, targetDigest) {
+		if !slices.Contains(device.InstalledDigests, target.Digest) {
 			plan.UpToDate = false
 		}
 	}
@@ -263,10 +260,13 @@ func (s *Service) PlanRepositoryInstallationUpdate(ctx context.Context, reposito
 	return plan, nil
 }
 
-// CreateRepositoryInstallationUpdate freezes the confirmed device set. It never
+// CreateRepositoryInstallationUpdate re-plans against target, requires the
+// reviewed plan digest, and only then runs save (which stores and selects an
+// unsaved candidate) before freezing the confirmed device set. Nothing is
+// saved when the plan is stale, not ready, or already up to date. It never
 // derives deployment work from installation state.
-func (s *Service) CreateRepositoryInstallationUpdate(ctx context.Context, repositoryID, targetDigest, planDigest string) (string, error) {
-	plan, err := s.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+func (s *Service) CreateRepositoryInstallationUpdate(ctx context.Context, repositoryID string, target InstallationUpdateTarget, planDigest string, save func(context.Context) error) (string, error) {
+	plan, err := s.PlanRepositoryInstallationUpdate(ctx, repositoryID, target)
 	if err != nil {
 		return "", err
 	}
@@ -279,6 +279,20 @@ func (s *Service) CreateRepositoryInstallationUpdate(ctx context.Context, reposi
 	if plan.UpToDate {
 		return "", fmt.Errorf("%w: installed packages already match the target", ErrNotReady)
 	}
+	if err := save(ctx); err != nil {
+		return "", err
+	}
+	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
+	if err != nil {
+		return "", err
+	}
+	if repository.CurrentDigest.String != target.Digest {
+		return "", fmt.Errorf("%w: saved recipe changed", ErrPlanStale)
+	}
+	if _, err := s.q.GetArtifactByIdentity(ctx, "recipe://"+target.Digest); err != nil {
+		return "", fmt.Errorf("target package is unavailable: %w", err)
+	}
+	targetDigest := target.Digest
 	input := repositoryUpdateRunInput{
 		RepositoryID: repositoryID, TargetDigest: targetDigest,
 		InstalledDevices: plan.InstalledDevices, Plan: *plan, PackageInstallOnly: true,

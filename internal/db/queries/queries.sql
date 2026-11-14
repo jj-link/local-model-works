@@ -91,7 +91,7 @@ UPDATE nodes SET agent_version = ? WHERE id = ?;
 UPDATE nodes SET certificate_expires_at = ? WHERE id = ?;
 
 -- name: ApproveNode :exec
-UPDATE nodes SET status = 'online' WHERE id = ? AND status = 'pending';
+UPDATE nodes SET status = 'offline' WHERE id = ? AND status = 'pending';
 
 -- name: ListPendingNodes :many
 SELECT id, display_name, labels, agent_version, status, last_heartbeat, inventory,

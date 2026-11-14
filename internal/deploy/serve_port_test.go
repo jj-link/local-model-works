@@ -241,7 +241,7 @@ func TestUpstreamSingleNodeBindsLabelledPort(t *testing.T) {
 	h.seedRecipe(t, digest, string(document))
 	updatedPort := func() string {
 		t.Helper()
-		inputs, err := h.svc.installationUpdateSpecs(ctx, "spark", digest)
+		inputs, err := h.svc.installationUpdateSpecs(ctx, "spark", digest, target)
 		if err != nil || len(inputs) != 1 {
 			t.Fatalf("installation update specs = %+v, %v", inputs, err)
 		}

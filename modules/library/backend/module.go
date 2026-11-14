@@ -448,14 +448,16 @@ func (m *Module) getRecipeRepository(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, repository)
 }
 
+// planRecipeRepositoryUpdate previews the upstream update without writing the
+// library: the candidate is compiled, not saved or selected.
 func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
 	repositoryID := chi.URLParam(r, "id")
-	target, err := m.env.Recipes.PrepareRepositoryUpdate(r.Context(), repositoryID)
+	candidate, err := m.env.Recipes.CompileRepositoryUpdate(r.Context(), repositoryID)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
-	plan, err := m.env.Deploy.PlanRepositoryInstallationUpdate(r.Context(), repositoryID, target.Digest)
+	plan, err := m.env.Deploy.PlanRepositoryInstallationUpdate(r.Context(), repositoryID, installationUpdateTarget(candidate))
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
@@ -463,6 +465,8 @@ func (m *Module) planRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Reque
 	httpx.WriteJSON(w, http.StatusOK, repositoryUpdatePlanResponse(plan))
 }
 
+// startRecipeRepositoryUpdate saves and selects the reviewed candidate only
+// after its target and plan digests match the confirmed preview.
 func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		TargetDigest string `json:"target_digest"`
@@ -473,21 +477,29 @@ func (m *Module) startRecipeRepositoryUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	repositoryID := chi.URLParam(r, "id")
-	target, err := m.env.Recipes.PrepareRepositoryUpdate(r.Context(), repositoryID)
+	candidate, err := m.env.Recipes.CompileRepositoryUpdate(r.Context(), repositoryID)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
-	if target.Digest != request.TargetDigest {
-		writeRecipeUpdateError(w, &recipe.PackError{Code: "recipe.update_stale", Message: "the latest saved recipe changed after confirmation"})
+	if candidate.Digest != request.TargetDigest {
+		writeRecipeUpdateError(w, &recipe.PackError{Code: "recipe.update_stale", Message: "the latest upstream recipe changed after confirmation"})
 		return
 	}
-	runID, err := m.env.Deploy.CreateRepositoryInstallationUpdate(r.Context(), repositoryID, request.TargetDigest, request.PlanDigest)
+	save := func(ctx context.Context) error {
+		_, err := m.env.Recipes.SaveRepositoryUpdate(ctx, candidate)
+		return err
+	}
+	runID, err := m.env.Deploy.CreateRepositoryInstallationUpdate(r.Context(), repositoryID, installationUpdateTarget(candidate), request.PlanDigest, save)
 	if err != nil {
 		writeRecipeUpdateError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"run_id": runID})
+}
+
+func installationUpdateTarget(candidate *recipe.RepositoryUpdateCandidate) deploy.InstallationUpdateTarget {
+	return deploy.InstallationUpdateTarget{Digest: candidate.Digest, Manifest: candidate.Manifest}
 }
 
 func (m *Module) planRecipeRepositoryReplacement(w http.ResponseWriter, r *http.Request) {

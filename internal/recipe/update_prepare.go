@@ -16,53 +16,75 @@ import (
 	"github.com/jj-link/local-model-works/internal/sourceconfig"
 )
 
-// PrepareRepositoryUpdate checks upstream and saves an immutable package without
-// contacting devices. The selected saved manifest, not a shipped default, is the
-// customization baseline. Saving uses the existing compare-and-select transaction.
-func (s *Service) PrepareRepositoryUpdate(ctx context.Context, repositoryID string) (Recipe, error) {
+// RepositoryUpdateCandidate is a compiled upstream update that has not been
+// saved. Previewing an update never writes the library; only SaveRepositoryUpdate
+// stores and selects the candidate.
+type RepositoryUpdateCandidate struct {
+	RepositoryID   string
+	PreviousDigest string
+	Digest         string
+	Manifest       *Manifest
+	// Current is true when upstream has no newer revision: Digest is the
+	// already-saved selection and there is nothing to store.
+	Current bool
+	packed  *PackResult
+	source  RecipeSource
+}
+
+// CompileRepositoryUpdate checks upstream and compiles the successor package
+// without contacting devices or writing the library. The selected saved
+// manifest, not a shipped default, is the customization baseline.
+func (s *Service) CompileRepositoryUpdate(ctx context.Context, repositoryID string) (*RepositoryUpdateCandidate, error) {
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
 	status, err := s.checkRepositoryUpdates(ctx, repositoryID, make(map[string]gitHead))
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	if status.State == "error" {
-		return Recipe{}, &PackError{Code: "recipe.update_check_failed", Message: status.Error}
+		return nil, &PackError{Code: "recipe.update_check_failed", Message: status.Error}
 	}
 	if !sha40.MatchString(status.CandidateRevision) {
-		return Recipe{}, &PackError{Code: "recipe.update_check_failed", Message: "upstream did not provide an immutable target revision"}
+		return nil, &PackError{Code: "recipe.update_check_failed", Message: "upstream did not provide an immutable target revision"}
 	}
 	repository, err := s.q.GetRecipeRepository(ctx, repositoryID)
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	previous, err := s.Get(ctx, repository.CurrentDigest.String)
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	currentVersion, err := s.q.GetRecipeRepositoryVersionByDigest(ctx, previous.Digest)
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	if !strings.EqualFold(currentVersion.CommitSha, status.InstalledRevision) {
-		return Recipe{}, &PackError{Code: "recipe.update_stale", Message: "saved source changed during the upstream check"}
+		return nil, &PackError{Code: "recipe.update_stale", Message: "saved source changed during the upstream check"}
 	}
 	if strings.EqualFold(status.InstalledRevision, status.CandidateRevision) {
-		return previous.Recipe, nil
+		manifest, err := Parse(previous.Manifest)
+		if err != nil {
+			return nil, err
+		}
+		return &RepositoryUpdateCandidate{
+			RepositoryID: repositoryID, PreviousDigest: previous.Digest, Digest: previous.Digest,
+			Manifest: manifest, Current: true,
+		}, nil
 	}
 	if s.repositoryCompilers == nil {
-		return Recipe{}, &PackError{Code: RepositoryUnsupportedCode, Message: "no deterministic repository compiler is configured"}
+		return nil, &PackError{Code: RepositoryUnsupportedCode, Message: "no deterministic repository compiler is configured"}
 	}
 	if err := os.MkdirAll(s.packageRoot, 0o755); err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	checkout, err := os.MkdirTemp(s.packageRoot, ".update-source-")
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	defer os.RemoveAll(checkout)
 	if err := runGit(ctx, checkout, "clone", "--no-checkout", "--", repository.SourceUrl, checkout); err != nil {
-		return Recipe{}, fmt.Errorf("update source checkout: %w", err)
+		return nil, fmt.Errorf("update source checkout: %w", err)
 	}
 	compile := func(commit string, baseline *RecipeDetail) (*PackResult, string, error) {
 		if err := runGit(ctx, checkout, "checkout", "--detach", "--force", commit); err != nil {
@@ -86,33 +108,69 @@ func (s *Service) PrepareRepositoryUpdate(ctx context.Context, repositoryID stri
 	}
 	base, _, err := compile(status.InstalledRevision, nil)
 	if err != nil {
-		return Recipe{}, fmt.Errorf("saved source baseline: %w", err)
+		return nil, fmt.Errorf("saved source baseline: %w", err)
 	}
 	target, tree, err := compile(status.CandidateRevision, &previous)
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	saved, err := ReadLayout(filepath.Join(s.packageRoot, strings.TrimPrefix(previous.Digest, "sha256:")))
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	var savedDocument, recordDocument any
 	if err := json.Unmarshal(saved.ConfigJSON, &savedDocument); err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	if err := json.Unmarshal(previous.Manifest, &recordDocument); err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
 	if !reflect.DeepEqual(savedDocument, recordDocument) {
-		return Recipe{}, &PackError{Code: "recipe.update_stale", Message: "saved recipe manifest differs from its immutable package"}
+		return nil, &PackError{Code: "recipe.update_stale", Message: "saved recipe manifest differs from its immutable package"}
 	}
 	packed, err := preserveSavedPackage(ctx, checkout, base, saved, target)
 	if err != nil {
-		return Recipe{}, err
+		return nil, err
 	}
-	return s.storeReviewedPack(ctx, packed, RecipeSource{Type: "git", Remote: repository.SourceUrl,
-		Path: repository.SourcePath, Revision: status.CandidateRevision, Tree: tree, TrackingRef: repository.TrackingRef},
-		&reviewedSelection{repositoryID: repositoryID, expectedDigest: previous.Digest})
+	manifest, vds, err := s.validator.ValidateStrict(packed.ConfigJSON)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range vds {
+		if d.Severity == "error" {
+			return nil, fmt.Errorf("recipe validation: %s", d.Message)
+		}
+	}
+	return &RepositoryUpdateCandidate{
+		RepositoryID: repositoryID, PreviousDigest: previous.Digest, Digest: packed.ManifestDigest,
+		Manifest: manifest, packed: packed,
+		source: RecipeSource{Type: "git", Remote: repository.SourceUrl,
+			Path: repository.SourcePath, Revision: status.CandidateRevision, Tree: tree, TrackingRef: repository.TrackingRef},
+	}, nil
+}
+
+// SaveRepositoryUpdate stores the compiled candidate and selects it as the
+// repository's current version through the compare-and-select transaction.
+// It fails as stale if another version was selected after compilation.
+func (s *Service) SaveRepositoryUpdate(ctx context.Context, candidate *RepositoryUpdateCandidate) (Recipe, error) {
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
+	if candidate.Current {
+		repository, err := s.q.GetRecipeRepository(ctx, candidate.RepositoryID)
+		if err != nil {
+			return Recipe{}, err
+		}
+		if repository.CurrentDigest.String != candidate.Digest {
+			return Recipe{}, &PackError{Code: "recipe.update_stale", Message: "the saved recipe changed; review the current version before saving"}
+		}
+		detail, err := s.Get(ctx, candidate.Digest)
+		if err != nil {
+			return Recipe{}, err
+		}
+		return detail.Recipe, nil
+	}
+	return s.storeReviewedPack(ctx, candidate.packed, candidate.source,
+		&reviewedSelection{repositoryID: candidate.RepositoryID, expectedDigest: candidate.PreviousDigest})
 }
 
 // preserveSavedValue reapplies only saved differences from the original source.

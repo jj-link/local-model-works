@@ -386,8 +386,12 @@ func (s *Service) RevalidateNode(ctx context.Context, nodeID string) error {
 		if err != nil {
 			return err
 		}
+		encoded := diag.Encode(ds)
+		if state == r.State && encoded == r.Diagnostics {
+			continue
+		}
 		if err := s.q.UpdateFabricState(ctx, db.UpdateFabricStateParams{
-			State: state, Diagnostics: diag.Encode(ds), ID: r.ID,
+			State: state, Diagnostics: encoded, ID: r.ID,
 		}); err != nil {
 			return err
 		}

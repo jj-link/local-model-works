@@ -652,7 +652,7 @@ func TestRepositoryInstallationUpdateNeverChangesDeployments(t *testing.T) {
 			beforeCommands := len(h.nodes.workloadCommands())
 			h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
 			seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("2", 40), true)
-			plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+			plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -666,7 +666,7 @@ func TestRepositoryInstallationUpdateNeverChangesDeployments(t *testing.T) {
 					}
 				}
 			}
-			runID, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest)
+			runID, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest), plan.Digest, saveNothing)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -727,7 +727,7 @@ func TestRepositoryInstallationUpdateRejectsChangedTargetAndDevices(t *testing.T
 	repositoryID := "https://fixtures.local/stale-package\n."
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("3", 40), false)
 	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("4", 40), true)
-	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,23 +740,105 @@ func TestRepositoryInstallationUpdateRejectsChangedTargetAndDevices(t *testing.T
 	if err := h.q.UpsertPlacement(ctx, db.UpsertPlacementParams{ArtifactID: artifact.ID, NodeID: "node-b", Path: "/recipes/old", State: "valid", Diagnostics: "[]"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest); !errors.Is(err, ErrPlanStale) {
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest), plan.Digest, saveNothing); !errors.Is(err, ErrPlanStale) {
 		t.Fatalf("changed installation set accepted: %v", err)
 	}
-	plan, err = h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	plan, err = h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := recipe.ActivateRepositoryVersion(ctx, h.q, repositoryID, oldDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest); !errors.Is(err, ErrPlanStale) {
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest), plan.Digest, saveNothing); !errors.Is(err, ErrPlanStale) {
 		t.Fatalf("changed current target accepted: %v", err)
 	}
 	if len(h.nodes.artifactCommands()) != 0 || len(h.nodes.workloadCommands()) != 0 {
 		t.Fatal("stale approval sent device commands")
 	}
 }
+
+// TestRepositoryInstallationUpdatePreviewNeverSaves proves an unsaved
+// candidate is previewed without touching the library, and is saved only by
+// a confirmation whose plan digest still matches.
+func TestRepositoryInstallationUpdatePreviewNeverSaves(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.seedNode(t, "node-a", nil, "")
+	enableInstallationUpdates(t, h, "node-a")
+	oldDigest := "sha256:" + strings.Repeat("e", 64)
+	targetDigest := "sha256:" + strings.Repeat("f", 64)
+	h.seedRecipe(t, oldDigest, noArtifactManifest)
+	repositoryID := "https://fixtures.local/unsaved-package\n."
+	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("5", 40), true)
+	manifest, err := recipe.Parse([]byte(noArtifactManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := InstallationUpdateTarget{Digest: targetDigest, Manifest: manifest}
+	assertUnsaved := func(when string) {
+		t.Helper()
+		repository, err := h.q.GetRecipeRepository(ctx, repositoryID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repository.CurrentDigest.String != oldDigest {
+			t.Fatalf("%s selected %s", when, repository.CurrentDigest.String)
+		}
+		if _, err := h.q.GetRecipe(ctx, targetDigest); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("%s saved the candidate recipe: %v", when, err)
+		}
+	}
+
+	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Ready || plan.UpToDate || plan.TargetDigest != targetDigest {
+		t.Fatalf("unsaved candidate preview = %+v", plan)
+	}
+	assertUnsaved("preview")
+
+	saves := 0
+	save := func(ctx context.Context) error {
+		saves++
+		h.seedRecipeUnplaced(t, targetDigest, noArtifactManifest)
+		seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("6", 40), true)
+		return nil
+	}
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, candidate, "sha256:stale", save); !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("stale confirmation = %v, want ErrPlanStale", err)
+	}
+	if saves != 0 {
+		t.Fatal("stale confirmation saved the candidate")
+	}
+	assertUnsaved("stale confirmation")
+
+	runID, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, candidate, plan.Digest, save)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != 1 || runID == "" {
+		t.Fatalf("confirmed update saves=%d run=%q", saves, runID)
+	}
+	ackRecipeUpdateFetch(t, h, targetDigest, "node-a")
+	waitRunState(t, h, runID, string(runs.Succeeded))
+}
+
+func savedInstallationTarget(t *testing.T, h *harness, digest string) InstallationUpdateTarget {
+	t.Helper()
+	row, err := h.q.GetRecipe(context.Background(), digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := recipe.Parse([]byte(row.Manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return InstallationUpdateTarget{Digest: digest, Manifest: manifest}
+}
+
+func saveNothing(context.Context) error { return nil }
 
 func ackRecipeUpdateFetch(t *testing.T, h *harness, digest, nodeID string) {
 	t.Helper()

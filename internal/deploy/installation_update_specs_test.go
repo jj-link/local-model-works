@@ -43,7 +43,7 @@ func TestInstallationUpdateRebindsTargetOffsetsWithSavedInputs(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("b", 64)
 	h.seedRecipe(t, digest, string(doc))
 	before := len(h.nodes.workloadCommands())
-	inputs, err := h.svc.installationUpdateSpecs(ctx, "head", digest)
+	inputs, err := h.svc.installationUpdateSpecs(ctx, "head", digest, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,14 +83,14 @@ func TestInstallationUpdateRequiresCapableAgentWithoutInventingLegacySource(t *t
 	seedRepositoryVersion(t, h, repositoryID, oldDigest, strings.Repeat("1", 40), true)
 	h.seedRecipeUnplaced(t, targetDigest, upstreamClusterManifest)
 	seedRepositoryVersion(t, h, repositoryID, targetDigest, strings.Repeat("2", 40), true)
-	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	plan, err := h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.Ready {
 		t.Fatal("unsupported agent passed confirmation gate")
 	}
-	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, targetDigest, plan.Digest); err == nil {
+	if _, err := h.svc.CreateRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest), plan.Digest, saveNothing); err == nil {
 		t.Fatal("unsupported agent update started")
 	}
 	node, err := h.q.GetNode(ctx, "node-a")
@@ -109,7 +109,7 @@ func TestInstallationUpdateRequiresCapableAgentWithoutInventingLegacySource(t *t
 	if err := h.q.SetNodeInventory(ctx, db.SetNodeInventoryParams{ID: node.ID, Inventory: nullString(string(raw))}); err != nil {
 		t.Fatal(err)
 	}
-	plan, err = h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, targetDigest)
+	plan, err = h.svc.PlanRepositoryInstallationUpdate(ctx, repositoryID, savedInstallationTarget(t, h, targetDigest))
 	if err != nil {
 		t.Fatal(err)
 	}

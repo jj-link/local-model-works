@@ -16,16 +16,9 @@ import (
 
 // installationUpdateSpecs does not plan deployments, acquire GPUs, or consult
 // current node addresses. Only saved parameters and frozen installation evidence
-// may determine the successor source configuration.
-func (s *Service) installationUpdateSpecs(ctx context.Context, nodeID, targetDigest string) ([]recipe.InstallationUpdateSpec, error) {
-	targetRow, err := s.q.GetRecipe(ctx, targetDigest)
-	if err != nil {
-		return nil, err
-	}
-	target, err := recipe.Parse([]byte(targetRow.Manifest))
-	if err != nil {
-		return nil, err
-	}
+// may determine the successor source configuration. target may be an unsaved
+// candidate; targetDigest only labels the rendered specs.
+func (s *Service) installationUpdateSpecs(ctx context.Context, nodeID, targetDigest string, target *recipe.Manifest) ([]recipe.InstallationUpdateSpec, error) {
 	result := []recipe.InstallationUpdateSpec{}
 	if !slices.ContainsFunc(target.Workloads, func(w recipe.Workload) bool { return w.Upstream != nil }) {
 		return result, nil

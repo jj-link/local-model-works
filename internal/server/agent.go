@@ -282,6 +282,7 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 		}); err != nil {
 			return connect.NewError(connect.CodeInternal, err)
 		}
+		_ = s.fabrics.RevalidateNode(ctx, nodeID)
 	}
 	s.bus.Publish(ctx, "node.online", nodeID, mustJSON(map[string]any{"status": status}))
 
@@ -373,6 +374,7 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 				if err := s.q.SetNodeStatus(ctx, db.SetNodeStatusParams{
 					Status: "online", LastHeartbeat: sql.NullString{String: dbTime(now), Valid: true}, ID: nodeID,
 				}); err == nil && cur.Status == "offline" {
+					_ = s.fabrics.RevalidateNode(ctx, nodeID)
 					go s.env.Downloads.OnReconnect(ctx, nodeID)
 				}
 			}
@@ -391,6 +393,7 @@ func (s *Server) Session(ctx context.Context, stream *connect.BidiStream[agentv1
 					ID:           nodeID,
 				}); err == nil {
 					s.bus.Publish(ctx, "node.inventory", nodeID, data)
+					_ = s.fabrics.RevalidateNode(ctx, nodeID)
 				}
 			}
 		case *agentv1.AgentMessage_Telemetry:
@@ -443,6 +446,7 @@ func (s *Server) markOffline(ctx context.Context, nodeID string) {
 			return
 		}
 		s.bus.Publish(ctx, "node.offline", nodeID, nil)
+		_ = s.fabrics.RevalidateNode(ctx, nodeID)
 		s.deploys.MarkNodeOffline(ctx, nodeID)
 		s.env.Downloads.OnDisconnect(ctx, nodeID)
 	}

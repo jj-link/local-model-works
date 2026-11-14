@@ -1,10 +1,12 @@
 package fakeagent
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jj-link/local-model-works/internal/db"
 	"github.com/jj-link/local-model-works/internal/deploy"
 	"github.com/jj-link/local-model-works/internal/diag"
 	"github.com/jj-link/local-model-works/internal/fabric"
@@ -170,6 +172,40 @@ func TestV4_Fabric(t *testing.T) {
 	if state != "incomplete" || !hasDiagCode(ds, "fabric.roce_requires_device") {
 		t.Errorf("nodev state/diags = %s / %v, want incomplete + fabric.roce_requires_device", state, ds)
 	}
+
+	// A member's status change revalidates the stored fabric: offline adds
+	// the member_offline diagnostic, reconnecting clears it.
+	fabricHas := func(code string) bool {
+		current, err := fabs.Get(s.Ctx, f.ID)
+		if err != nil {
+			t.Fatalf("get fabric: %v", err)
+		}
+		return hasDiagCode(current.Diagnostics, code)
+	}
+	if fabricHas("fabric.member_offline") {
+		t.Fatal("fabric reports an offline member while both are online")
+	}
+	a2.Stop()
+	Deadline(t, 20*time.Second, func() bool { return fabricHas("fabric.member_offline") }, "fabric marks stopped member offline")
+	a2 = a2.Restart(t, "", "")
+	s.WaitOnline(t, n2)
+	Deadline(t, 20*time.Second, func() bool { return !fabricHas("fabric.member_offline") }, "fabric clears member_offline after reconnect")
+}
+
+// TestV4_ApproveDisconnectedNode proves approval alone never reports a node
+// online: a node approved while its agent is down stays offline until the
+// agent connects.
+func TestV4_ApproveDisconnectedNode(t *testing.T) {
+	s := NewServer(t, "", "127.0.0.1:0")
+	a := StartAgent(t, s, AgentOpts{Hostname: "spark-1", Token: s.IssueToken(t), IP: "10.0.0.11/24"})
+	n := a.NodeID()
+	a.Stop()
+	s.ApproveNode(t, n)
+	if row := s.Node(t, n); row.Status != "offline" {
+		t.Fatalf("approved node without a session = %s, want offline", row.Status)
+	}
+	a.Restart(t, "", "")
+	s.WaitOnline(t, n)
 }
 
 func hasDiagCode(ds []diag.Diagnostic, code string) bool {
@@ -182,33 +218,40 @@ func hasDiagCode(ds []diag.Diagnostic, code string) bool {
 }
 
 // TestV4_ServerRestart proves agents reconnect after a controller restart
-// (same state root): the new server's in-memory node registry repopulates
-// from the reconnecting sessions, and node identities survive.
+// (same state root): the new server marks every node offline until its agent
+// re-dials, then the reconnecting sessions bring them back online, and node
+// identities survive.
 func TestV4_ServerRestart(t *testing.T) {
 	s := NewServer(t, "", "127.0.0.1:0")
 	tok1, tok2 := s.IssueToken(t), s.IssueToken(t)
 	a1 := StartAgent(t, s, AgentOpts{Hostname: "spark-1", Token: tok1, IP: "10.0.0.11/24"})
 	a2 := StartAgent(t, s, AgentOpts{Hostname: "spark-2", Token: tok2, IP: "10.0.0.12/24"})
-	_ = a1
-	_ = a2
 	n1, n2 := a1.NodeID(), a2.NodeID()
 	s.ApproveNode(t, n1)
 	s.ApproveNode(t, n2)
 	s.WaitOnline(t, n1)
 	s.WaitOnline(t, n2)
 
-	s2 := RestartServer(t, s)
-	// The fresh server's registry is empty until the agents re-dial.
-	Deadline(t, 20*time.Second, func() bool {
-		return s2.Srv.Nodes().Online(n1) && s2.Srv.Nodes().Online(n2)
-	}, "both agents reconnected to the restarted server")
-
-	// Identities and persisted state survived the restart.
-	if row := s2.Node(t, n1); row.ID != n1 || row.Status != "online" {
-		t.Errorf("node1 after restart = %s/%s", row.ID, row.Status)
+	// Simulate a crash: the stopped agent's row is still "online" because the
+	// previous controller never ran session teardown.
+	a1.Stop()
+	addr := s.AgentAddr()
+	s.Stop()
+	crashed, err := db.Open(context.Background(), s.Cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if row := s2.Node(t, n2); row.ID != n2 || row.Status != "online" {
-		t.Errorf("node2 after restart = %s/%s", row.ID, row.Status)
+	if err := db.New(crashed).SetNodeStatus(context.Background(), db.SetNodeStatusParams{Status: "online", ID: n1}); err != nil {
+		t.Fatal(err)
+	}
+	_ = crashed.Close()
+	s2 := NewServer(t, s.Root, addr)
+	if row := s2.Node(t, n1); row.Status != "offline" {
+		t.Errorf("disconnected node1 after restart = %s, want offline", row.Status)
+	}
+	s2.WaitOnline(t, n2)
+	if row := s2.Node(t, n2); row.ID != n2 {
+		t.Errorf("node2 identity after restart = %s", row.ID)
 	}
 }
 

@@ -168,8 +168,8 @@ func (m *Module) updateNode(w http.ResponseWriter, r *http.Request) {
 }
 
 // approveNode — POST /nodes/{id}/approve: admit a pending node into the
-// fleet. If the node has a live session it goes online immediately;
-// otherwise the next heartbeat does.
+// fleet. It goes online only through a live session: immediately if one is
+// open, otherwise when the agent connects.
 func (m *Module) approveNode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
@@ -190,7 +190,7 @@ func (m *Module) approveNode(w http.ResponseWriter, r *http.Request) {
 		httpx.HandleErr(w, err)
 		return
 	}
-	status := "pending"
+	status := "offline"
 	if m.env.Nodes.Online(id) {
 		status = "online"
 		if err := m.env.Q.SetNodeStatus(ctx, db.SetNodeStatusParams{
@@ -199,6 +199,10 @@ func (m *Module) approveNode(w http.ResponseWriter, r *http.Request) {
 			httpx.HandleErr(w, err)
 			return
 		}
+	}
+	if err := m.env.Fabrics.RevalidateNode(ctx, id); err != nil {
+		httpx.HandleErr(w, err)
+		return
 	}
 	approved, err := m.env.Q.GetNode(ctx, id)
 	if err != nil {

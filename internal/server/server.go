@@ -200,9 +200,24 @@ func (s *Server) Deployments() *deploy.Service { return s.deploys }
 func (s *Server) Runs() *runs.Service { return s.runs }
 
 // Recover marks one-shot runs interrupted by a previous crash and returns
-// the count. Deployment dispatch resumes when agents reconnect (Converge).
+// the count. A fresh controller has no agent sessions, so every node the
+// previous process left online goes offline until its agent reconnects.
+// Deployment dispatch resumes when agents reconnect (Converge).
 func (s *Server) Recover(ctx context.Context) (int, error) {
-	return s.runs.MarkInterrupted(ctx)
+	interrupted, err := s.runs.MarkInterrupted(ctx)
+	if err != nil {
+		return 0, err
+	}
+	nodes, err := s.q.ListNodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, node := range nodes {
+		if node.Status == "online" && !s.nodes.Online(node.ID) {
+			s.markOffline(ctx, node.ID)
+		}
+	}
+	return interrupted, nil
 }
 
 // Routes builds the browser/CLI HTTP API.
