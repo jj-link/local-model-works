@@ -3786,6 +3786,37 @@ func (q *Queries) UpdateStoppedDeploymentConfiguration(ctx context.Context, arg 
 	return result.RowsAffected()
 }
 
+const updateStoppedDeploymentRecipe = `-- name: UpdateStoppedDeploymentRecipe :execrows
+UPDATE deployments SET recipe_digest = ?,
+                       parameters = ?,
+                       placement = ?,
+                       fabric = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = ? AND desired_state = 'stopped' AND observed_state = 'stopped'
+`
+
+type UpdateStoppedDeploymentRecipeParams struct {
+	RecipeDigest string         `json:"recipe_digest"`
+	Parameters   string         `json:"parameters"`
+	Placement    string         `json:"placement"`
+	Fabric       sql.NullString `json:"fabric"`
+	ID           string         `json:"id"`
+}
+
+func (q *Queries) UpdateStoppedDeploymentRecipe(ctx context.Context, arg UpdateStoppedDeploymentRecipeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateStoppedDeploymentRecipe,
+		arg.RecipeDigest,
+		arg.Parameters,
+		arg.Placement,
+		arg.Fabric,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateTransferProgress = `-- name: UpdateTransferProgress :exec
 UPDATE transfers SET bytes_done = ?, bytes_total = COALESCE(?, bytes_total),
                      state = 'transferring',

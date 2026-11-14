@@ -11,7 +11,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/jj-link/local-model-works/internal/db"
@@ -673,8 +672,8 @@ func (s *Service) createReplacement(ctx context.Context, plan *RepositoryUpdateP
 	return runID, nil
 }
 
-// CancelRepositoryUpdate requests rollback; the run remains nonterminal until
-// every stopped source deployment is restored or restoration fails.
+// CancelRepositoryUpdate stops the update where it is. A deployment already
+// stopped for it stays stopped; nothing is restored or started.
 func (s *Service) CancelRepositoryUpdate(ctx context.Context, runID string) error {
 	run, err := s.runs.Get(ctx, runID)
 	if err != nil {
@@ -758,6 +757,7 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 	if err == nil && s.updateCancelled(ctx, runID) {
 		err = errRepositoryUpdateCancelled
 	}
+	restarted := "" // the deployment started on the target recipe and not yet healthy
 	for _, deployment := range input.Plan.Deployments {
 		if err != nil {
 			break
@@ -766,21 +766,31 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 			err = errRepositoryUpdateCancelled
 			break
 		}
-		if err = s.stopUpdateSource(ctx, runID, deployment, &progress); err != nil {
+		// The deployment keeps its identity: it is stopped, moved to the target
+		// recipe and started again. A resumed run does not stop it twice.
+		if !updateApplied(&progress, deployment.SourceDeploymentID) {
+			if err = s.stopUpdateSource(ctx, runID, deployment, &progress); err != nil {
+				break
+			}
+			if s.updateCancelled(ctx, runID) {
+				err = errRepositoryUpdateCancelled
+				break
+			}
+			if err = s.applyUpdateInPlace(ctx, runID, deployment, input.TargetDigest, input.SavedVersionReplacement, &progress); err != nil {
+				break
+			}
+		}
+		if deployment.SourceWasStopped {
+			continue // it was stopped before the update, so it is not started
+		}
+		restarted = deployment.SourceDeploymentID
+		if err = s.startUpdated(ctx, deployment.SourceDeploymentID); err != nil {
 			break
 		}
-		if s.updateCancelled(ctx, runID) {
-			err = errRepositoryUpdateCancelled
+		if err = s.waitUpdateReplacement(ctx, runID, deployment, deployment.SourceDeploymentID, &progress); err != nil {
 			break
 		}
-		var replacementID string
-		replacementID, err = s.ensureUpdateReplacement(ctx, runID, deployment, input.TargetDigest, input.SavedVersionReplacement, &progress)
-		if err != nil {
-			break
-		}
-		if err = s.waitUpdateReplacement(ctx, runID, deployment, replacementID, &progress); err != nil {
-			break
-		}
+		restarted = ""
 	}
 	if err == nil && s.updateCancelled(ctx, runID) {
 		err = errRepositoryUpdateCancelled
@@ -813,15 +823,12 @@ func (s *Service) coordinateRepositoryUpdate(ctx context.Context, runID string) 
 		return
 	}
 
-	rollbackErr := s.rollbackRepositoryUpdate(ctx, runID, input.Plan.Deployments, &progress)
-	if rollbackErr != nil {
-		_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(progress))
-		_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.rollback_failed", rollbackErr.Error())
-		return
-	}
+	// Nothing is restored or started on failure: a deployment that did not
+	// come up on the target recipe is stopped and stays stopped.
+	s.stopFailedUpdate(ctx, runID, restarted, &progress)
 	_ = s.runs.SetOutput(ctx, runID, repositoryUpdateOutput(progress))
 	if errors.Is(err, errRepositoryUpdateCancelled) || s.updateCancelled(ctx, runID) {
-		_ = s.runs.Complete(ctx, runID, runs.Cancelled, "run.cancelled", "recipe update cancelled and source deployments restored")
+		_ = s.runs.Complete(ctx, runID, runs.Cancelled, "run.cancelled", "recipe update cancelled; nothing was started in its place")
 		return
 	}
 	_ = s.runs.Complete(ctx, runID, runs.Failed, "recipe.update_failed", err.Error())
@@ -1110,59 +1117,102 @@ func (s *Service) acquireRepositoryReplacement(ctx context.Context, runID string
 	return nil
 }
 
-func (s *Service) ensureUpdateReplacement(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, targetDigest string, enforceReviewedDigest bool, progress *repositoryUpdateProgress) (string, error) {
+// updateApplied reports whether the run already moved this deployment to the
+// target recipe; the marker is the deployment's own ID in its progress rows.
+func updateApplied(progress *repositoryUpdateProgress, deploymentID string) bool {
 	for _, target := range progress.Hardware {
-		if target.SourceDeploymentID == deployment.SourceDeploymentID && target.ReplacementDeploymentID != "" {
-			return target.ReplacementDeploymentID, nil
+		if target.SourceDeploymentID == deploymentID && target.ReplacementDeploymentID == deploymentID {
+			return true
 		}
 	}
-	expectedPlacement := placementSetFromPlan(&deployment.DeploymentPlan)
-	existing, existingErr := s.q.GetDeploymentByRecipeParametersPlacement(ctx, db.GetDeploymentByRecipeParametersPlacementParams{
-		RecipeDigest: targetDigest, Parameters: marshalParameters(deployment.DeploymentPlan.Parameters), Placement: expectedPlacement.Marshal(),
+	return false
+}
+
+// applyUpdateInPlace moves the stopped deployment itself to the target recipe.
+// No other deployment is created, started or consulted.
+func (s *Service) applyUpdateInPlace(ctx context.Context, runID string, deployment RepositoryUpdateDeployment, targetDigest string, enforceReviewedDigest bool, progress *repositoryUpdateProgress) error {
+	policy := valueOrPolicy(deployment.DeploymentPlan.AcquisitionPolicy)
+	if !enforceReviewedDigest && deployment.DeploymentPlan.AcquisitionPolicy == "" {
+		policy = AcquisitionDownloadMissing
+	}
+	fresh, err := s.plan(ctx, PlanRequest{
+		RecipeDigest: targetDigest, Parameters: deployment.DeploymentPlan.Parameters,
+		Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.DeploymentPlan.Variants,
+		WorkloadIndex: &deployment.DeploymentPlan.WorkloadIndex, AcquisitionPolicy: policy,
+	}, nil, false)
+	if err != nil {
+		return err
+	}
+	if enforceReviewedDigest && !replacementPlanMatchesAfterAcquisition(&deployment.DeploymentPlan, fresh) {
+		return fmt.Errorf("%w: update plan changed after review", ErrPlanStale)
+	}
+	if !fresh.Ready || preservedPlacementMismatch(deployment.DeploymentPlan.Placements, fresh.Placements) != "" ||
+		fresh.WorkloadIndex != deployment.DeploymentPlan.WorkloadIndex || valueOr(fresh.Fabric, "") != deployment.Fabric {
+		return fmt.Errorf("%w: reviewed placement, workload or fabric cannot be preserved", ErrNotReady)
+	}
+	var fabric sql.NullString
+	if fresh.Fabric != nil {
+		fabric = sql.NullString{String: *fresh.Fabric, Valid: true}
+	}
+	updated, err := s.q.UpdateStoppedDeploymentRecipe(ctx, db.UpdateStoppedDeploymentRecipeParams{
+		RecipeDigest: targetDigest, Parameters: marshalParameters(fresh.Parameters),
+		Placement: placementSetFromPlan(fresh).Marshal(), Fabric: fabric, ID: deployment.SourceDeploymentID,
 	})
-	var replacementID string
-	if existingErr == nil {
-		replacementID = existing.ID
-		if existing.DesiredState == "stopped" && existing.ObservedState == "stopped" {
-			if _, err := s.Start(ctx, existing.ID); err != nil {
-				return "", err
-			}
-		}
-	} else if !errors.Is(existingErr, sql.ErrNoRows) {
-		return "", existingErr
-	} else {
-		policy := valueOrPolicy(deployment.DeploymentPlan.AcquisitionPolicy)
-		if !enforceReviewedDigest && deployment.DeploymentPlan.AcquisitionPolicy == "" {
-			policy = AcquisitionDownloadMissing
-		}
-		fresh, err := s.plan(ctx, PlanRequest{
-			RecipeDigest: targetDigest, Parameters: deployment.DeploymentPlan.Parameters,
-			Placements: planOverrides(deployment.DeploymentPlan.Placements), Variants: deployment.DeploymentPlan.Variants,
-			WorkloadIndex: &deployment.DeploymentPlan.WorkloadIndex, AcquisitionPolicy: policy,
-		}, nil, false)
-		if err != nil {
-			return "", err
-		}
-		if enforceReviewedDigest && !replacementPlanMatchesAfterAcquisition(&deployment.DeploymentPlan, fresh) {
-			return "", fmt.Errorf("%w: replacement plan changed before create", ErrPlanStale)
-		}
-		if !fresh.Ready || preservedPlacementMismatch(deployment.DeploymentPlan.Placements, fresh.Placements) != "" ||
-			fresh.WorkloadIndex != deployment.DeploymentPlan.WorkloadIndex || valueOr(fresh.Fabric, "") != deployment.Fabric {
-			return "", fmt.Errorf("%w: frozen replacement placement, workload or fabric cannot be preserved", ErrNotReady)
-		}
-		replacement, err := s.createPlanned(ctx, fresh)
-		if err != nil {
-			return "", err
-		}
-		replacementID = replacement.ID
+	if err != nil {
+		return err
 	}
+	if updated == 0 {
+		return fmt.Errorf("%w: deployment was started or removed before its recipe was changed", ErrState)
+	}
+	s.bus.Publish(ctx, "deployment.state", deployment.SourceDeploymentID, mustJSON(map[string]any{
+		"deployment_id": deployment.SourceDeploymentID, "reason": "recipe-update",
+	}))
 	s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) {
-		target.ReplacementDeploymentID = replacementID
+		target.ReplacementDeploymentID = deployment.SourceDeploymentID
 		target.Status, target.Phase = "running", "preparing"
+		if deployment.SourceWasStopped {
+			target.CurrentStep, target.Status, target.Phase = 5, "succeeded", "ready"
+		}
 	})
 	progress.Phase = "preparing"
 	s.persistUpdateProgress(ctx, runID, progress)
-	return replacementID, nil
+	return nil
+}
+
+// startUpdated starts the updated deployment unless a resumed run finds it
+// already started.
+func (s *Service) startUpdated(ctx context.Context, deploymentID string) error {
+	row, err := s.q.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+	if row.DesiredState == "running" {
+		return nil
+	}
+	_, err = s.Start(ctx, deploymentID)
+	return err
+}
+
+// stopFailedUpdate stops the deployment that was started on the target recipe
+// and did not become healthy, then records where every target was left.
+func (s *Service) stopFailedUpdate(ctx context.Context, runID, restarted string, progress *repositoryUpdateProgress) {
+	if restarted != "" {
+		if row, err := s.q.GetDeployment(ctx, restarted); err == nil && row.DesiredState == "running" {
+			_, _ = s.Stop(ctx, restarted)
+		}
+	}
+	for i := range progress.Hardware {
+		target := &progress.Hardware[i]
+		switch {
+		case target.Status == "succeeded":
+		case target.Phase == "":
+			target.Status, target.Phase = "failed", "unchanged" // never stopped
+		default:
+			target.Status, target.Phase = "failed", "stopped"
+		}
+	}
+	progress.Phase = "failed"
+	s.persistUpdateProgress(ctx, runID, progress)
 }
 
 // Completed acquisition can change an approved origin/peer action to exact
@@ -1247,105 +1297,6 @@ func (s *Service) waitUpdateReplacement(ctx context.Context, runID string, deplo
 			return err
 		}
 	}
-}
-
-func (s *Service) rollbackRepositoryUpdate(ctx context.Context, runID string, deployments []RepositoryUpdateDeployment, progress *repositoryUpdateProgress) error {
-	progress.Phase = "rolling_back"
-	s.persistUpdateProgress(ctx, runID, progress)
-	var rollbackErrors []string
-	for index := len(deployments) - 1; index >= 0; index-- {
-		deployment := deployments[index]
-		replacementID := ""
-		for _, target := range progress.Hardware {
-			if target.SourceDeploymentID == deployment.SourceDeploymentID && target.ReplacementDeploymentID != "" {
-				replacementID = target.ReplacementDeploymentID
-				break
-			}
-		}
-		if replacementID != "" {
-			replacement, err := s.q.GetDeployment(ctx, replacementID)
-			if err == nil && replacement.DesiredState == "running" {
-				_, _ = s.Stop(ctx, replacementID)
-			}
-			for err == nil && replacement.ObservedState != "stopped" {
-				progress.Phase = "rolling_back"
-				s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) { target.Status, target.Phase = "running", "rolling_back" })
-				s.persistUpdateProgress(ctx, runID, progress)
-				if waitErr := waitUpdatePoll(ctx); waitErr != nil {
-					return waitErr
-				}
-				replacement, err = s.q.GetDeployment(ctx, replacementID)
-			}
-			if err != nil {
-				rollbackErrors = append(rollbackErrors, err.Error())
-			}
-		}
-		if deployment.SourceWasStopped {
-			s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) { target.Status, target.Phase = "failed", "restored" })
-			s.persistUpdateProgress(ctx, runID, progress)
-			continue
-		}
-
-		progress.Phase = "restoring_old"
-		s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) { target.Status, target.Phase = "running", "restoring_old" })
-		s.persistUpdateProgress(ctx, runID, progress)
-		source, err := s.q.GetDeployment(ctx, deployment.SourceDeploymentID)
-		if err != nil {
-			rollbackErrors = append(rollbackErrors, err.Error())
-			continue
-		}
-		for source.ObservedState != "stopped" && source.DesiredState == "stopped" {
-			if waitErr := waitUpdatePoll(ctx); waitErr != nil {
-				return waitErr
-			}
-			source, err = s.q.GetDeployment(ctx, deployment.SourceDeploymentID)
-			if err != nil {
-				break
-			}
-		}
-		if err == nil && source.DesiredState == "stopped" {
-			_, err = s.Start(ctx, deployment.SourceDeploymentID)
-		}
-		if err != nil {
-			rollbackErrors = append(rollbackErrors, err.Error())
-			s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) {
-				target.Status, target.Phase = "failed", "rollback_failed"
-				target.ErrorCode, target.ErrorMessage = "recipe.rollback_failed", err.Error()
-			})
-			continue
-		}
-		for {
-			source, err = s.q.GetDeployment(ctx, deployment.SourceDeploymentID)
-			if err != nil || source.ObservedState == "healthy" {
-				break
-			}
-			if source.ObservedState == "failed" {
-				err = fmt.Errorf("source deployment %s failed during restore", source.ID)
-				break
-			}
-			if waitErr := waitUpdatePoll(ctx); waitErr != nil {
-				return waitErr
-			}
-		}
-		if err != nil {
-			rollbackErrors = append(rollbackErrors, err.Error())
-			s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) {
-				target.Status, target.Phase = "failed", "rollback_failed"
-				target.ErrorCode, target.ErrorMessage = "recipe.rollback_failed", err.Error()
-			})
-		} else {
-			s.setUpdateTargets(progress, deployment.SourceDeploymentID, func(target *RepositoryUpdateTarget) { target.Status, target.Phase = "failed", "restored" })
-		}
-		s.persistUpdateProgress(ctx, runID, progress)
-	}
-	if len(rollbackErrors) > 0 {
-		progress.Phase = "rollback_failed"
-		s.persistUpdateProgress(ctx, runID, progress)
-		return errors.New(strings.Join(rollbackErrors, "; "))
-	}
-	progress.Phase = "restored"
-	s.persistUpdateProgress(ctx, runID, progress)
-	return nil
 }
 
 func (s *Service) setUpdateTargets(progress *repositoryUpdateProgress, sourceDeploymentID string, update func(*RepositoryUpdateTarget)) {

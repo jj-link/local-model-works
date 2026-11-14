@@ -62,7 +62,7 @@ describe("deployment configuration", () => {
     const apply = await screen.findByRole("button", { name: "Apply and restart" });
     expect(apply).toBeDisabled();
     expect(within(screen.getByRole("region", { name: "Effective launch selections" })).getByText(/8192/)).toBeVisible();
-    await user.click(screen.getByRole("checkbox", { name: /I approve the reviewed settings/ }));
+    await user.click(screen.getByRole("checkbox", { name: /^I approve / }));
     await user.click(apply);
     await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/runs/configuration-run"));
     expect(submissions).toEqual([
@@ -80,7 +80,7 @@ describe("deployment configuration", () => {
     await user.type(input, "8192");
     await user.click(screen.getByRole("button", { name: "Review changes and restart" }));
     const apply = await screen.findByRole("button", { name: "Apply and restart" });
-    await user.click(screen.getByRole("checkbox", { name: /I approve the reviewed settings/ }));
+    await user.click(screen.getByRole("checkbox", { name: /^I approve / }));
     expect(apply).toBeEnabled();
 
     server.use(http.get("*/api/v1/deployments/dep", () => HttpResponse.json({ ...deployment, run_id: "another-run" })));
@@ -138,7 +138,7 @@ describe("deployment configuration", () => {
     expect(within(selections).getByText(/Runtime index: 1/)).toBeVisible();
     expect(within(selections).getByText(/"batch_size": 32/)).toBeVisible();
     const apply = screen.getByRole("button", { name: "Apply and restart" });
-    await user.click(screen.getByRole("checkbox", { name: /I approve the reviewed settings/ }));
+    await user.click(screen.getByRole("checkbox", { name: /^I approve / }));
     expect(apply).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: /I authorize original upstream code/ }));
     expect(apply).toBeEnabled();

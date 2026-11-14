@@ -68,14 +68,13 @@ func TestRepositoryReplacementReviewsNewUpstreamInputsBeforeStoppingSource(t *te
 		t.Fatal(err)
 	}
 	ackDeploymentStop(t, h, source.ID, newDigest)
-	replacementID := driveReplacementHealthy(t, h, newDigest)
-	waitRunState(t, h, runID, string(runs.Succeeded))
-	replacement := deploymentRow(t, h, replacementID)
-	if parametersForValue(replacement.Parameters)["model_id"] != "original/model" {
-		t.Fatalf("replacement discarded approved upstream configuration: %s", replacement.Parameters)
+	if updatedID := driveReplacementHealthy(t, h, newDigest); updatedID != source.ID {
+		t.Fatalf("update started %s instead of the deployment itself", updatedID)
 	}
-	if row := deploymentRow(t, h, source.ID); row.Parameters != original.Parameters {
-		t.Fatal("replacement overwrote the retained installation's configuration")
+	waitRunState(t, h, runID, string(runs.Succeeded))
+	updated := deploymentRow(t, h, source.ID)
+	if updated.RecipeDigest != newDigest || parametersForValue(updated.Parameters)["model_id"] != "original/model" {
+		t.Fatalf("update discarded approved upstream configuration: %s %s", updated.RecipeDigest, updated.Parameters)
 	}
 }
 
@@ -138,25 +137,31 @@ func TestRepositoryUpdatePreservesHardwareAndCompletesOnHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := deploymentRow(t, h, source.ID)
 	ackDeploymentStop(t, h, source.ID, newDigest)
-	replacementID := driveReplacementHealthy(t, h, newDigest)
+	if updatedID := driveReplacementHealthy(t, h, newDigest); updatedID != source.ID {
+		t.Fatalf("update started %s instead of the deployment itself", updatedID)
+	}
 	updateRun := waitRunState(t, h, runID, string(runs.Succeeded))
 	if updateRun.Progress["completed_devices"] != float64(1) || updateRun.Progress["completed_running_targets"] != float64(1) {
 		t.Fatalf("progress = %#v", updateRun.Progress)
 	}
 	hardware := updateRun.Progress["running_deployments"].([]any)[0].(map[string]any)
-	if hardware["current_step"] != float64(5) || hardware["phase"] != "ready" || hardware["replacement_deployment_id"] != replacementID {
+	if hardware["current_step"] != float64(5) || hardware["phase"] != "ready" || hardware["replacement_deployment_id"] != source.ID {
 		t.Fatalf("running deployment progress = %#v", hardware)
 	}
-	oldRow := deploymentRow(t, h, source.ID)
-	newRow := deploymentRow(t, h, replacementID)
-	if oldRow.DesiredState != "stopped" || oldRow.ObservedState != "stopped" {
-		t.Fatalf("old deployment = %+v", oldRow)
+	rows, err := h.q.ListDeployments(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if newRow.DesiredState != "running" || newRow.ObservedState != "healthy" {
-		t.Fatalf("replacement = %+v", newRow)
+	if len(rows) != 1 {
+		t.Fatalf("update created another deployment: %d deployments", len(rows))
 	}
-	oldPlacement := ParsePlacementSet(oldRow.Placement)
+	newRow := deploymentRow(t, h, source.ID)
+	if newRow.RecipeDigest != newDigest || newRow.DesiredState != "running" || newRow.ObservedState != "healthy" {
+		t.Fatalf("updated deployment = %+v", newRow)
+	}
+	oldPlacement := ParsePlacementSet(before.Placement)
 	newPlacement := ParsePlacementSet(newRow.Placement)
 	if len(oldPlacement.Entries) != 1 || len(newPlacement.Entries) != 1 || oldPlacement.Entries[0].NodeID != newPlacement.Entries[0].NodeID || oldPlacement.Entries[0].Rank != newPlacement.Entries[0].Rank {
 		t.Fatalf("placement changed: old=%+v new=%+v", oldPlacement, newPlacement)
@@ -533,24 +538,6 @@ func TestRepositoryConfigurationRestartsSameRecipeWithReviewedInputs(t *testing.
 			if err != nil || !plan.Ready || len(plan.Deployments) != 1 {
 				t.Fatalf("changed settings on the same recipe cannot be reviewed: plan=%+v err=%v", plan, err)
 			}
-			if initialState == "stopped" {
-				rollbackRun, err := h.svc.runs.Create(ctx, "library", "recipe-update", structMap(repositoryUpdateRunInput{RepositoryID: repositoryID, TargetDigest: digest, Plan: *plan}), "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				rollbackCtx, cancel := context.WithTimeout(ctx, time.Second)
-				err = h.svc.rollbackRepositoryUpdate(rollbackCtx, rollbackRun, plan.Deployments, &repositoryUpdateProgress{Hardware: append([]RepositoryUpdateTarget(nil), plan.RunningDeployments...)})
-				cancel()
-				if err != nil {
-					t.Fatalf("rollback could not preserve an originally stopped deployment: %v", err)
-				}
-				if row := deploymentRow(t, h, source.ID); row.DesiredState != "stopped" || row.ObservedState != "stopped" || row.RunID != original.RunID {
-					t.Fatalf("rollback started an originally stopped deployment: %+v", row)
-				}
-				if err := h.svc.runs.Complete(ctx, rollbackRun, runs.Failed, "recipe.update_failed", "replacement failed before launch"); err != nil {
-					t.Fatal(err)
-				}
-			}
 			if _, err := h.svc.CreateRepositoryUpdate(ctx, repositoryID, request, unchanged.Digest); !errors.Is(err, ErrPlanStale) {
 				t.Fatalf("changed settings reused an unchanged preview: %v", err)
 			}
@@ -563,19 +550,30 @@ func TestRepositoryConfigurationRestartsSameRecipeWithReviewedInputs(t *testing.
 			}
 			if initialState == "running" {
 				ackDeploymentStop(t, h, source.ID, digest)
+				if updatedID := driveReplacementHealthy(t, h, digest); updatedID != source.ID {
+					t.Fatalf("update started %s instead of the deployment itself", updatedID)
+				}
 			}
-			replacementID := driveReplacementHealthy(t, h, digest)
 			waitRunState(t, h, runID, string(runs.Succeeded))
-			replacement := deploymentRow(t, h, replacementID)
-			if replacementID == source.ID || replacement.RecipeDigest != digest || replacement.ObservedState != "healthy" {
-				t.Fatalf("configuration did not replace only the run of the same recipe: %+v", replacement)
+			rows, err := h.q.ListDeployments(ctx)
+			if err != nil {
+				t.Fatal(err)
 			}
-			parameters := parametersForValue(replacement.Parameters)
+			if len(rows) != 1 {
+				t.Fatalf("update created another deployment: %d deployments", len(rows))
+			}
+			updated := deploymentRow(t, h, source.ID)
+			// A deployment stopped before the update only has it saved.
+			wantDesired, wantObserved := "running", "healthy"
+			if initialState == "stopped" {
+				wantDesired, wantObserved = "stopped", "stopped"
+			}
+			if updated.RecipeDigest != digest || updated.DesiredState != wantDesired || updated.ObservedState != wantObserved {
+				t.Fatalf("updated deployment = %+v", updated)
+			}
+			parameters := parametersForValue(updated.Parameters)
 			if parameters["context_length"] != float64(8192) || parameters["kv_cache_dtype"] != "fp8" {
-				t.Fatalf("new run lost reviewed runtime settings: %s", replacement.Parameters)
-			}
-			if row := deploymentRow(t, h, source.ID); row.Parameters != original.Parameters || row.DesiredState != "stopped" {
-				t.Fatal("previous configuration was not retained for restoration")
+				t.Fatalf("update lost reviewed runtime settings: %s", updated.Parameters)
 			}
 		})
 	}
