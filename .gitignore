@@ -13,3 +13,4 @@ amend-check.sh
 __pycache__/
 /.test-work/
 /.smoke/
+AGENTS.md
