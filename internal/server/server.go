@@ -82,6 +82,8 @@ type Server struct {
 	agentSrv  *http.Server
 	agentAddr string
 
+	logins loginLimiter
+
 	runs    *runs.Service
 	deploys *deploy.Service
 }

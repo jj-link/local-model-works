@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Security: `POST /login` throttles failed passwords per username — five failures in 15 minutes return `429` with `Retry-After: 900` and `auth.too_many_attempts`, and a successful login clears the counter. A global backstop returns the same response after 100 failures in a minute across all usernames, and `POST /browser-login` honors that backstop. Buckets are keyed on the lowercased username because `tailscale serve` makes every request look like `127.0.0.1`.
+
 - Fix: node status follows live agent sessions. A restarted controller marks every node its previous process left online as offline (degrading its deployments) until the agent reconnects, and approving a node leaves it offline until its agent connects instead of reporting it online. Fabric state and diagnostics are revalidated whenever a member goes online or offline, is approved, or reports inventory, so `fabric.member_offline` appears and clears with the member.
 
 - Fix: the recipe update preview (`POST /recipe-repositories/{id}/updates/plan`) compiles the upstream candidate without saving or selecting it again. Confirming the update (`POST /recipe-repositories/{id}/updates`) re-checks the target and plan digests first and only then saves and selects the version and starts the device installation; a stale, not-ready or up-to-date confirmation saves nothing. With no installed devices the dialog offers to save the version.
