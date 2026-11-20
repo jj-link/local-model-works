@@ -58,21 +58,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "auth.invalid_body", "username and password are required")
 		return
 	}
+	if s.logins.locked(req.Username) {
+		writeTooManyLoginAttempts(w)
+		return
+	}
 	user, err := s.q.GetUser(r.Context(), req.Username)
 	switch {
 	case err == nil:
 		if !auth.VerifyPassword(req.Password, user.Argon2Hash) {
+			s.logins.fail(req.Username)
 			writeErr(w, http.StatusUnauthorized, "auth.bad_credentials", "invalid username or password")
 			return
 		}
 	case errors.Is(err, sql.ErrNoRows):
 		auth.VerifyPassword(req.Password, dummyHash())
+		s.logins.fail(req.Username)
 		writeErr(w, http.StatusUnauthorized, "auth.bad_credentials", "invalid username or password")
 		return
 	default:
 		handleErr(w, err)
 		return
 	}
+	s.logins.succeed(req.Username)
 	sess, err := s.sessions.Login(req.Username)
 	if err != nil {
 		handleErr(w, err)
@@ -84,6 +91,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBrowserLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.requireConfiguredOrigin(w, r) {
+		return
+	}
+	// A browser login token carries no username before it is consumed, so
+	// only the global failed-password backstop applies here.
+	if s.logins.globalLocked() {
+		writeTooManyLoginAttempts(w)
 		return
 	}
 	var req browserLoginRequest
